@@ -353,9 +353,15 @@ export function launchServer(opts: { port: number; dbPath: string; name?: string
     const out = createWriteStream(logPath, { flags: "a" });
     out.write(`\n=== launch ${new Date().toISOString()}  port=${opts.port}  db=${opts.dbPath} ===\n`);
 
+    // --env-file=.env is a DEV convenience (repo-local overrides). A fresh clone has
+    // NO repo .env — config comes from ~/.nodedex/.env (loaded by boot-env) + the env
+    // passed below. `node --env-file` HARD-FAILS if the file is missing, so only add it
+    // when it actually exists; otherwise a clean install can't launch at all.
+    const nodeArgs = ["--import=tsx/esm", "src/server.ts"];
+    if (existsSync(resolve(SERVER_DIR, ".env"))) nodeArgs.unshift("--env-file=.env");
     const child = spawn(
       process.execPath, // the same node running the TUI
-      ["--env-file=.env", "--import=tsx/esm", "src/server.ts"],
+      nodeArgs,
       {
         cwd: SERVER_DIR,
         env: {
