@@ -187,7 +187,7 @@ The zero-deploy path, and the one to use if your agent runs in a container or yo
 its code. Point your agent's **model base URL** at NodeDex's proxy: it relays each call to your
 real provider unchanged (no added latency, streaming works) and captures the turn in passing.
 In your agent's model/provider settings, set:
-- **base URL:** `http://host.docker.internal:3001/api`  *(same machine: `http://localhost:3001/api`)*
+- **base URL:** `http://host.docker.internal:3001/api`  *(same machine: `http://127.0.0.1:3001/api` — use `127.0.0.1`, not `localhost`, on Windows: a `0.0.0.0`-bound server is IPv4-only and `localhost` resolves to IPv6 `::1` first)*
 - **API key:** your usual provider key (e.g. OpenRouter `sk-or-…`) — forwarded untouched, never stored
 - **model:** unchanged
 

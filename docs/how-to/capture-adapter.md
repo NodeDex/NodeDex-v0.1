@@ -32,8 +32,10 @@ place or wire a post-turn callback. For these, use the **`/api/chat` proxy**: po
 provider — transparently (same response, no added latency, streaming intact).
 
 In the host's model/provider settings:
-- **base URL** → `http://<nodedex-host>:<port>/api`  (same machine: `http://localhost:3001/api`;
-  from a Docker container reaching a host server: `http://host.docker.internal:3001/api`)
+- **base URL** → `http://<nodedex-host>:<port>/api`  (same machine: `http://127.0.0.1:3001/api`;
+  from a Docker container reaching a host server: `http://host.docker.internal:3001/api`).
+  **On Windows use `127.0.0.1`, not `localhost`** — a `0.0.0.0`-bound server is IPv4-only and
+  `localhost` resolves to IPv6 `::1` first, so it times out.
 - **API key / model** → unchanged — forwarded untouched to your provider
 
 No file, no post-turn seam, and **no Nodedex token** for capture (the `/api/chat` path is exempt
@@ -48,11 +50,11 @@ Under the `model:` block, swap `base_url` from the provider to the proxy:
 model:
   default: openrouter/owl-alpha
   provider: openrouter
-  base_url: http://localhost:3002/api   # was https://openrouter.ai/api/v1
+  base_url: http://127.0.0.1:3002/api   # was https://openrouter.ai/api/v1  (127.0.0.1, not localhost, on Windows)
   api_mode: chat_completions
 ```
 
-Or `hermes config set model.base_url http://localhost:3002/api`, then **restart the Hermes
+Or `hermes config set model.base_url http://127.0.0.1:3002/api`, then **restart the Hermes
 gateway**. Use `localhost` (the gateway makes the model call from the host); use
 `host.docker.internal` only if the call originates inside the container. **Trade-off:** model
 calls now flow through Nodedex — if Nodedex is down the agent can't reach the model; revert by
