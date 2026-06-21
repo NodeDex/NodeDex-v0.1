@@ -371,7 +371,7 @@ export function ServersTab({
             </Text>
           </Box>
           {fdbs.length === 0 ? (
-            <Text color={theme.dim}>{dbFilter ? `no db matches "${dbFilter}"` : "no .db files found in C:/tmp or data/"}</Text>
+            <Text color={theme.dim}>{dbFilter ? `no db matches "${dbFilter}"` : "no .db files found in ~/.nodedex"}</Text>
           ) : (
             w.slice.map((d, i) => {
               const realIdx = w.off + i;            // index in fdbs

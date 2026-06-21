@@ -175,6 +175,12 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const submitOpenRouter = useCallback(async () => {
     const k = orKey.trim();
     if (!k) { setError("Paste your OpenRouter API key first."); return; }
+    // Shape check before the network call: catches a truncated paste fast (a long key pasted
+    // into a terminal can drop characters) with a clearer message than a generic 401.
+    if (!/^sk-or-/.test(k) || k.length < 40) {
+      setError("That doesn't look like a full OpenRouter key (sk-or-…, ~73 chars). A long paste can get cut off — re-paste the whole key.");
+      return;
+    }
     setBusy(true); setError(""); setStatus("Verifying key…");
     const v = await validateOpenRouter(k);
     if (!v.ok) { setBusy(false); setStatus(""); setError(v.error || "Invalid key."); return; }

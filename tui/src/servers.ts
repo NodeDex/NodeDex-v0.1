@@ -53,8 +53,11 @@ export interface ServerEntry {
 // ─── available DB files (for the launch/swap picker) ────────────────────────
 // A port is just an access point; the DB is the content. Let the user pick the
 // DB to run rather than type a path. Scan the dirs where DBs actually live.
-const DATA_DIR = resolve(SERVER_DIR, "..", "data");
-const DB_DIRS = ["C:/tmp", DATA_DIR];
+// DBs live in the config home (~/.nodedex) — the same place the onboarding wizard
+// (config.ts) creates + lists them, so both pickers agree. (Was repo/data + a hardcoded
+// C:/tmp dev-scratch dir — dev leftovers that put user data inside the repo.)
+const DATA_DIR = NODEDEX_HOME;
+const DB_DIRS = [NODEDEX_HOME];
 
 export interface DbFile {
   path: string;
@@ -85,7 +88,7 @@ export function listDbs(): DbFile[] {
 }
 
 // ─── create / rename / delete a db file ─────────────────────────────────────
-// New DBs land in data/ (a dir the picker already scans). A NodeDex DB is just a
+// New DBs land in ~/.nodedex (a dir the picker already scans). A NodeDex DB is just a
 // SQLite file the server creates + inits on first open, so "create" only resolves a
 // valid path — the file appears when a server launches on it. Rename/delete touch the
 // file + its -wal/-shm sidecars. GUARD: never rename/delete a db a running server holds

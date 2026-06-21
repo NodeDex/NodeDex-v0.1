@@ -62,10 +62,17 @@ if (newKey === undefined && newModel === undefined) {
 }
 
 if (newKey) {
-  process.stdout.write("verifying key… ");
-  const v = await validateKey(newKey.trim());
-  if (!v.ok) console.log(`✗ ${v.error}. Key NOT changed.`);
-  else { cfg.openrouter_key = newKey.trim(); cfg.provider = "openrouter"; console.log("✓ ok"); }
+  const k = newKey.trim();
+  // Shape check first — a truncated paste (sk-or- keys are ~73 chars) fails clearly here
+  // rather than as a confusing 401 later at extraction time.
+  if (!/^sk-or-/.test(k) || k.length < 40) {
+    console.log(`✗ "${mask(k)}" doesn't look like a full OpenRouter key (sk-or-…, ~73 chars) — re-paste the whole key. Key NOT changed.`);
+  } else {
+    process.stdout.write("verifying key… ");
+    const v = await validateKey(k);
+    if (!v.ok) console.log(`✗ ${v.error}. Key NOT changed.`);
+    else { cfg.openrouter_key = k; cfg.provider = "openrouter"; console.log("✓ ok"); }
+  }
 }
 if (newModel) cfg.model = newModel.trim();
 
