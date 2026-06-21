@@ -1,0 +1,13 @@
+paper,paper_type,block_type,count
+2408.12186,bound-derivation,dead_end,2
+2408.12186,bound-derivation,decision,10
+2408.12186,bound-derivation,constraint,5
+2408.12186,bound-derivation,fact,14
+2408.12186,bound-derivation,insight,5
+2408.12186,bound-derivation,chain,8
+2503.19064,theorem-proving,dead_end,0
+2503.19064,theorem-proving,decision,6
+2503.19064,theorem-proving,constraint,0
+2503.19064,theorem-proving,fact,15
+2503.19064,theorem-proving,insight,1
+2503.19064,theorem-proving,chain,4

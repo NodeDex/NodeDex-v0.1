@@ -1,0 +1,351 @@
+# Nodedex — How The Whole System Works
+
+> ⚠ **Internals reference.** Block types, relations, pipeline shape, and TTL/quality_score mechanics are accurate. The "Agent protocol" section near the bottom (Rules 1-5: manual saves, anchor phrases, manual reflect trigger) is **superseded** by [agent.md](../../agent.md), the current agent protocol — read that for how the agent actually interacts with the graph. This file is kept for the system internals.
+
+*Internal reference. The why behind every design decision, from first principles.*
+*Updated April 2026 after live exploration of a running instance.*
+
+---
+
+## What the system actually is
+
+A persistent, typed knowledge graph that an AI agent reads and writes across sessions.
+Not a vector store. Not a chat log. A map of **what was decided, what failed, what is constrained, and why** — structured so an agent can navigate it deterministically without re-deriving anything.
+
+The core loop:
+
+```
+Agent session happens
+        ↓
+POST /api/reflect/trigger  (agent calls this at end of turn)
+        ↓
+6-pass pipeline runs (Pass 0 → 1 → 2 → 3 → 4 → 5)
+        ↓
+Blocks saved to graph
+        ↓
+Next agent session starts cold → reads graph → knows everything
+```
+
+---
+
+## Block types — epistemic meaning
+
+Each type answers a different question about what happened:
+
+| Type | Question answered | TTL |
+|---|---|---|
+| `decision` | What was chosen, and why? | permanent |
+| `dead_end` | What was tried/evaluated and abandoned, and why? | permanent |
+| `constraint` | What is externally imposed and cannot be overridden? | permanent |
+| `blueprint` | What is planned but not yet decided? | permanent |
+| `question` | What is genuinely unresolved with no path forward? | project |
+| `fact` | What was observed or measured that changed understanding? | project |
+| `insight` | What was realized by combining multiple facts? | project |
+| `task` | Who is doing what right now? | project |
+| `entity` | What is this named thing and what role does it play? | project |
+| `chain` | What is the causal arc of a cluster of connected blocks? | permanent |
+| `project` | What is this project's scope? | permanent |
+
+**Why these types and not others:**
+The types are epistemic, not domain-specific. A dead_end in a clinical trial (protocol abandoned), a business pivot (model abandoned), or a software migration (approach abandoned) are all structurally identical. The type captures the *epistemic role* — not what domain it comes from.
+
+**Dead ends are the highest-value blocks.** Before any agent suggests an approach, Rule 3 fires:
+check dead ends first. A dead end with `unique.reason = "290ms write latency on clinical hardware"` stops an agent from re-proposing synchronous replication. No debate, no re-derivation.
+
+---
+
+## Session start — what an agent sees immediately
+
+```bash
+GET /api/session
+```
+
+Returns instantly:
+- Total block count by type
+- All project roots with essences
+- Open tasks (with owners)
+- Active constraints
+
+```bash
+GET /api/tree?depth=1
+```
+
+Project roots with their constraints surfaced at the top level. This gives the agent the
+full project map in one call — no traversal needed to understand what exists.
+
+From there, an agent navigates by label — not by search.
+
+---
+
+## Navigation: two modes
+
+### Mode 1 — Deterministic (label-based)
+
+The naming convention `{project}_{entity}_{type}_{concept}` is a file path.
+When you know what you want, use label filters — no scoring, no variance:
+
+```bash
+# Rule 3: dead-end check before proposing anything
+GET /api/blocks?label_prefix=forge_dead_end&q=jwt
+
+# All constraints on a project
+GET /api/blocks?type=constraint&project=helios
+
+# What decisions exist?
+GET /api/blocks?label_prefix=atlas_decision
+
+# Read a specific block
+GET /api/blocks/forge_decision_hs256-jwt-tokens
+```
+
+This is how Rule 3 dead-end checks work. Fully deterministic.
+Label structure: `_` separates dimensions. `-` separates words within a concept.
+Server rejects labels with 5+ `_`-separated segments.
+
+### Mode 2 — Fuzzy recall (scored)
+
+When exploring without a known label:
+
+```bash
+# Keyword + concept + 2-hop expansion, quality_score multiplied in
+GET /api/recall-fast?q=jwt+authentication&limit=5
+
+# Full semantic + keyword + per-field match breakdown (slower, needs embeddings)
+GET /api/recall-smart?q=why+was+aws+api+gateway+rejected&limit=3
+```
+
+`recall-smart` shows exactly why each result matched:
+```
+match_reason: "label[aws→concept:...] | essence[aws, gateway, rejected] | concept[aws→aws-api-gateway]"
+```
+
+Use label navigation first. Fuzzy recall for exploration only.
+
+---
+
+## Relations — the graph edges
+
+Every meaningful connection between blocks is a typed relation:
+
+| Type | Meaning |
+|---|---|
+| `part_of` | Block belongs to a project root. **Required on every block.** Without this, the block is invisible in tree navigation and dead-end checks. |
+| `triggered_by` | This block exists because that block happened. Causal predecessor. |
+| `based_on` | This decision was justified by this fact or constraint. |
+| `supersedes` | This block replaces an older one (same concept, new value). Old block stays as permanent history. |
+| `extends` | This block adds detail to an existing block. Parent remains fully valid standalone. |
+| `resolves` | This block answers a question block. |
+| `implements` | This task block is doing the work described by a blueprint or decision. |
+
+**Why `supersedes` keeps history:** When a decision changes, you want to know what it was before and why it changed. The old block stays, the new one points at it with `supersedes`. An agent sees the new block in recall but can traverse back to understand the history.
+
+**Why `part_of` is non-negotiable:** Dead-end checks query by `label_prefix=project_dead_end`. Without a `part_of` relation to the project root, the block won't surface in that query. A dead end with no `part_of` is effectively invisible — it cannot protect against repeating past mistakes.
+
+---
+
+## The reflect pipeline — how text becomes blocks
+
+Triggered by: `POST /api/reflect/trigger` at end of agent turn.
+
+```
+Pass 0  →  Pass 1  →  Pass 2  →  Pass 3  →  Pass 4  →  Pass 5
+```
+
+### Pass 0 — Scene card
+**Sees:** Raw transcript only. No graph. No thinking budget.
+**Job:** Build a structured overview for downstream passes. Descriptive, not classificatory.
+**Output:** Projects, people, approaches, committed/planned/vague items, causal links, tried-and-abandoned.
+
+Key constraint: Pass 0 cannot classify reliably — it has no thinking budget and no graph.
+It describes what it observes. Classification happens in Pass 1 and Pass 2.
+
+Common failure mode: Pass 0 lifts generic organizational nouns ("company", "team", "the lab")
+as project names. The prompt instructs it to check KNOWN PROJECTS first — generic nouns
+are pronouns, not project identifiers.
+
+### Pass 1 — Extraction
+**Sees:** Scene card + transcript. No graph. No thinking budget.
+**Job:** Extract every discrete item worth saving. Assign provisional type.
+**Output:** Items with id, text, source, excerpt, provisional_type.
+
+Tuned for **recall** — miss nothing. Wrong type is fixable in Pass 2. A missed item is gone.
+
+The backward trace rule: after extracting any decision, ask "what does this replace?" The
+predecessor is a dead_end candidate even without explicit "failed" or "abandoned" language.
+
+### Pass 2 — Classify + Causality
+**Sees:** Items from Pass 1 + scene card + full PROJECT GRAPH. Has thinking budget.
+**Job:** Verify types, draw causal links, fill unique fields.
+**Output:** Classified items with correct types, triggered_by_items, based_on_items, unique{}.
+
+This is the most powerful pass. It has everything it needs to:
+- Override wrong provisional types from Pass 1
+- Draw causal arrows between items in this batch
+- Fill structured unique{} fields from verbatim excerpts
+- Validate project attribution against PROJECT GRAPH
+
+Dead_end guard: "Was this invested in?" Resources committed = time, money, actual use,
+formal evaluation. A casual mention is not investment. Speculation is not investment.
+
+Project attribution order: PROJECT GRAPH roots first → scene card COMMITTED prefixes →
+cross-batch context. Generic nouns that don't appear in PROJECT GRAPH as roots are wrong.
+
+### Pass 3 — Build
+**Sees:** Classified items + KNOWN PROJECT ROOTS + full PROJECT GRAPH. Has thinking budget.
+**Job:** Assemble each item into a complete graph block. Name it. Check for duplicates.
+**Output:** new_blocks[], updates[], skip_reasons[].
+
+Pass 3 does NOT re-derive what Pass 2 already computed. It copies:
+- `unique{}` directly from Pass 2 item (never re-derives)
+- `flow_role` directly from Pass 2 item
+- `project` from Pass 2 item (only re-checks if missing or not in KNOWN PROJECT ROOTS)
+
+Naming: concept names WHAT changed, not HOW or WHY. Strip "because", "using", "via" —
+what remains before those words is the concept.
+
+### Pass 4 — Wire relations *(Pro tier only)*
+**Sees:** New blocks from Pass 3 + fresh graph context + scene card. Has thinking budget.
+**Job:** Find causal relations the pipeline didn't wire during Pass 3. Build explicit typed edges.
+**Output:** relations[] — typed connections using: `extends`, `supersedes`, `superseded_by`, `prompted_by`, `based_on`, `resolves`.
+
+Pass 4 only runs when `isProTier()` returns true. On non-Pro instances this step is skipped entirely.
+
+**Pending/activate pattern:** Blocks saved by Pass 3 are stored with `status: "pending"` — they are invisible to agents until Pass 4 completes (or is confirmed skipped). Once Pass 4 finishes, pending blocks are activated and become queryable. This prevents agents from seeing half-wired blocks mid-pipeline.
+
+### Pass 5 — Chain synthesis
+**Sees:** Relations from this turn. Has thinking budget.
+**Job:** Find causal clusters. Name them. Write compressed arc.
+**Output:** Chain blocks with `arc` (type sequence) and `chain_essence` (one-sentence story).
+
+Chain blocks get `chain_id = their own id`. All members get `chain_id` stamped on them
+by server-side BFS. Members can be found via `?chain_id=blk_xxx`.
+
+---
+
+## Block anatomy — what a block actually contains
+
+From a live block read (`forge_decision_hs256-jwt-tokens`):
+
+```json
+{
+  "label":        "forge_decision_hs256-jwt-tokens",
+  "type":         "decision",
+  "essence":      "JWT access tokens signed with HS256 using a single shared secret...",
+  "confidence":   0.8,
+  "quality_score": 3,
+  "ttl":          "permanent",
+  "chain_id":     "010e275c-23b1-405f-8fea-f8a912f5abae",
+  "flow_role":    null,
+  "content": {
+    "unique": {
+      "choice":               "HS256 HMAC signing with shared secret",
+      "reason":               "Simple to implement, single key to manage",
+      "alternatives_rejected":"RS256 considered but deemed unnecessary complexity"
+    }
+  }
+}
+```
+
+**`essence`** — one sentence, ≤120 chars. What is this and why does it matter.
+The primary field agents read in recall results.
+
+**`unique{}`** — structured fields per type. What agents read when they open the block.
+Decision: `{choice, reason, alternatives_rejected}`.
+Dead end: `{approach, reason, alternative}`.
+Constraint: `{limit, reason, source}`.
+Filled by Pass 2. Copied by Pass 3. Never re-derived downstream.
+
+**`quality_score` (0–6)** — structural completeness. Each criterion = +1:
+essence is specific / type valid / unique{} ≥2 fields / has{} present / concepts ≥3 terms / ≥1 relation.
+Recomputed when a relation is added. Used directly in recall ranking.
+
+**`confidence` (0.0–1.0)** — vestigial epistemic trust. Stays at 0.8 for almost all blocks.
+Rarely changes because `derived_from` propagation almost never fires (pipeline uses `triggered_by`,
+`based_on`, not `derived_from`). Does protect permanent blocks from archival:
+`ttl=permanent AND confidence≥0.8` = protected. Accepted design debt — not worth removing.
+
+**`ttl`** — survival:
+- `permanent` — decisions, dead_ends, constraints, blueprints. Never auto-archived.
+- `project` — facts, insights, questions, tasks, entities. Archived when project closes.
+- `session` — calculations, temporary lookups. Cleaned up after session ends.
+
+**`flow_role`** — narrative role in a causal chain: `trigger | problem | cause | mechanism | solution | outcome`.
+Set by Pass 2, copied by Pass 3. Used by Pass 5 to build chain arcs.
+
+**`chain_id`** — UUID shared by all blocks in a causal cluster. Stamped server-side by BFS
+after save. Not a relation — just a flat tag. Chain block has `chain_id = its own id`.
+
+---
+
+## TTL and archival
+
+Blocks survive based on type + access:
+
+| TTL | Survival rule |
+|---|---|
+| `permanent` + `confidence ≥ 0.8` | Protected — never archived |
+| `permanent` + `confidence < 0.5` + zero access + 30 days | Archival risk |
+| `project` | Archived when project closes |
+| `session` | Cleaned up automatically |
+
+**Important:** An unused block is not a low-value block. A constraint about a regulation
+that hasn't been accessed in months is exactly what must survive — it's future-relevant
+institutional memory. The whole point is that agents shouldn't re-derive constraints they
+don't know exist yet. Permanent blocks are safe from this risk.
+
+---
+
+## Agent protocol (rules the agent must follow)
+
+**Rule 1 — Coordinates before save**
+Every block needs `triggered_by` pointing to the block that led to this realization.
+Naming: `{project}_{entity}_{type}_{concept}`. 4 dimensions. Never 5.
+
+**Rule 2 — Only decisions and dead ends (save manually)**
+Everything else is saved by the pipeline. Manual saving only for decisions (user confirmed)
+and dead ends (approach abandoned). Double-saving creates duplicates.
+
+**Rule 3 — Check dead ends before suggesting**
+```bash
+GET /api/blocks?label_prefix={project}_dead_end&q={concept}
+GET /api/blocks?type=constraint&project={project}
+```
+Suggesting something that already failed is the system's worst outcome.
+
+**Rule 4 — Tasks: claim before working, declare at end of turn**
+Claim: `workspace_task_next({ project: "X" })` — sets in_progress, returns context.
+Declare: use anchor phrases so pipeline creates task blocks:
+`Next task: <desc> | <label>` / `Task done: <label> | outcome: <X>`
+
+**Rule 5 — Trigger reflect at end of every turn**
+```bash
+POST /api/reflect/trigger
+{ "hint": "decision|dead_end|chain|discovery|state_change", "agent_response": "...", "user_message": "..." }
+```
+
+---
+
+## Known gaps (April 2026)
+
+| Gap | Impact |
+|---|---|
+| Task assignments not reliably saved | Person → task ownership lost. Both benchmarks miss N12. |
+| Dead_end → decision causal links drawn inconsistently | Chain arcs fragmented — some pairs linked, some not |
+| Question suppression in Pass 3 too broad | Valid unresolved questions killed if topically near a decision |
+| Chain member traversal requires a second query | Chain block itself doesn't inline members — use `GET /api/blocks?chain_id=xxx` to list them |
+| `unique{}` empty on blocks saved before April 2026 | Older blocks have content only in `essence`, not structured fields |
+
+---
+
+## Benchmark status
+
+Two benchmarks test different properties:
+
+**v11 (40/42, 95%)** — Real-world gaps: authority signals, hypothetical filtering,
+PRD format, same-batch contradiction resolution.
+
+**v12 (42/42, 100%)** — Domain-agnostic universality: clinical research, business strategy,
+email thread format, task assignment, pure noise filtering.
+
+All needle types (decision, dead_end, constraint, blueprint, question, fact) score reliably.
+Consistent miss in v11: task assignment (N12).

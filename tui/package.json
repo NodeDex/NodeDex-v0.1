@@ -1,0 +1,28 @@
+{
+  "name": "nodedex-tui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Live mission-control TUI for a NodeDex memory server — reads the REST API, never the DB.",
+  "scripts": {
+    "dev": "tsx src/cli.tsx",
+    "start": "tsx src/cli.tsx",
+    "reconfigure": "node scripts/reconfigure.mjs",
+    "uninstall": "node scripts/uninstall.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ink": "^5.0.1",
+    "ink-gradient": "^3.0.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "@types/react": "^18.3.11",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
