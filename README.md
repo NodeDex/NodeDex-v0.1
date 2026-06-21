@@ -40,7 +40,7 @@ The agent is stateless by default. NodeDex makes it stateful. The graph is the i
 
 - **The agent** navigates the graph with **read-only** MCP tools (`workspace_get`, `workspace_search`, `workspace_filter`, `workspace_tree`, `workspace_stats`, …). It writes nothing.
 - **The pipeline** (a server-side AI) compiles everything — facts, decisions, dead ends, insights, constraints, reasoning chains — **async**, from each captured turn. The agent never has to stop and save.
-- **Capture** is a tiny out-of-path tee the agent installs once (`workspace_install_capture`); it sends a copy of each finished turn to the server. NodeDex is a passive MCP server — it can't see the agent's replies on its own, so **without capture the graph stays empty**.
+- **Capture** wires each finished turn to the server — either by routing the agent's model through NodeDex's proxy (hosted agents like Hermes) or a small out-of-path tee for agents whose loop you control (`workspace_install_capture`). NodeDex is a passive MCP server — it can't see the agent's replies on its own, so **without capture the graph stays empty** (see [Connect your agent](#connect-your-agent)).
 
 **SQLite WAL** — a single local file, bitemporal relations (history preserved, never deleted).
 
