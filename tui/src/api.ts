@@ -257,7 +257,7 @@ export async function postConfig(patch: Record<string, string | number>): Promis
   try {
     const r = await fetch(`${currentBase}/api/admin/config`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...authHeaders() },
       body: JSON.stringify(patch),
       signal: AbortSignal.timeout(8000),
     });
@@ -269,7 +269,7 @@ export async function postConfig(patch: Record<string, string | number>): Promis
 export async function setReflectPausedRemote(paused: boolean): Promise<boolean> {
   try {
     const r = await fetch(`${currentBase}/api/reflect/${paused ? "pause" : "resume"}`, {
-      method: "POST", signal: AbortSignal.timeout(6000),
+      method: "POST", headers: authHeaders(), signal: AbortSignal.timeout(6000),
     });
     return r.ok;
   } catch { return false; }
@@ -403,7 +403,7 @@ export async function postFlagReview(
   try {
     const r = await fetch(`${currentBase}/api/flags/${encodeURIComponent(id)}/review`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...authHeaders() },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(8000),
     });
