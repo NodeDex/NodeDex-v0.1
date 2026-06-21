@@ -33,7 +33,7 @@ import {
   type DbFile,
 } from "./servers.js";
 
-type InputMode = null | "launch-port" | "launch-bind" | "add-url";
+type InputMode = null | "launch-port" | "launch-bind" | "launch-info" | "add-url";
 type Picker = null | { kind: "launch"; port?: number } | { kind: "swap"; url: string; port: number };
 // Sub-view inside the picker. "list" picks a db; Enter opens "menu"; the others are
 // the typed flows. delete is two-step: confirm, then type "delete <name>".
@@ -79,6 +79,8 @@ export function ServersTab({
   const [dbIdx, setDbIdx] = useState(0);            // 0 = "＋ new db", 1.. = fdbs[dbIdx-1]
   const [chosenDb, setChosenDb] = useState("");
   const [launchPort, setLaunchPort] = useState(0);  // port chosen, pending the bind-mode choice
+  const [bindSel, setBindSel] = useState(0);        // 0 = this machine, 1 = docker/remote (arrow-pick)
+  const [launchInfo, setLaunchInfo] = useState<{ port: number; token: string } | null>(null); // network launch → hold the token on screen until acknowledged
   const [dbView, setDbView] = useState<DbView>({ mode: "list" });
   const seq = useRef(0);
 
@@ -212,7 +214,8 @@ export function ServersTab({
       const port = Number(val);
       if (!Number.isFinite(port) || port <= 0) { setNotice("invalid port"); return; }
       setLaunchPort(port);
-      setMode("launch-bind"); // ask local vs docker/remote before actually launching
+      setBindSel(0);
+      setMode("launch-bind"); // ask local vs docker/remote (arrow-pick) before launching
       return;
     }
     if (mode === "add-url") {
@@ -227,18 +230,20 @@ export function ServersTab({
   // Actually launch (after the bind-mode choice). network → bind 0.0.0.0 + a generated token
   // so a Docker/remote agent can reach it; local → default localhost bind, no token.
   const doLaunch = (network: boolean) => {
-    setMode(null);
     const port = launchPort;
     const token = network ? genToken() : undefined;
     const r = launchServer({ port, dbPath: chosenDb, bindHost: network ? "0.0.0.0" : undefined, token });
     const db = chosenDb.split(/[\\/]/).pop();
-    setNotice(
-      !r.ok
-        ? `launch failed: ${r.error}`
-        : network
-          ? `launching :${port} → ${db} on 0.0.0.0 · agent → http://host.docker.internal:${port}/mcp · token: ${token}`
-          : `launching :${port} → ${db} (localhost, reviewer OFF) · log ${r.logPath?.split(/[\\/]/).pop()}`
-    );
+    if (!r.ok) { setMode(null); setNotice(`launch failed: ${r.error}`); return; }
+    if (network && token) {
+      // hold a dedicated screen with the URL + token until the user acknowledges — never
+      // flash a secret past in a notice that auto-clears.
+      setLaunchInfo({ port, token });
+      setMode("launch-info");
+    } else {
+      setMode(null);
+      setNotice(`launching :${port} → ${db} (localhost, reviewer OFF) · log ${r.logPath?.split(/[\\/]/).pop()}`);
+    }
     setTimeout(() => { rescan(); scanFree(); }, 1800);
   };
 
@@ -304,12 +309,17 @@ export function ServersTab({
         return;
       }
 
-      // 2a. launch bind-mode choice (local vs docker/remote) — single-key l/d, not text
+      // 2a. post-launch info screen (network token) — shown until acknowledged
+      if (mode === "launch-info") {
+        if (key.return || key.escape) { setMode(null); setLaunchInfo(null); }
+        return;
+      }
+
+      // 2b. launch bind-mode choice (local vs docker/remote) — ↑↓ to pick, enter to confirm
       if (mode === "launch-bind") {
         if (key.escape) { setMode(null); setNotice("cancelled"); return; }
-        const kk = input.toLowerCase();
-        if (kk === "l") { doLaunch(false); return; }
-        if (kk === "d") { doLaunch(true); return; }
+        if (key.upArrow || key.downArrow || input === "j" || input === "k") { setBindSel((s) => (s === 0 ? 1 : 0)); return; }
+        if (key.return) { doLaunch(bindSel === 1); return; }
         return;
       }
 
@@ -469,10 +479,20 @@ export function ServersTab({
           <Text color={theme.dim}>{`   press [l] to launch on one`}</Text>
         </Text>
       )}
-      {mode === "launch-bind" ? (
+      {mode === "launch-info" && launchInfo ? (
+        <Box borderStyle="round" borderColor={theme.accent} paddingX={1} flexDirection="column">
+          <Text color={theme.ok}>{`✓ launched on 0.0.0.0:${launchInfo.port} — reachable from Docker / another machine`}</Text>
+          <Text color={theme.label}>{`  agent URL:   `}<Text color={theme.value}>{`http://host.docker.internal:${launchInfo.port}/mcp`}</Text></Text>
+          <Text color={theme.label}>{`  auth header: `}<Text color={theme.value}>{`Authorization: Bearer ${launchInfo.token}`}</Text></Text>
+          <Text color={theme.warn}>{`  ⚠ keep this token safe & secret — your agent needs it; it won't be shown again.`}</Text>
+          <Text color={theme.dim}>{`  [enter] got it`}</Text>
+        </Box>
+      ) : mode === "launch-bind" ? (
         <Box borderStyle="round" borderColor={theme.warn} paddingX={1} flexDirection="column">
           <Text color={theme.warn}>{`launch :${launchPort} — where will your agent run?`}</Text>
-          <Text color={theme.dim}>{`  [l] this machine (localhost)   [d] Docker / another machine (0.0.0.0 + token)   ·   esc cancel`}</Text>
+          <Text bold={bindSel === 0} color={bindSel === 0 ? theme.accent : theme.dim}>{`${bindSel === 0 ? " ▸ " : "   "}This machine (localhost) — simplest & private`}</Text>
+          <Text bold={bindSel === 1} color={bindSel === 1 ? theme.accent : theme.dim}>{`${bindSel === 1 ? " ▸ " : "   "}Docker / another machine (0.0.0.0 + token)`}</Text>
+          <Text color={theme.dim}>{`  ↑↓ pick · enter · esc cancel`}</Text>
         </Box>
       ) : mode ? (
         <Box borderStyle="round" borderColor={theme.warn} paddingX={1}>

@@ -405,6 +405,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             <Box flexDirection="column" alignItems="center">
               <Text color={theme.dim}>your agent must send this header:</Text>
               <Text color={theme.accent}>{`Authorization: Bearer ${netToken}`}</Text>
+              <Text color={theme.warn}>⚠ keep this token safe &amp; secret — it won't be shown again</Text>
             </Box>
           ) : null}
           <Box marginTop={1} flexDirection="column">
