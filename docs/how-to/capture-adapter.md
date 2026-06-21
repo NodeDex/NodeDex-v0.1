@@ -4,8 +4,10 @@ Nodedex's MCP server is **passive**: it only ever sees tool-call arguments and i
 responses — never the agent's natural-language output or reasoning. So it **cannot capture
 turns itself**. Something host-side has to *push* each finished turn into the pipeline.
 
-On an autonomous agent host (e.g. Hermes) or any SDK, use the **capture adapter** — a
-thin, non-intrusive tee the agent installs once via `workspace_install_capture`.
+There are two host-side ways to push turns: the **capture adapter (tee)** for agents whose
+code/loop you control (an SDK, your own loop) — installed once via `workspace_install_capture`
+— and, for **hosted or sandboxed agents that can't deploy a tee** (e.g. Hermes/Owl running in a
+container), the **model proxy** (see *"When the tee can't be deployed"* below).
 
 ## Why a tee (and not the proxy)
 
@@ -20,6 +22,41 @@ There are three ways to get turns into `POST /api/reflect/trigger`:
 The tee is the chosen default: it keeps the agent's own LLM call **untouched** (just sends a
 copy *after* the turn finishes), yet can still read reasoning off the response object, and runs
 on any host. A capture failure is invisible to the agent — fire-and-forget with a 4s timeout.
+
+## When the tee can't be deployed — use the model proxy
+
+A **sandboxed or closed-app agent** (running inside a container, or a host whose turn loop you
+don't control) often **can't deploy the tee at all** — it can't write the adapter to a useful
+place or wire a post-turn callback. For these, use the **`/api/chat` proxy**: point the agent's
+**model base URL** at Nodedex, and it captures each turn as it relays the call to your real
+provider — transparently (same response, no added latency, streaming intact).
+
+In the host's model/provider settings:
+- **base URL** → `http://<nodedex-host>:<port>/api`  (same machine: `http://localhost:3001/api`;
+  from a Docker container reaching a host server: `http://host.docker.internal:3001/api`)
+- **API key / model** → unchanged — forwarded untouched to your provider
+
+No file, no post-turn seam, and **no Nodedex token** for capture (the `/api/chat` path is exempt
+and uses your own provider key). Works for any agent that speaks OpenAI `/chat/completions` and
+lets you set a base URL.
+
+### Worked example — Hermes
+Hermes's config is at `~/.hermes/config.yaml` (Windows: `%LOCALAPPDATA%\hermes\config.yaml`).
+Under the `model:` block, swap `base_url` from the provider to the proxy:
+
+```yaml
+model:
+  default: openrouter/owl-alpha
+  provider: openrouter
+  base_url: http://localhost:3002/api   # was https://openrouter.ai/api/v1
+  api_mode: chat_completions
+```
+
+Or `hermes config set model.base_url http://localhost:3002/api`, then **restart the Hermes
+gateway**. Use `localhost` (the gateway makes the model call from the host); use
+`host.docker.internal` only if the call originates inside the container. **Trade-off:** model
+calls now flow through Nodedex — if Nodedex is down the agent can't reach the model; revert by
+setting `base_url` back to the provider URL.
 
 ## What gets captured
 
@@ -79,6 +116,7 @@ nodedexCapture(turn, { capture: { user: false, reasoning: false } });
 | `NODEDEX_CAPTURE_USER` | on | the user's message |
 | `NODEDEX_CAPTURE_REASONING` | on | reasoning, when the host exposes it |
 | `NODEDEX_URL` | `http://localhost:3001` | where the server lives |
+| `NODEDEX_TOKEN` | (none) | sent as `x-nodedex-token` when the server is token-gated (`0.0.0.0` + `NODEDEX_API_TOKEN`); without it those captures 401 |
 | `NODEDEX_CAPTURE_BUFFER` | off | on ⇒ buffer to `~/.nodedex/capture-buffer.jsonl` when the server is down, flush on next success |
 
 ## Guarantees
