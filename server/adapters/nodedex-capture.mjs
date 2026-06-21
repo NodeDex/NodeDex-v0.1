@@ -105,10 +105,18 @@ async function bufferHandle() {
   } catch { return null; }                                            // non-node runtime → no buffering
 }
 
+/** Auth header for a token-gated server (NODEDEX_BIND_HOST=0.0.0.0 + NODEDEX_API_TOKEN).
+ *  /api/reflect/trigger is gated, so set NODEDEX_TOKEN where the adapter runs or captures
+ *  get 401'd. Empty when the server is open (localhost / no token). */
+function authHeaders() {
+  const t = env.NODEDEX_TOKEN || env.NODEDEX_API_TOKEN || "";
+  return t ? { "x-nodedex-token": t } : {};
+}
+
 async function post(url, payload) {
   const res = await fetch(`${url}/api/reflect/trigger`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(4000),
   });
