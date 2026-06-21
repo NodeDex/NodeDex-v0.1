@@ -65,12 +65,13 @@ git clone https://github.com/NodeDex/NodeDex-v0.1.git
 cd NodeDex-v0.1
 ```
 
-**2. Install and build the server**
+**2. Install the server**
 ```bash
 cd server
-npm install
-npm run build
+npm install        # also compiles the native SQLite driver (one-time)
 ```
+*(No separate build step in this flow — the wizard runs the server from source. `npm run
+build` is only for the direct-run / stdio paths; see [Commands](#commands).)*
 
 **3. Run the onboarding wizard**
 ```bash
@@ -81,8 +82,13 @@ npm run dev          # first run launches the setup wizard
 
 The wizard walks you through it: provider + API key → model (with a free-but-trains-on-prompts
 warning where it applies) → pick a free port → create or name a database → it starts the
-server. On first run it also downloads the bundled local embedding model (one-time) so
-semantic search works offline with no extra key.
+server on **`localhost`**. On first run it also downloads the bundled local embedding model
+(one-time) so semantic search works offline with no extra key.
+
+> Localhost is right when your agent runs on **this same machine**. If your agent runs in
+> **Docker or on another machine**, use the wizard to configure your key/model, but start the
+> server as shown in [Connect → *Agent in Docker / on another machine*](#connect-your-agent)
+> (it needs to bind `0.0.0.0` + a token).
 
 Embeddings default to a **bundled local model** (offline, free, no key). To use a hosted
 embedder instead, put `EMBEDDING_PROVIDER=gemini` (or `openai`) in `~/.nodedex/.env` — it's a
@@ -100,15 +106,12 @@ NodeDex is built for **autonomous agents** (e.g. Hermes). The onboarding wizard 
 and starts the **server**; connecting your agent to it is your step. Two things have to
 happen — and they're separate:
 
-**1. Give the agent the tools (read side).** Register the running server with your agent
-host over MCP. The server speaks **Streamable-HTTP MCP** at `/mcp`:
+**1. Give the agent the tools (read side).** Register the running server with your agent host
+over MCP (**Streamable-HTTP** at `/mcp`). How depends on **where your agent runs**:
 
-```
-http://localhost:<port>/mcp
-```
-
-Most MCP hosts take a small JSON config. **HTTP** (the wizard already started the server —
-point your host at its `/mcp` URL):
+### Same machine (default)
+Your agent runs on this computer, so it can reach `localhost` — and the wizard already started
+the server there. Point your host at the `/mcp` URL (most MCP hosts take a small JSON config):
 
 ```json
 {
@@ -131,20 +134,42 @@ Or let the host **spawn it over stdio** (run `npm run build` in `server/` first)
 }
 ```
 
-For a CLI-style host (e.g. Hermes):
+CLI-style host (e.g. Hermes): `hermes mcp add nodedex --url http://localhost:3001/mcp`, then
+reload its MCP connections and start a new session.
+
+### Agent in Docker / on another machine
+A containerized or remote agent **cannot** reach the host's `localhost`, so the server must
+(a) bind to all interfaces and (b) be protected with a token. Start it from `server/`:
 
 ```bash
-hermes mcp add nodedex --url http://localhost:<port>/mcp
-# then reload the host's MCP connections (e.g. /reload-mcp) and start a new session
+# macOS / Linux
+NODEDEX_BIND_HOST=0.0.0.0 NODEDEX_API_TOKEN=<a-secret> PORT=3001 npm run dev
+```
+```powershell
+# Windows PowerShell
+$env:NODEDEX_BIND_HOST="0.0.0.0"; $env:NODEDEX_API_TOKEN="<a-secret>"; $env:PORT="3001"; npm run dev
 ```
 
-> Binding on `0.0.0.0` (e.g. to reach the server from a Docker container) requires a
-> `NODEDEX_API_TOKEN` and an `Authorization: Bearer <token>` header — see
-> [docs/how-to/connect-mcp-over-http.md](docs/how-to/connect-mcp-over-http.md).
+Then point the agent at the **host** address (not `localhost`) and send the token:
 
-The agent now sees the **read tools** and can traverse the graph. (The server delivers
-its own usage protocol via the MCP `instructions` field, so the agent knows the
-navigate-first reflexes without any prompt changes from you.)
+```json
+{
+  "mcpServers": {
+    "nodedex": {
+      "url": "http://host.docker.internal:3001/mcp",
+      "headers": { "Authorization": "Bearer <a-secret>" }
+    }
+  }
+}
+```
+
+`host.docker.internal` reaches the host from a Docker Desktop container (on Linux Docker, add
+`--add-host=host.docker.internal:host-gateway`). **Without `0.0.0.0` you get *connection
+refused*; without the token the graph is reachable on your network unauthenticated.** Full
+detail: [docs/how-to/connect-mcp-over-http.md](docs/how-to/connect-mcp-over-http.md).
+
+The agent now sees the **read tools** and can traverse the graph. (The server delivers its own
+usage protocol via the MCP `instructions` field — no prompt changes needed from you.)
 
 **2. Turn on capture (write side) — required, or the graph stays empty.** NodeDex is a
 *passive* MCP server: it sees tool calls, **not** your agent's actual replies. So nothing
