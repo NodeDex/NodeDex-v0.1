@@ -48,6 +48,17 @@ The agent is stateless by default. NodeDex makes it stateful. The graph is the i
 
 ## Setup
 
+**Prerequisites — install these first.** The project's own commands below (`git clone`,
+`npm install`, `npm run build`, `npm run dev`) are **identical on macOS, Linux, and Windows**.
+What differs per OS is getting the two underlying tools installed:
+
+| OS | Node.js ≥ 18 | C/C++ build toolchain (the native SQLite driver compiles on install) |
+|---|---|---|
+| **macOS** | [nodejs.org](https://nodejs.org) · or `brew install node` | `xcode-select --install` |
+| **Debian/Ubuntu** | [nvm](https://github.com/nvm-sh/nvm) · or `sudo apt-get install -y nodejs npm` | `sudo apt-get install -y build-essential python3` |
+| **Fedora/RHEL** | `sudo dnf install -y nodejs` | `sudo dnf install -y gcc-c++ make python3` |
+| **Windows** | [nodejs.org](https://nodejs.org) · or `winget install OpenJS.NodeJS` | [VS Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) → "Desktop development with C++" |
+
 **1. Download**
 ```bash
 git clone https://github.com/NodeDex/NodeDex-v0.1.git
@@ -74,21 +85,10 @@ server. On first run it also downloads the bundled local embedding model (one-ti
 semantic search works offline with no extra key.
 
 Embeddings default to a **bundled local model** (offline, free, no key). To use a hosted
-embedder instead, set `EMBEDDING_PROVIDER=gemini` (or `openai`). All config lives in
-`~/.nodedex/` and your provider key never enters the repo.
-
-**Requirements:** Node.js ≥ 18. The commands above (`git`, `npm`) are identical on every OS —
-but the `server`'s native SQLite driver (`better-sqlite3-multiple-ciphers`) compiles on
-`npm install`, so you need a C/C++ build toolchain for your platform:
-
-| OS | Install the build toolchain |
-|---|---|
-| **macOS** | `xcode-select --install` |
-| **Linux** (Debian/Ubuntu) | `sudo apt-get install -y build-essential python3` |
-| **Linux** (Fedora/RHEL) | `sudo dnf install -y gcc-c++ make python3` |
-| **Windows** | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload |
-
-(On Windows, `~/.nodedex` in this README means `C:\Users\<you>\.nodedex`.)
+embedder instead, put `EMBEDDING_PROVIDER=gemini` (or `openai`) in `~/.nodedex/.env` — it's a
+config value, not a shell command, so it's the same on every OS. All config lives in
+`~/.nodedex/` and your provider key never enters the repo. *(On Windows, `~/.nodedex` means
+`C:\Users\<you>\.nodedex`.)*
 
 **Next:** [connect your agent](#connect-your-agent) to the running server.
 
