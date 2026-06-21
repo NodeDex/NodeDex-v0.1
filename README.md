@@ -77,9 +77,18 @@ Embeddings default to a **bundled local model** (offline, free, no key). To use 
 embedder instead, set `EMBEDDING_PROVIDER=gemini` (or `openai`). All config lives in
 `~/.nodedex/` and your provider key never enters the repo.
 
-**Requirements:** Node.js ≥ 18. `server` builds a native SQLite driver
-(`better-sqlite3-multiple-ciphers`) on install, so a working C/C++ toolchain is needed
-(build-essential / Xcode CLT / MSVC Build Tools).
+**Requirements:** Node.js ≥ 18. The commands above (`git`, `npm`) are identical on every OS —
+but the `server`'s native SQLite driver (`better-sqlite3-multiple-ciphers`) compiles on
+`npm install`, so you need a C/C++ build toolchain for your platform:
+
+| OS | Install the build toolchain |
+|---|---|
+| **macOS** | `xcode-select --install` |
+| **Linux** (Debian/Ubuntu) | `sudo apt-get install -y build-essential python3` |
+| **Linux** (Fedora/RHEL) | `sudo dnf install -y gcc-c++ make python3` |
+| **Windows** | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload |
+
+(On Windows, `~/.nodedex` in this README means `C:\Users\<you>\.nodedex`.)
 
 **Next:** [connect your agent](#connect-your-agent) to the running server.
 
