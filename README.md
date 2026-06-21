@@ -46,6 +46,45 @@ The agent is stateless by default. NodeDex makes it stateful. The graph is the i
 
 ---
 
+## Setup
+
+**1. Download**
+```bash
+git clone https://github.com/NodeDex/NodeDex-v0.1.git
+cd NodeDex-v0.1
+```
+
+**2. Install and build the server**
+```bash
+cd server
+npm install
+npm run build
+```
+
+**3. Run the onboarding wizard**
+```bash
+cd ../tui
+npm install
+npm run dev          # first run launches the setup wizard
+```
+
+The wizard walks you through it: provider + API key → model (with a free-but-trains-on-prompts
+warning where it applies) → pick a free port → create or name a database → it starts the
+server. On first run it also downloads the bundled local embedding model (one-time) so
+semantic search works offline with no extra key.
+
+Embeddings default to a **bundled local model** (offline, free, no key). To use a hosted
+embedder instead, set `EMBEDDING_PROVIDER=gemini` (or `openai`). All config lives in
+`~/.nodedex/` and your provider key never enters the repo.
+
+**Requirements:** Node.js ≥ 18. `server` builds a native SQLite driver
+(`better-sqlite3-multiple-ciphers`) on install, so a working C/C++ toolchain is needed
+(build-essential / Xcode CLT / MSVC Build Tools).
+
+**Next:** [connect your agent](#connect-your-agent) to the running server.
+
+---
+
 ## Connect your agent
 
 NodeDex is built for **autonomous agents** (e.g. Hermes). The onboarding wizard sets up
@@ -118,39 +157,6 @@ links server-side).
 **Full per-host detail** (HTTP transport, Docker / `host.docker.internal`, the capture
 adapter, env toggles): [docs/how-to/connect-mcp-over-http.md](docs/how-to/connect-mcp-over-http.md)
 and [docs/how-to/deploying-nodedex.md](docs/how-to/deploying-nodedex.md).
-
----
-
-## Setup
-
-**1. Install and build the server**
-```bash
-cd server
-npm install
-npm run build
-```
-
-**2. Run the onboarding wizard**
-```bash
-cd ../tui
-npm install
-npm run dev          # first run launches the setup wizard
-```
-
-The wizard walks you through it: provider + API key → model (with a free-but-trains-on-prompts
-warning where it applies) → pick a free port → create or name a database → it starts the
-server. On first run it also downloads the bundled local embedding model (one-time) so
-semantic search works offline with no extra key.
-
-**3. Connect your agent** — see [Connect your agent](#connect-your-agent) above.
-
-Embeddings default to a **bundled local model** (offline, free, no key). To use a hosted
-embedder instead, set `EMBEDDING_PROVIDER=gemini` (or `openai`). All config lives in
-`~/.nodedex/` and your provider key never enters the repo.
-
-**Requirements:** Node.js ≥ 18. `server` builds a native SQLite driver
-(`better-sqlite3-multiple-ciphers`) on install, so a working C/C++ toolchain is needed
-(build-essential / Xcode CLT / MSVC Build Tools).
 
 ---
 
