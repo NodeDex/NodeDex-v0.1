@@ -210,6 +210,9 @@ drop into your post-turn seam (it POSTs `{user, response, reasoning}` to the ser
 
 *(Note these are two different keys: the **NodeDex token** authenticates the MCP read connection; your **provider key** is what the proxy forwards to OpenRouter. On a same-machine localhost server, the NodeDex token isn't needed at all.)*
 
+**Using Hermes / Owl?** Full end-to-end walkthrough (MCP read + proxy capture + every gotcha):
+[docs/how-to/connect-hermes.md](docs/how-to/connect-hermes.md).
+
 **Full per-host detail** (HTTP transport, Docker / `host.docker.internal`, the capture
 adapter, env toggles): [docs/how-to/connect-mcp-over-http.md](docs/how-to/connect-mcp-over-http.md)
 and [docs/how-to/deploying-nodedex.md](docs/how-to/deploying-nodedex.md).
