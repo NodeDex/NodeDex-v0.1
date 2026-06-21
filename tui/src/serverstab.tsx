@@ -19,6 +19,7 @@ import {
   discover,
   listDbs,
   launchServer,
+  genToken,
   stopServer,
   swapDb,
   addPin,
@@ -32,7 +33,7 @@ import {
   type DbFile,
 } from "./servers.js";
 
-type InputMode = null | "launch-port" | "add-url";
+type InputMode = null | "launch-port" | "launch-bind" | "add-url";
 type Picker = null | { kind: "launch"; port?: number } | { kind: "swap"; url: string; port: number };
 // Sub-view inside the picker. "list" picks a db; Enter opens "menu"; the others are
 // the typed flows. delete is two-step: confirm, then type "delete <name>".
@@ -77,6 +78,7 @@ export function ServersTab({
   const [dbFilter, setDbFilter] = useState("");
   const [dbIdx, setDbIdx] = useState(0);            // 0 = "＋ new db", 1.. = fdbs[dbIdx-1]
   const [chosenDb, setChosenDb] = useState("");
+  const [launchPort, setLaunchPort] = useState(0);  // port chosen, pending the bind-mode choice
   const [dbView, setDbView] = useState<DbView>({ mode: "list" });
   const seq = useRef(0);
 
@@ -207,16 +209,10 @@ export function ServersTab({
   const submitInput = () => {
     const val = buf.trim();
     if (mode === "launch-port") {
-      setMode(null);
       const port = Number(val);
       if (!Number.isFinite(port) || port <= 0) { setNotice("invalid port"); return; }
-      const r = launchServer({ port, dbPath: chosenDb });
-      setNotice(
-        r.ok
-          ? `launching :${port} → ${chosenDb.split(/[\\/]/).pop()} (reviewer OFF) · log ${r.logPath?.split(/[\\/]/).pop()}`
-          : `launch failed: ${r.error}`
-      );
-      setTimeout(() => { rescan(); scanFree(); }, 1800);
+      setLaunchPort(port);
+      setMode("launch-bind"); // ask local vs docker/remote before actually launching
       return;
     }
     if (mode === "add-url") {
@@ -226,6 +222,24 @@ export function ServersTab({
       addPin(url); setNotice(`pinned ${url}`); rescan();
       return;
     }
+  };
+
+  // Actually launch (after the bind-mode choice). network → bind 0.0.0.0 + a generated token
+  // so a Docker/remote agent can reach it; local → default localhost bind, no token.
+  const doLaunch = (network: boolean) => {
+    setMode(null);
+    const port = launchPort;
+    const token = network ? genToken() : undefined;
+    const r = launchServer({ port, dbPath: chosenDb, bindHost: network ? "0.0.0.0" : undefined, token });
+    const db = chosenDb.split(/[\\/]/).pop();
+    setNotice(
+      !r.ok
+        ? `launch failed: ${r.error}`
+        : network
+          ? `launching :${port} → ${db} on 0.0.0.0 · agent → http://host.docker.internal:${port}/mcp · token: ${token}`
+          : `launching :${port} → ${db} (localhost, reviewer OFF) · log ${r.logPath?.split(/[\\/]/).pop()}`
+    );
+    setTimeout(() => { rescan(); scanFree(); }, 1800);
   };
 
   // The action menu's entries (label depends on launch vs swap).
@@ -287,6 +301,15 @@ export function ServersTab({
         if (key.upArrow) { setDbIdx((i) => Math.max(0, i - 1)); return; }
         if (key.backspace || key.delete) { setDbFilter((f) => f.slice(0, -1)); setDbIdx(0); return; }
         if (input && !key.ctrl && !key.meta) { setDbFilter((f) => f + input); setDbIdx(0); }
+        return;
+      }
+
+      // 2a. launch bind-mode choice (local vs docker/remote) — single-key l/d, not text
+      if (mode === "launch-bind") {
+        if (key.escape) { setMode(null); setNotice("cancelled"); return; }
+        const kk = input.toLowerCase();
+        if (kk === "l") { doLaunch(false); return; }
+        if (kk === "d") { doLaunch(true); return; }
         return;
       }
 
@@ -446,7 +469,12 @@ export function ServersTab({
           <Text color={theme.dim}>{`   press [l] to launch on one`}</Text>
         </Text>
       )}
-      {mode ? (
+      {mode === "launch-bind" ? (
+        <Box borderStyle="round" borderColor={theme.warn} paddingX={1} flexDirection="column">
+          <Text color={theme.warn}>{`launch :${launchPort} — where will your agent run?`}</Text>
+          <Text color={theme.dim}>{`  [l] this machine (localhost)   [d] Docker / another machine (0.0.0.0 + token)   ·   esc cancel`}</Text>
+        </Box>
+      ) : mode ? (
         <Box borderStyle="round" borderColor={theme.warn} paddingX={1}>
           <Text color={theme.warn}>{`${promptLabel} `}</Text>
           <Text color={theme.accent}>{buf}</Text>

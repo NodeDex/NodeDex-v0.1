@@ -14,16 +14,31 @@ export function prefer127(url: string): string {
 // The active server. Mutable so the Servers pane can switch which graph the
 // TUI reads at runtime (was a const — multi-server switching needs it live).
 let currentBase = prefer127((process.env.NODEDEX_TUI_API || "http://localhost:3001").replace(/\/$/, ""));
+// Per-server API tokens. A server launched with NODEDEX_API_TOKEN gates its WHOLE REST API,
+// so the TUI must send the token to read it. Keyed by normalized base url; setBase picks the
+// active one up automatically, so every connect path authenticates without extra plumbing.
+const tokenByBase = new Map<string, string>();
+let currentToken = process.env.NODEDEX_TUI_TOKEN || "";
+export function registerToken(url: string, token: string | undefined | null): void {
+  const u = prefer127(url.replace(/\/$/, ""));
+  if (token) tokenByBase.set(u, token);
+  else tokenByBase.delete(u);
+}
+function authHeaders(forUrl?: string): Record<string, string> {
+  const t = forUrl ? (tokenByBase.get(prefer127(forUrl.replace(/\/$/, ""))) || "") : currentToken;
+  return t ? { "x-nodedex-token": t } : {};
+}
 export function getBase(): string {
   return currentBase;
 }
 export function setBase(url: string): void {
   currentBase = prefer127(url.replace(/\/$/, ""));
+  currentToken = tokenByBase.get(currentBase) || (process.env.NODEDEX_TUI_TOKEN || "");
 }
 
 async function getJSON<T = any>(path: string, timeoutMs = 4000): Promise<T | null> {
   try {
-    const r = await fetch(`${currentBase}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
+    const r = await fetch(`${currentBase}${path}`, { headers: authHeaders(), signal: AbortSignal.timeout(timeoutMs) });
     if (!r.ok) return null;
     return (await r.json()) as T;
   } catch {
@@ -35,13 +50,22 @@ async function getJSON<T = any>(path: string, timeoutMs = 4000): Promise<T | nul
 // used by server discovery. One cheap GET /api/session; short timeout so a dead
 // port fails fast.
 export async function probeServer(url: string): Promise<{ up: boolean; db?: string; blocks?: number }> {
+  const base = prefer127(url.replace(/\/$/, ""));
   try {
-    const r = await fetch(`${prefer127(url.replace(/\/$/, ""))}/api/session`, { signal: AbortSignal.timeout(1200) });
-    if (!r.ok) return { up: false };
-    const j = (await r.json()) as { db?: string; total_blocks?: number };
-    return { up: true, db: j.db, blocks: j.total_blocks };
-  } catch {
+    const r = await fetch(`${base}/api/session`, { headers: authHeaders(url), signal: AbortSignal.timeout(1200) });
+    if (r.ok) {
+      const j = (await r.json()) as { db?: string; total_blocks?: number };
+      return { up: true, db: j.db, blocks: j.total_blocks };
+    }
+    // Responded but gated (token required, not supplied) → still confirm liveness via the
+    // always-open /api/health route, so a token-protected server shows UP (without its data).
+    if (r.status === 401 || r.status === 403) {
+      const h = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(1200) });
+      if (h.ok) return { up: true };
+    }
     return { up: false };
+  } catch {
+    return { up: false }; // connection refused / timeout = genuinely down
   }
 }
 

@@ -19,8 +19,9 @@ import { fileURLToPath } from "url";
 import { dirname, resolve, basename } from "path";
 import { homedir } from "os";
 import { mkdirSync, createWriteStream, readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, rmSync } from "fs";
-import { probeServer, prefer127 } from "./api.js";
+import { probeServer, prefer127, registerToken } from "./api.js";
 import { providerEnv } from "./config.js";
+import { randomBytes } from "node:crypto";
 
 // server dir resolved from this file (.../Nodedex/tui/src/servers.ts → ../../server)
 const SERVER_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "server");
@@ -184,7 +185,7 @@ export function namePin(url: string, name: string): void {
 // rather than keep processes alive on exit (the zombie-port/DB-lock footgun). On startup we
 // relaunch each managed server that isn't already up and reconnect to the focused one.
 export interface LastServer { url: string; port: number | null; dbPath?: string; managed: boolean }
-interface ManagedRec { port: number; dbPath: string }
+interface ManagedRec { port: number; dbPath: string; bindHost?: string; token?: string }
 interface SessionState { managed: ManagedRec[]; connected?: LastServer }
 
 function loadSession(): SessionState {
@@ -213,7 +214,7 @@ function saveSession(s: SessionState): void {
 /** Snapshot the CURRENTLY-managed servers into the session. Called on launch + stop — NOT
  *  on child-exit, so a quit (which kills every child) can't wipe the list it should restore. */
 function persistManagedSnapshot(): void {
-  const list = [...managed.values()].map((m) => ({ port: m.port, dbPath: m.dbPath }));
+  const list = [...managed.values()].map((m) => ({ port: m.port, dbPath: m.dbPath, bindHost: m.bindHost, token: m.token }));
   saveSession({ ...loadSession(), managed: list });
 }
 
@@ -233,7 +234,7 @@ export async function restoreSession(): Promise<string | null> {
     if (!existsSync(m.dbPath)) continue;                          // db moved/deleted → skip
     if (managed.has(candidateUrl(m.port))) continue;             // we already launched it
     if ((await probeServer(candidateUrl(m.port))).up) continue;   // something already there
-    launchServer({ port: m.port, dbPath: m.dbPath });
+    launchServer({ port: m.port, dbPath: m.dbPath, bindHost: m.bindHost, token: m.token });
   }
   const target = s.connected?.url ?? (s.managed[0] ? candidateUrl(s.managed[0].port) : null);
   if (!target) return null;
@@ -251,6 +252,8 @@ interface Managed {
   logPath: string;
   port: number;
   dbPath: string;
+  bindHost?: string;
+  token?: string;
 }
 const managed = new Map<string, Managed>(); // keyed by normalized url
 
@@ -342,7 +345,12 @@ export interface LaunchResult {
   error?: string;
 }
 
-export function launchServer(opts: { port: number; dbPath: string; name?: string }): LaunchResult {
+/** Random secret for NODEDEX_API_TOKEN when launching a network-reachable (0.0.0.0) server. */
+export function genToken(): string {
+  return randomBytes(18).toString("hex");
+}
+
+export function launchServer(opts: { port: number; dbPath: string; name?: string; bindHost?: string; token?: string }): LaunchResult {
   const url = candidateUrl(opts.port); // 127.0.0.1 — keep managed keys IPv4 like discovery
   if (managed.has(url)) return { ok: false, url, error: "already launched by this TUI" };
   if (!existsSync(SERVER_DIR)) return { ok: false, url, error: `server dir not found: ${SERVER_DIR}` };
@@ -371,6 +379,11 @@ export function launchServer(opts: { port: number; dbPath: string; name?: string
           ...providerEnv(),
           PORT: String(opts.port),
           WORKSPACE_DB_PATH: opts.dbPath,
+          // Docker/remote launch: bind all interfaces + require a token (set by the launcher
+          // when the user picks "agent in a container / on another machine"). Omitted →
+          // the server's default localhost bind, no token.
+          ...(opts.bindHost ? { NODEDEX_BIND_HOST: opts.bindHost } : {}),
+          ...(opts.token ? { NODEDEX_API_TOKEN: opts.token } : {}),
           // fenced footguns — these WIN over .env (node --env-file won't override set vars)
           NODEDEX_FLAG_REVIEWER_ENABLED: "0",
           NODEDEX_INACTIVITY_REFLECT: "0",
@@ -383,7 +396,8 @@ export function launchServer(opts: { port: number; dbPath: string; name?: string
     child.stderr?.pipe(out);
     child.on("exit", () => managed.delete(url));
 
-    managed.set(url, { child, logPath, port: opts.port, dbPath: opts.dbPath });
+    managed.set(url, { child, logPath, port: opts.port, dbPath: opts.dbPath, bindHost: opts.bindHost, token: opts.token });
+    if (opts.token) registerToken(url, opts.token); // so the TUI's own reads authenticate
     if (opts.name) addPin(url, opts.name);
     // Track it among the servers to restore next start (the WHOLE managed set, not just one).
     persistManagedSnapshot();

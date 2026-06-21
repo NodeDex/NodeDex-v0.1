@@ -139,7 +139,14 @@ reload its MCP connections and start a new session.
 
 ### Agent in Docker / on another machine
 A containerized or remote agent **cannot** reach the host's `localhost`, so the server must
-(a) bind to all interfaces and (b) be protected with a token. Start it from `server/`:
+(a) bind to all interfaces and (b) be protected with a token.
+
+**Easiest — let the TUI do it.** In the onboarding wizard's *"Where will your agent run?"* step
+(or the **Servers** tab → launch → press `d`), pick **Docker / another machine**. It binds
+`0.0.0.0`, generates a token, and shows you the `host.docker.internal` URL + the `Authorization`
+header to give your agent.
+
+**Or set it up manually**, from `server/`:
 
 ```bash
 # macOS / Linux

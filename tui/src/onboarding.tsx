@@ -16,14 +16,14 @@ import {
   RECOMMENDED_MODELS, isTrainsOnPrompts, listDbs, dbPathForName,
   type DbChoice,
 } from "./config.js";
-import { launchServer } from "./servers.js";
+import { launchServer, genToken } from "./servers.js";
 import { probeServer, setBase } from "./api.js";
 
 const README_URL = "https://github.com/NodeDex/NodeDex#connect-your-agent";
 
 type Step =
   | "welcome" | "consent" | "openrouter"
-  | "model" | "port" | "db" | "starting" | "connect";
+  | "model" | "port" | "db" | "agentloc" | "starting" | "connect";
 
 /** Verify the OpenRouter key before saving — a typo fails here, not at first
  *  extraction. GET /key returns the key's usage/limit for a valid key. */
@@ -127,6 +127,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [dbs] = useState<DbChoice[]>(() => listDbs());
   const [dbSel, setDbSel] = useState(0);          // 0..dbs.length-1 existing; === dbs.length → new
   const [newDbName, setNewDbName] = useState("");
+  // agent-location step (local vs docker/remote) + the resulting bind/token
+  const [pendingDb, setPendingDb] = useState("");
+  const [agentSel, setAgentSel] = useState(0);    // 0 = this machine, 1 = docker/remote
+  const [netToken, setNetToken] = useState("");    // set when launching network-reachable
   // connect step
   const [serverUrl, setServerUrl] = useState("");
 
@@ -152,11 +156,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   }, [step, freePorts.length]);
 
   // Launch the server with the chosen port + db, poll until up, then hand off to connect.
-  const finishSetup = useCallback(async (port: number, dbPath: string) => {
+  const finishSetup = useCallback(async (port: number, dbPath: string, bindHost?: string, token?: string) => {
     setStep("starting");
     setStatus("Starting the Nodedex server (downloading the local embedding model on first run — one-time)…");
     setError("");
-    const res = launchServer({ port, dbPath });
+    const res = launchServer({ port, dbPath, bindHost, token });
     if (!res.ok) { setBusy(false); setStatus(""); setError(`Server failed to start: ${res.error}`); setStep("db"); return; }
     const url = `http://localhost:${port}`;
     const deadline = Date.now() + 30000;
@@ -200,8 +204,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       dbPath = dbs[dbSel]!.path;
     }
     saveConfig({ dbPath, onboarded: true });
-    setError(""); void finishSetup(chosenPort, dbPath);
-  }, [dbSel, dbs, newDbName, chosenPort, finishSetup]);
+    setPendingDb(dbPath); setAgentSel(0); setError(""); setStep("agentloc");
+  }, [dbSel, dbs, newDbName]);
 
   const typeInto = (setter: React.Dispatch<React.SetStateAction<string>>, input: string, k: any) => {
     if (k.backspace || k.delete) setter((s) => s.slice(0, -1));
@@ -240,6 +244,19 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       else if (k.escape) setStep("port");
       else if (k.return) submitDb();
       else if (dbSel >= dbs.length) typeInto(setNewDbName, input, k);
+    } else if (step === "agentloc") {
+      if (k.upArrow || k.downArrow) setAgentSel((s) => (s === 0 ? 1 : 0));
+      else if (k.escape) setStep("db");
+      else if (k.return) {
+        if (agentSel === 1) {
+          const tok = genToken();
+          setNetToken(tok);
+          void finishSetup(chosenPort, pendingDb, "0.0.0.0", tok);
+        } else {
+          setNetToken("");
+          void finishSetup(chosenPort, pendingDb);
+        }
+      }
     } else if (step === "connect") {
       if (k.return) onDone();
     }
@@ -351,12 +368,39 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     );
   }
 
+  if (step === "agentloc") {
+    return (
+      <Frame>
+        <Text color={theme.title} bold>Where will your agent run?</Text>
+        <Text color={theme.dim}>This sets how the server is reachable.</Text>
+        <Box marginTop={1} flexDirection="column">
+          <Row selected={agentSel === 0} label="This machine" width={24}
+            aside="localhost — simplest & private (default)" />
+          <Row selected={agentSel === 1} label="Docker / another machine" width={24}
+            aside="binds 0.0.0.0 + makes an access token" asideColor={theme.warn} />
+        </Box>
+        {agentSel === 1
+          ? <Box marginTop={1}><Text color={theme.warn}>⚠ Reachable on your network; the token keeps it private.</Text></Box>
+          : <Text> </Text>}
+        {error ? <Text color={theme.danger}>{`⚠ ${error}`}</Text> : null}
+        <Hint keys={[["↑↓", "move"], ["Enter", "start server"], ["Esc", "back"]]} />
+      </Frame>
+    );
+  }
+
   if (step === "connect") {
+    const mcpUrl = netToken ? `http://host.docker.internal:${chosenPort}/mcp` : `${serverUrl}/mcp`;
     return (
       <Frame>
         <Text color={theme.title} bold>✓ Server running</Text>
         <Box marginTop={1} flexDirection="column" alignItems="center">
-          <Text color={theme.value}>{`${serverUrl}/mcp`}</Text>
+          <Text color={theme.value}>{mcpUrl}</Text>
+          {netToken ? (
+            <Box flexDirection="column" alignItems="center">
+              <Text color={theme.dim}>your agent must send this header:</Text>
+              <Text color={theme.accent}>{`Authorization: Bearer ${netToken}`}</Text>
+            </Box>
+          ) : null}
           <Box marginTop={1} flexDirection="column">
             <Text color={theme.value}>Connect your agent (e.g. Hermes) to that URL, then have</Text>
             <Text color={theme.value}>it run the workspace_install_capture tool once so your</Text>
