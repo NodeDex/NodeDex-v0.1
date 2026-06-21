@@ -179,21 +179,36 @@ The agent now sees the **read tools** and can traverse the graph. (The server de
 usage protocol via the MCP `instructions` field — no prompt changes needed from you.)
 
 **2. Turn on capture (write side) — required, or the graph stays empty.** NodeDex is a
-*passive* MCP server: it sees tool calls, **not** your agent's actual replies. So nothing
-is recorded until capture is wired. Have your agent call this tool **once**:
+*passive* MCP server: it sees tool calls, **not** your agent's replies. Something has to push
+each finished turn to it. Pick the path that fits your agent:
 
-```
-workspace_install_capture
-```
+#### (a) Hosted / sandboxed agent (Hermes, Owl, most OpenAI-compatible hosts) — route the model through NodeDex
+The zero-deploy path, and the one to use if your agent runs in a container or you don't control
+its code. Point your agent's **model base URL** at NodeDex's proxy: it relays each call to your
+real provider unchanged (no added latency, streaming works) and captures the turn in passing.
+In your agent's model/provider settings, set:
+- **base URL:** `http://host.docker.internal:3001/api`  *(same machine: `http://localhost:3001/api`)*
+- **API key:** your usual provider key (e.g. OpenRouter `sk-or-…`) — forwarded untouched, never stored
+- **model:** unchanged
 
-It deploys a tiny **out-of-path tee** next to your agent code that sends a *copy* of each
-finished turn (`user_message`, `agent_response`, `reasoning`) to the server —
-fire-and-forget, never touching or slowing your agent's own model call. From then on your
-turns flow into the graph automatically (the async pipeline extracts blocks, chains, and
-links server-side).
+No file to deploy, and **no NodeDex token needed** for this path (the proxy is exempt and uses
+your own provider key). Works for any agent that speaks OpenAI `/chat/completions` and lets you
+set a base URL.
 
-> Without step 2, the agent can *read* memory but the graph never grows. Capture is the
-> write side; the read tools alone do not populate it.
+#### (b) Agent whose code/loop you control (Agent SDK, LangChain, your own loop) — the tee
+Have the agent call **`workspace_install_capture`** once; it returns a tiny out-of-path tee to
+drop into your post-turn seam (it POSTs `{user, response, reasoning}` to the server). On a
+**token-gated** server, set `NODEDEX_TOKEN` where the tee runs so its POSTs authenticate.
+
+> Without one of these, the agent can *read* memory but the graph never grows.
+
+**So you hand your agent two things, for two endpoints:**
+| For | Endpoint | Credential |
+|---|---|---|
+| **Reading** the graph (MCP) | `…/mcp` | the **NodeDex token** (`Authorization: Bearer <token>`) — only on a Docker/token server |
+| **Capturing** turns (proxy path a) | model base URL `…/api` | your **provider key** (e.g. OpenRouter) |
+
+*(Note these are two different keys: the **NodeDex token** authenticates the MCP read connection; your **provider key** is what the proxy forwards to OpenRouter. On a same-machine localhost server, the NodeDex token isn't needed at all.)*
 
 **Full per-host detail** (HTTP transport, Docker / `host.docker.internal`, the capture
 adapter, env toggles): [docs/how-to/connect-mcp-over-http.md](docs/how-to/connect-mcp-over-http.md)
