@@ -102,8 +102,30 @@ config value, not a shell command, so it's the same on every OS. All config live
 ## Connect your agent
 
 NodeDex is built for **autonomous agents** (e.g. Hermes). The onboarding wizard sets up
-and starts the **server**; connecting your agent to it is your step. Two things have to
-happen — and they're separate:
+and starts the **server**; pointing your agent at it is the one remaining step.
+
+### Quickstart (Hermes) — two pastes, once
+
+**1. Connect** NodeDex to Hermes (in your terminal):
+```bash
+hermes mcp add nodedex --url http://127.0.0.1:3001/mcp
+```
+…or add it to `%LOCALAPPDATA%\hermes\config.yaml` (`~/.hermes/config.yaml` on macOS/Linux):
+```yaml
+mcp_servers:
+  nodedex:
+    url: http://127.0.0.1:3001/mcp
+```
+Then restart Hermes (or start a new session). Use `127.0.0.1`, **not** `localhost` — on Windows `localhost` resolves to IPv6 `::1` first, which an IPv4-bound server won't answer.
+
+**2. Orient your agent** — paste this as your first message so it uses the tools instead of hunting around:
+> Your long-term memory is NodeDex, connected as MCP tools. To recall anything, use `workspace_tree` to see what exists, then `workspace_get` / `workspace_search` and follow the chains — don't search files, the database, or ports; it's all behind the tools.
+
+**That's the whole setup.** Capture is **on by default**, so once connected the graph grows from your turns on its own — no extra step. (The agent also gets this usage protocol automatically over MCP; the message above just reinforces it on turn one.)
+
+---
+
+**Full detail / other hosts.** Two things make it work, and they're separate:
 
 **1. Give the agent the tools (read side).** Register the running server with your agent host
 over MCP (**Streamable-HTTP** at `/mcp`). How depends on **where your agent runs**:
