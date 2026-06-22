@@ -2103,6 +2103,19 @@ export class WorkspaceDB {
     ).run(String(error).slice(0, 500), now, agent_id, startTurn, endTurn);
   }
 
+  /** Distinct agent_ids whose arc extraction FAILED — turns are still pass01_done (re-extractable)
+   *  AND carry a last_extract_error marker. Used by the credit auto-resume to re-fire arc
+   *  extraction for arcs that were paused mid-flight: the per-turn reflectQueue's resume-drain
+   *  can't reach them (arc turns live here, not in the queue). Targets FAILED arcs only, so an
+   *  agent merely accumulating sub-threshold turns isn't extracted prematurely. */
+  listAgentsWithFailedArc(): string[] {
+    if (!this.db) throw new Error("Database not initialized");
+    return (this.db.prepare(
+      `SELECT DISTINCT agent_id FROM conversation_turns
+        WHERE status = 'pass01_done' AND last_extract_error IS NOT NULL`,
+    ).all() as Array<{ agent_id: string }>).map((r) => r.agent_id);
+  }
+
   getConversationTurnById(id: string): ConversationTurnRow | null {
     if (!this.db) throw new Error("Database not initialized");
     return (this.db.prepare(`SELECT * FROM conversation_turns WHERE id = ?`).get(id) as ConversationTurnRow | undefined) ?? null;

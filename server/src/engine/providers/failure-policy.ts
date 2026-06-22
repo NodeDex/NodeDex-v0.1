@@ -91,7 +91,13 @@ export function isInsufficientCreditError(e: unknown): boolean {
   const status = (e as any)?.status ?? (e as any)?.code;
   if (status === 402 || status === "402") return true;
   const msg = typeof e === "string" ? e : String((e as any)?.message ?? "");
-  return /\b402\b|payment required|insufficient[\s_-]*(credit|fund|balance|quota)|negative\s+(credit|balance)|requires?\s+(more|additional)\s+credit|out of credit|add (more )?credit/i.test(msg);
+  // 402 / "insufficient credit" = account out of funds. ALSO treat a provider SPEND-CAP as the
+  // same class so it routes through the pause-spend + TUI alert + auto-resume path instead of a
+  // silent generic-failure fail-clean: OpenRouter returns 403 "Key limit exceeded (total limit)"
+  // when a key's spend ceiling is hit. Deliberately NOT a transient 429 rate-limit (that backs
+  // off + retries — pausing-till-topup would be wrong) and NOT a bare 403 (auth/permission) —
+  // only the limit-exceeded TEXT, which "rate limit exceeded" does not match.
+  return /\b402\b|payment required|insufficient[\s_-]*(credit|fund|balance|quota)|negative\s+(credit|balance)|requires?\s+(more|additional)\s+credit|out of credit|add (more )?credit|key\s+limit\s+exceeded|\btotal\s+limit\b|credit\s+limit\b/i.test(msg);
 }
 
 export type RetryAction = "escalate" | "retry_same" | "degrade";

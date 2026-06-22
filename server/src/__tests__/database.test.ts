@@ -592,6 +592,19 @@ describe("DEBT 5 Phase 2: conversation_turns CRUD", () => {
     assert.equal(pass01done[0]!.turn_number, 1);
   });
 
+  test("listAgentsWithFailedArc lists only agents whose arc extraction FAILED (the credit-resume re-extract target)", () => {
+    // agent A: pass01_done turn with a failure marker → should be re-extracted on resume
+    const a = db.createConversationTurn({ agent_id: "agent_failed_arc", turn_number: 1, transcript_json: mkTranscript("a") });
+    db.updateConversationTurnPass01(a.id, JSON.stringify({ items: [] }));
+    db.markConversationTurnsExtractFailed("agent_failed_arc", 1, 1, "403 Key limit exceeded (total limit)");
+    // agent B: pass01_done but NO failure marker (merely accumulating) → must NOT be re-extracted
+    const b = db.createConversationTurn({ agent_id: "agent_clean_arc", turn_number: 1, transcript_json: mkTranscript("b") });
+    db.updateConversationTurnPass01(b.id, JSON.stringify({ items: [] }));
+    const stuck = db.listAgentsWithFailedArc();
+    assert.ok(stuck.includes("agent_failed_arc"), "the credit-failed arc agent must be listed");
+    assert.ok(!stuck.includes("agent_clean_arc"), "an agent merely accumulating turns must NOT be re-extracted");
+  });
+
   test("listConversationTurnsByAgent filters by minTurn / maxTurn range", () => {
     const ag = "agent_p2_listrange";
     for (let t = 1; t <= 5; t++) db.createConversationTurn({ agent_id: ag, turn_number: t, transcript_json: mkTranscript(String(t)) });

@@ -308,6 +308,24 @@ export async function creditAutoResumeTick(db: WorkspaceDB, embeddings?: Embeddi
   clearSpendPauseFile();
   console.log(`[cost-breaker] credit recovered${rec.remaining != null ? ` (remaining $${rec.remaining.toFixed(2)})` : ""} — SPENDING RESUMED, draining ${reflectQueue.length} queued job(s)`);
   processReflectQueue(db, embeddings).catch(e => console.error("[cost-breaker] resume drain error:", e));
+
+  // Arc turns aren't in the per-turn reflectQueue — they live as pass01_done conversation_turns,
+  // so the drain above can't reach an arc that credit-failed mid-extraction. Re-fire arc
+  // extraction for each agent whose arc failed (last_extract_error marker), re-using the SAME
+  // runArcExtraction over its full pending range → it re-consolidates ALL pass01_done turns (full
+  // arc context, not a fragment) and commits on success, or fail-cleans again if still out.
+  try {
+    const stuck = db.listAgentsWithFailedArc();
+    if (stuck.length) {
+      console.log(`[cost-breaker] re-extracting ${stuck.length} arc(s) that the spend-stop paused`);
+      void import("../middleware/reflect/arc-pipeline.js").then(({ runArcExtraction }) => {
+        for (const agentId of stuck) {
+          void runArcExtraction(db, { agent_id: agentId, trigger_source: "auto" })
+            .catch((e) => console.warn(`[cost-breaker] arc resume re-extract failed for ${agentId}: ${e?.message ?? e}`));
+        }
+      }).catch((e) => console.warn(`[cost-breaker] arc resume import failed: ${e?.message ?? e}`));
+    }
+  } catch (e: any) { console.warn(`[cost-breaker] arc resume check failed: ${e?.message}`); }
   return true;
 }
 

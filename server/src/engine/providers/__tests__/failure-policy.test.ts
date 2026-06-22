@@ -59,9 +59,15 @@ describe("isInsufficientCreditError (out-of-credit, distinct from rate-limit)", 
     assert.equal(isInsufficientCreditError("insufficient_credit"), true); // the swallowed-null reason string
     assert.equal(isInsufficientCreditError(new Error("negative credit balance")), true);
   });
+  test("provider SPEND-CAP (OpenRouter 403 'Key limit exceeded') → true (same class as 402 → pause+alert)", () => {
+    assert.equal(isInsufficientCreditError(new Error("403 Key limit exceeded (total limit).")), true);
+    assert.equal(isInsufficientCreditError({ status: 403, message: "Key limit exceeded (total limit)" }), true);
+    assert.equal(isInsufficientCreditError(new Error("Your credit limit has been reached")), true);
+  });
   test("a transient rate-limit is NOT credit-out (must not pause-the-spend on a 429)", () => {
     assert.equal(isInsufficientCreditError({ status: 429 }), false);
     assert.equal(isInsufficientCreditError(new Error("RESOURCE_EXHAUSTED: rate limit")), false);
+    assert.equal(isInsufficientCreditError(new Error("429 Rate limit exceeded")), false); // 'limit exceeded' but a RATE limit, not a spend-cap
     assert.equal(isInsufficientCreditError(new Error("503 Service Unavailable")), false);
   });
   test("null / generic errors → false", () => {
@@ -69,6 +75,7 @@ describe("isInsufficientCreditError (out-of-credit, distinct from rate-limit)", 
     assert.equal(isInsufficientCreditError(undefined), false);
     assert.equal(isInsufficientCreditError(new Error("comprehend_failed")), false);
     assert.equal(isInsufficientCreditError({ status: 400, message: "Bad Request" }), false);
+    assert.equal(isInsufficientCreditError({ status: 403, message: "Forbidden" }), false); // bare 403 (auth) ≠ spend-cap
   });
 });
 
