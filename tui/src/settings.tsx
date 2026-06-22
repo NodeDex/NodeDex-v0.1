@@ -159,7 +159,7 @@ export function SettingsTab({
           hint="enter = pause/resume capture" />
         <Row selected={selId === "model"} label="model" value={cfg?.model || "(default)"} hint="enter = edit" />
         <Row selected={selId === "fallback"} label="fallback" value={cfg?.fallback_model || "(none)"} hint="enter = edit" />
-        <Row label="provider" value={cfg?.provider || "—"} valueColor={theme.dim} />
+        <Row label="provider" value={`${cfg?.provider || "—"}   ·  switch provider / model source → npm run onboard`} valueColor={theme.dim} />
       </Panel>
 
       <Panel title="cost guardrails" minHeight={6}>
