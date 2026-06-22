@@ -16,9 +16,11 @@ Add to `~/.nodedex/.env` (or the repo `.env`):
 NODEDEX_BIND_HOST=0.0.0.0     # so a container can reach it via host.docker.internal
 NODEDEX_API_TOKEN=<a-secret>  # REQUIRED once on 0.0.0.0 — /mcp enforces it
 ```
-Then start it on the host:
+Then start it on the host (run each line separately — PowerShell 5.1 has no `&&`):
 ```
-cd server && npm run build && npm start     # or in dev: npm run dev
+cd server
+npm run build
+npm start          # or, in dev: npm run dev
 ```
 Boot log confirms the endpoint:
 ```

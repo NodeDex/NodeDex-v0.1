@@ -1,6 +1,9 @@
 // onboarding.tsx — first-run setup wizard (static, no animation).
 //
 // Flow: welcome → consent → key (OpenRouter) → model → port → db → starting → connect.
+// Same-machine only (localhost, no token). The "where will your agent run?" deployment
+// branch (Docker / remote → 0.0.0.0 + token) was removed; reachable-on-network setup is a
+// later concern, not part of first-run.
 // Onboarding sets up + starts the SERVER (OpenRouter key, model, picked port, named DB).
 // Connecting an autonomous agent (e.g. Hermes) to the running /mcp endpoint + wiring
 // capture is the USER's own step — the final screen points at the GitHub README for the
@@ -16,14 +19,14 @@ import {
   RECOMMENDED_MODELS, isTrainsOnPrompts, listDbs, dbPathForName,
   type DbChoice,
 } from "./config.js";
-import { launchServer, genToken } from "./servers.js";
+import { launchServer } from "./servers.js";
 import { probeServer, setBase } from "./api.js";
 
-const README_URL = "https://github.com/NodeDex/NodeDex#connect-your-agent";
+const README_URL = "https://github.com/NodeDex/NodeDex-v0.1#connect-your-agent";
 
 type Step =
   | "welcome" | "consent" | "openrouter"
-  | "model" | "port" | "db" | "agentloc" | "starting" | "connect";
+  | "model" | "port" | "db" | "starting" | "connect";
 
 /** Verify the OpenRouter key before saving — a typo fails here, not at first
  *  extraction. GET /key returns the key's usage/limit for a valid key. */
@@ -127,10 +130,6 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [dbs] = useState<DbChoice[]>(() => listDbs());
   const [dbSel, setDbSel] = useState(0);          // 0..dbs.length-1 existing; === dbs.length → new
   const [newDbName, setNewDbName] = useState("");
-  // agent-location step (local vs docker/remote) + the resulting bind/token
-  const [pendingDb, setPendingDb] = useState("");
-  const [agentSel, setAgentSel] = useState(0);    // 0 = this machine, 1 = docker/remote
-  const [netToken, setNetToken] = useState("");    // set when launching network-reachable
   // connect step
   const [serverUrl, setServerUrl] = useState("");
 
@@ -210,8 +209,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       dbPath = dbs[dbSel]!.path;
     }
     saveConfig({ dbPath, onboarded: true });
-    setPendingDb(dbPath); setAgentSel(0); setError(""); setStep("agentloc");
-  }, [dbSel, dbs, newDbName]);
+    setError("");
+    // same-machine only: launch straight on localhost (no bindHost/token).
+    void finishSetup(chosenPort, dbPath);
+  }, [dbSel, dbs, newDbName, chosenPort, finishSetup]);
 
   const typeInto = (setter: React.Dispatch<React.SetStateAction<string>>, input: string, k: any) => {
     if (k.backspace || k.delete) setter((s) => s.slice(0, -1));
@@ -250,19 +251,6 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       else if (k.escape) setStep("port");
       else if (k.return) submitDb();
       else if (dbSel >= dbs.length) typeInto(setNewDbName, input, k);
-    } else if (step === "agentloc") {
-      if (k.upArrow || k.downArrow) setAgentSel((s) => (s === 0 ? 1 : 0));
-      else if (k.escape) setStep("db");
-      else if (k.return) {
-        if (agentSel === 1) {
-          const tok = genToken();
-          setNetToken(tok);
-          void finishSetup(chosenPort, pendingDb, "0.0.0.0", tok);
-        } else {
-          setNetToken("");
-          void finishSetup(chosenPort, pendingDb);
-        }
-      }
     } else if (step === "connect") {
       if (k.return) onDone();
     }
@@ -283,8 +271,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         <Text color={theme.title} bold>Before you start</Text>
         <Box marginTop={1} flexDirection="column">
           <Text color={theme.value}>· Nodedex stores your work as a knowledge graph on your machine.</Text>
-          <Text color={theme.value}>· An AI pipeline extracts that knowledge — it can be wrong or</Text>
-          <Text color={theme.value}>  incomplete. Treat saved blocks as notes, not ground truth.</Text>
+          <Text color={theme.value}>· An AI pipeline builds your agent's memory from your turns — it</Text>
+          <Text color={theme.value}>  can be wrong or incomplete; the agent's notes, not ground truth.</Text>
           <Text color={theme.value}>· You bring your own model provider; usage is billed to you.</Text>
         </Box>
         <Hint keys={[["Enter", "I understand & agree"], ["q", "quit"]]} />
@@ -374,46 +362,18 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     );
   }
 
-  if (step === "agentloc") {
-    return (
-      <Frame>
-        <Text color={theme.title} bold>Where will your agent run?</Text>
-        <Text color={theme.dim}>This sets how the server is reachable.</Text>
-        <Box marginTop={1} flexDirection="column">
-          <Row selected={agentSel === 0} label="This machine" width={24}
-            aside="localhost — simplest & private (default)" />
-          <Row selected={agentSel === 1} label="Docker / another machine" width={24}
-            aside="binds 0.0.0.0 + makes an access token" asideColor={theme.warn} />
-        </Box>
-        {agentSel === 1
-          ? <Box marginTop={1}><Text color={theme.warn}>⚠ Reachable on your network; the token keeps it private.</Text></Box>
-          : <Text> </Text>}
-        {error ? <Text color={theme.danger}>{`⚠ ${error}`}</Text> : null}
-        <Hint keys={[["↑↓", "move"], ["Enter", "start server"], ["Esc", "back"]]} />
-      </Frame>
-    );
-  }
-
   if (step === "connect") {
-    const mcpUrl = netToken ? `http://host.docker.internal:${chosenPort}/mcp` : `${serverUrl}/mcp`;
     return (
       <Frame>
         <Text color={theme.title} bold>✓ Server running</Text>
         <Box marginTop={1} flexDirection="column" alignItems="center">
-          <Text color={theme.value}>{mcpUrl}</Text>
-          {netToken ? (
-            <Box flexDirection="column" alignItems="center">
-              <Text color={theme.dim}>your agent must send this header:</Text>
-              <Text color={theme.accent}>{`Authorization: Bearer ${netToken}`}</Text>
-              <Text color={theme.warn}>⚠ keep this token safe &amp; secret — it won't be shown again</Text>
-            </Box>
-          ) : null}
+          <Text color={theme.value}>{`${serverUrl}/mcp`}</Text>
           <Box marginTop={1} flexDirection="column">
-            <Text color={theme.value}>Connect your agent (e.g. Hermes) to that URL, then have</Text>
-            <Text color={theme.value}>it run the workspace_install_capture tool once so your</Text>
-            <Text color={theme.value}>turns flow into the graph.</Text>
+            <Text color={theme.value}>Point your agent (e.g. Hermes) at that URL, then turn on</Text>
+            <Text color={theme.value}>capture so your turns flow into the graph — for Hermes,</Text>
+            <Text color={theme.value}>Settings → hermes capture.</Text>
           </Box>
-          <Box marginTop={1}><Text color={theme.dim}>Exact config + capture steps in the README:</Text></Box>
+          <Box marginTop={1}><Text color={theme.dim}>Exact connect + capture steps in the README:</Text></Box>
           <Text color={theme.accent}>{README_URL}</Text>
         </Box>
         <Hint keys={[["Enter", "open dashboard"]]} />

@@ -43,7 +43,8 @@ The app launches Nodedex for you on every session. Keys/model/DB come from `~/.n
 
 ### B. Sandboxed / remote (HTTP) — when the app can't spawn a host process
 A containerized agent can't reach a host process over stdio pipes — use HTTP:
-1. Run the server on the host: `cd server && npm run build && npm start` (leave it running).
+1. Run the server on the host — from `server/`, run `npm run build` then `npm start` on separate
+   lines (PowerShell 5.1 has no `&&`). Leave it running.
 2. Expose it: `NODEDEX_BIND_HOST=0.0.0.0` in `~/.nodedex/.env` (+ `NODEDEX_API_TOKEN` to
    protect it, since `0.0.0.0` is network-reachable).
 3. Point the agent app at the URL: `http://<host>:3001/mcp`.
