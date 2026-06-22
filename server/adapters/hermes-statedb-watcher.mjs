@@ -180,31 +180,38 @@ async function pass(cfg, cursor) {
 // ─── main loop ────────────────────────────────────────────────────────────────────────────────
 async function main() {
   const boot = loadCaptureConfig();
-  if (!existsSync(boot.stateDbPath)) {
-    console.error(`[hermes-watcher] state.db not found at ${boot.stateDbPath} — set hermesCapture.stateDbPath in ~/.nodedex/config.json`);
-    process.exit(1);
-  }
-
-  // Where to start. --backfill reprocesses from the very start (ignores any saved cursor);
-  // otherwise the persisted cursor wins; else current max stop-id (forward-only).
-  let cursor = BACKFILL ? 0 : loadCursor();
-  if (!cursor && !BACKFILL) {
-    const db = openRO(boot.stateDbPath);
-    try { cursor = db.prepare(`SELECT MAX(id) AS m FROM messages WHERE role='assistant' AND finish_reason='stop'`).get()?.m ?? 0; }
-    finally { db.close(); }
-  }
-
   console.log(`[hermes-watcher] ${DRY_RUN ? "DRY-RUN " : ""}watching ${boot.stateDbPath}`);
-  console.log(`[hermes-watcher] sources=${boot.allowAll ? "* (all)" : boot.sources.join(",")}  poll=${boot.pollMs}ms  cursor=${cursor}${BACKFILL ? "  (backfill)" : ""}`);
+  console.log(`[hermes-watcher] sources=${boot.allowAll ? "* (all)" : boot.sources.join(",")}  poll=${boot.pollMs}ms${BACKFILL ? "  (backfill)" : ""}`);
+
+  // --backfill starts at 0; else the persisted cursor wins. If neither, DEFER picking the start
+  // point until state.db first appears, then start forward-only (current max stop-id). This lets a
+  // default-on watcher start BEFORE Hermes exists without crashing or later replaying all history.
+  let cursor = BACKFILL ? 0 : loadCursor();
+  let cursorReady = BACKFILL || cursor > 0;
+  let warnedMissing = false;
 
   do {
-    const cfg = loadCaptureConfig();              // re-read each pass → TUI source-filter changes apply live
+    const cfg = loadCaptureConfig();              // re-read each pass → TUI changes apply live
     if (cfg.enabled) {
-      try {
-        const next = await pass(cfg, cursor);
-        if (next > cursor) { cursor = next; if (!DRY_RUN) saveCursor(cursor); }
-      } catch (e) {
-        console.error(`[hermes-watcher] pass error: ${e?.message ?? e}`);
+      if (!existsSync(cfg.stateDbPath)) {
+        // Default-on, but no Hermes turn-log yet (or Hermes not installed). Wait — never crash;
+        // a harmless idle poll until it appears (or the user toggles capture off in the TUI).
+        if (!warnedMissing) { console.log(`[hermes-watcher] waiting — no Hermes state.db at ${cfg.stateDbPath} yet`); warnedMissing = true; }
+      } else {
+        if (warnedMissing) { console.log(`[hermes-watcher] state.db appeared — starting capture`); warnedMissing = false; }
+        if (!cursorReady) {
+          const db = openRO(cfg.stateDbPath);
+          try { cursor = db.prepare(`SELECT MAX(id) AS m FROM messages WHERE role='assistant' AND finish_reason='stop'`).get()?.m ?? 0; }
+          finally { db.close(); }
+          cursorReady = true;
+          console.log(`[hermes-watcher] capturing forward from cursor=${cursor}`);
+        }
+        try {
+          const next = await pass(cfg, cursor);
+          if (next > cursor) { cursor = next; if (!DRY_RUN) saveCursor(cursor); }
+        } catch (e) {
+          console.error(`[hermes-watcher] pass error: ${e?.message ?? e}`);
+        }
       }
     }
     if (ONCE) break;

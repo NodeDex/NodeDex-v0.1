@@ -106,7 +106,9 @@ export function loadHermesCapture(): Required<HermesCaptureConfig> {
   const h = loadConfig().hermesCapture ?? {};
   const sources = Array.isArray(h.sources) && h.sources.length ? h.sources.map(String) : [...DEFAULT_HERMES_SOURCES];
   return {
-    enabled: h.enabled === true,
+    // Default ON: capture should "just work" for a normal user. The watcher idles harmlessly
+    // when no Hermes state.db exists, and the user can turn it off in Settings (sets enabled:false).
+    enabled: h.enabled !== false,
     sources,
     pollMs: Number.isFinite(h.pollMs) && (h.pollMs as number) >= 500 ? (h.pollMs as number) : 4000,
     stateDbPath: h.stateDbPath ?? "",
