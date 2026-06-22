@@ -20,10 +20,12 @@ import { Box, Text, useInput } from "ink";
 import { Panel } from "./components.js";
 import { theme, glyph, fmtMoney } from "./theme.js";
 import { fetchConfig, postConfig, setReflectPausedRemote, type AdminConfig, type Dashboard, type Balance } from "./api.js";
+import { loadHermesCapture, setHermesCapture, parseSources } from "./config.js";
+import { launchWatcher, stopWatcher, isWatcherRunning } from "./servers.js";
 
 // The selectable rows, in navigation order (read-only rows are NOT in this list).
-type FieldId = "reflect" | "model" | "fallback" | "floor" | "cap";
-const FIELDS: FieldId[] = ["reflect", "model", "fallback", "floor", "cap"];
+type FieldId = "reflect" | "model" | "fallback" | "floor" | "cap" | "hermes" | "sources";
+const FIELDS: FieldId[] = ["reflect", "model", "fallback", "floor", "cap", "hermes", "sources"];
 
 // A row inside a panel. `selected` draws the ▸ cursor + highlight; read-only rows
 // pass selected=undefined (never highlighted, skipped by navigation).
@@ -57,6 +59,10 @@ export function SettingsTab({
   const [editing, setEditing] = useState<FieldId | null>(null);
   const [buf, setBuf] = useState("");
   const [notice, setNotice] = useState("");
+  // Hermes capture is TUI-owned config (~/.nodedex/config.json), separate from the server's
+  // runtime config above; the watcher reads it live, so a source-filter edit needs no restart.
+  const [hc, setHc] = useState(loadHermesCapture());
+  const [watching, setWatching] = useState(isWatcherRunning());
 
   const load = useCallback(() => { fetchConfig().then(setCfg); }, []);
   useEffect(() => { load(); }, [load]);
@@ -90,14 +96,26 @@ export function SettingsTab({
       void setReflectPausedRemote(next).then((ok) => setNotice(ok ? (next ? "capture paused" : "capture resumed") : "toggle failed"));
       return;
     }
+    if (id === "hermes") {
+      const next = !hc.enabled;
+      setHermesCapture({ enabled: next });
+      let msg: string;
+      if (next) { const r = launchWatcher(); msg = r.ok ? "hermes capture started" : `start failed: ${r.error}`; }
+      else { stopWatcher(); msg = "hermes capture stopped"; }
+      setHc(loadHermesCapture());
+      setWatching(isWatcherRunning());
+      setNotice(msg);
+      return;
+    }
     setBuf(
       id === "model" ? (cfg?.model ?? "") :
       id === "fallback" ? (cfg?.fallback_model ?? "") :
+      id === "sources" ? hc.sources.join(", ") :
       id === "floor" ? (floor != null ? String(floor) : "") :
       cap != null ? String(cap) : "",
     );
     setEditing(id);
-  }, [paused, cfg, floor, cap]);
+  }, [paused, cfg, floor, cap, hc]);
 
   const submit = useCallback(async () => {
     const v = buf.trim();
@@ -105,6 +123,7 @@ export function SettingsTab({
     setEditing(null); setBuf("");
     if (id === "model")    return save({ model: v }, v ? `model → ${v}` : "model cleared");
     if (id === "fallback") return save({ fallback_model: v }, v ? `fallback → ${v}` : "fallback cleared (none)");
+    if (id === "sources")  { const arr = parseSources(v); setHermesCapture({ sources: arr }); setHc(loadHermesCapture()); setNotice(`capture sources → ${arr.join(", ")}`); return; }
     if (id === "floor")    { if (v && !Number.isFinite(Number(v))) { setNotice("floor must be a number (or blank to disable)"); return; } return save({ min_credit_usd: v }, v ? `credit floor → $${v}` : "credit floor disabled"); }
     if (id === "cap")      { if (v && !Number.isFinite(Number(v))) { setNotice("cap must be a number (or blank to disable)"); return; } return save({ daily_budget_usd: v }, v ? `daily cap → $${v}` : "daily cap disabled"); }
   }, [buf, editing, save]);
@@ -120,13 +139,14 @@ export function SettingsTab({
     if (key.downArrow || input === "j") { setSel((i) => Math.min(i + 1, FIELDS.length - 1)); return; }
     if (key.upArrow || input === "k")   { setSel((i) => Math.max(i - 1, 0)); return; }
     if (key.return)                     { act(FIELDS[Math.min(sel, FIELDS.length - 1)]); return; }
-    if (input.toLowerCase() === "r")    { load(); setNotice("refreshed"); return; }
+    if (input.toLowerCase() === "r")    { load(); setHc(loadHermesCapture()); setWatching(isWatcherRunning()); setNotice("refreshed"); return; }
   }, { isActive });
 
   const selId = FIELDS[Math.min(sel, FIELDS.length - 1)];
   const editLabel =
     editing === "model" ? "model id:" :
     editing === "fallback" ? "fallback model id (blank = none):" :
+    editing === "sources" ? "capture sources (comma-sep, * = all):" :
     editing === "floor" ? "credit floor USD (blank = off):" :
     editing === "cap" ? "daily cap USD (blank = off):" : "";
 
@@ -150,6 +170,15 @@ export function SettingsTab({
         <Row label="balance" value={balance.available && balance.remaining != null ? `$${balance.remaining.toFixed(2)}` : "n/a"}
           valueColor={balance.available ? theme.value : theme.dim} />
         <Row label="24h spend" value={typeof spend24h === "number" ? fmtMoney(spend24h) : "—"} valueColor={theme.dim} />
+      </Panel>
+
+      <Panel title="hermes capture" minHeight={5}>
+        <Row selected={selId === "hermes"} label="watcher"
+          value={watching ? `${glyph.up} running` : hc.enabled ? `${glyph.paused} enabled (stopped)` : "off"}
+          valueColor={watching ? theme.ok : hc.enabled ? theme.warn : theme.dim}
+          hint="enter = start/stop · reads Hermes state.db" />
+        <Row selected={selId === "sources"} label="sources" value={hc.sources.join(", ")}
+          valueColor={theme.value} hint="enter = edit · which Hermes sessions to capture (* = all)" />
       </Panel>
 
       {editing ? (

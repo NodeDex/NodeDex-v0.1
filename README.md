@@ -40,7 +40,7 @@ The agent is stateless by default. NodeDex makes it stateful. The graph is the i
 
 - **The agent** navigates the graph with **read-only** MCP tools (`workspace_get`, `workspace_search`, `workspace_filter`, `workspace_tree`, `workspace_stats`, …). It writes nothing.
 - **The pipeline** (a server-side AI) compiles everything — facts, decisions, dead ends, insights, constraints, reasoning chains — **async**, from each captured turn. The agent never has to stop and save.
-- **Capture** wires each finished turn to the server — either by routing the agent's model through NodeDex's proxy (hosted agents like Hermes) or a small out-of-path tee for agents whose loop you control (`workspace_install_capture`). NodeDex is a passive MCP server — it can't see the agent's replies on its own, so **without capture the graph stays empty** (see [Connect your agent](#connect-your-agent)).
+- **Capture** wires each finished turn to the server. The path depends on the host: **Hermes / Owl** are captured by reading their own `state.db` (they ignore a model proxy); an **OpenAI-compatible host** that honors a custom base URL can route its model through NodeDex's proxy; an agent whose **loop you control** uses a small out-of-path tee (`workspace_install_capture`). NodeDex is a passive MCP server — it can't see the agent's replies on its own, so **without capture the graph stays empty** (see [Connect your agent](#connect-your-agent)).
 
 **SQLite WAL** — a single local file, bitemporal relations (history preserved, never deleted).
 
@@ -182,20 +182,26 @@ usage protocol via the MCP `instructions` field — no prompt changes needed fro
 *passive* MCP server: it sees tool calls, **not** your agent's replies. Something has to push
 each finished turn to it. Pick the path that fits your agent:
 
-#### (a) Hosted / sandboxed agent (Hermes, Owl, most OpenAI-compatible hosts) — route the model through NodeDex
-The zero-deploy path, and the one to use if your agent runs in a container or you don't control
-its code. Point your agent's **model base URL** at NodeDex's proxy: it relays each call to your
-real provider unchanged (no added latency, streaming works) and captures the turn in passing.
-In your agent's model/provider settings, set:
-- **base URL:** `http://host.docker.internal:3001/api`  *(same machine: `http://127.0.0.1:3001/api` — use `127.0.0.1`, not `localhost`, on Windows: a `0.0.0.0`-bound server is IPv4-only and `localhost` resolves to IPv6 `::1` first)*
+#### (a) Hermes / Owl — the state.db watcher
+Hermes **ignores a custom model base URL** (it hardcodes its OpenRouter endpoint) and registers but
+never invokes shell hooks, so the cooperative paths below don't work for it. Instead, NodeDex reads
+Hermes's own `state.db` — it writes every turn there. Turn it on in the **TUI → Settings → `hermes
+capture`** (Enter to start; the `sources` row is the privacy filter, default `tui`). Full
+walkthrough, including the MCP read side: **[docs/how-to/connect-hermes.md](docs/how-to/connect-hermes.md)**.
+
+#### (b) OpenAI-compatible host that honors a custom base URL — route the model through NodeDex
+The zero-deploy path for a host that *does* let you redirect its model endpoint (Hermes does not — use
+(a)). Point your agent's **model base URL** at NodeDex's proxy: it relays each call to your real
+provider unchanged (no added latency, streaming works) and captures the turn in passing. In your
+agent's model/provider settings, set:
+- **base URL:** `http://127.0.0.1:3001/api`  *(use `127.0.0.1`, not `localhost`, on Windows: a `0.0.0.0`-bound server is IPv4-only and `localhost` resolves to IPv6 `::1` first; a remote/Docker agent uses the host address instead)*
 - **API key:** your usual provider key (e.g. OpenRouter `sk-or-…`) — forwarded untouched, never stored
 - **model:** unchanged
 
 No file to deploy, and **no NodeDex token needed** for this path (the proxy is exempt and uses
-your own provider key). Works for any agent that speaks OpenAI `/chat/completions` and lets you
-set a base URL.
+your own provider key).
 
-#### (b) Agent whose code/loop you control (Agent SDK, LangChain, your own loop) — the tee
+#### (c) Agent whose code/loop you control (Agent SDK, LangChain, your own loop) — the tee
 Have the agent call **`workspace_install_capture`** once; it returns a tiny out-of-path tee to
 drop into your post-turn seam (it POSTs `{user, response, reasoning}` to the server). On a
 **token-gated** server, set `NODEDEX_TOKEN` where the tee runs so its POSTs authenticate.

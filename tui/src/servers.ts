@@ -454,10 +454,57 @@ function killChild(m: Managed): void {
   }
 }
 
+// ─── Hermes capture watcher (singleton) ─────────────────────────────────────
+// The state.db watcher is the ONLY working Hermes capture path. It's a plain .mjs adapter that
+// reads Hermes's state.db read-only + posts turns; the TUI owns its lifecycle so the user controls
+// it from Settings (toggle = start/stop) instead of a separate terminal. Its config (source filter,
+// poll) lives in ~/.nodedex/config.json and is re-read by the watcher each poll — so editing the
+// filter in the TUI applies WITHOUT a restart here.
+const WATCHER_SCRIPT = resolve(SERVER_DIR, "adapters", "hermes-statedb-watcher.mjs");
+let watcher: ChildProcess | null = null;
+
+export function isWatcherRunning(): boolean {
+  return !!watcher && watcher.exitCode === null && !watcher.killed;
+}
+
+export function launchWatcher(): { ok: boolean; error?: string } {
+  if (isWatcherRunning()) return { ok: true };
+  if (!existsSync(WATCHER_SCRIPT)) return { ok: false, error: `watcher not found: ${WATCHER_SCRIPT}` };
+  try {
+    mkdirSync(LOG_DIR, { recursive: true });
+    const out = createWriteStream(resolve(LOG_DIR, "hermes-watcher.log"), { flags: "a" });
+    out.write(`\n=== watcher launch ${new Date().toISOString()} ===\n`);
+    // cwd=SERVER_DIR so the watcher's createRequire resolves better-sqlite3 from server/node_modules.
+    const child = spawn(process.execPath, [WATCHER_SCRIPT], {
+      cwd: SERVER_DIR,
+      env: { ...process.env },
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    child.stdout?.pipe(out);
+    child.stderr?.pipe(out);
+    child.on("exit", () => { if (watcher === child) watcher = null; });
+    watcher = child;
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+export function stopWatcher(): void {
+  if (!watcher) return;
+  try {
+    if (process.platform === "win32") spawn("taskkill", ["/PID", String(watcher.pid), "/T", "/F"], { windowsHide: true });
+    else watcher.kill("SIGTERM");
+  } catch { /* already gone */ }
+  watcher = null;
+}
+
 // kill everything the TUI launched (call on app exit)
 export function killAllManaged(): void {
   for (const m of managed.values()) killChild(m);
   managed.clear();
+  stopWatcher();
 }
 
 export { LOG_DIR, SERVER_DIR };

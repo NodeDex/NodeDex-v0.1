@@ -1,68 +1,86 @@
 # Connect Hermes / Owl to NodeDex
 
-End-to-end setup for a **Hermes-style hosted agent** — the agent runs in a Docker sandbox while
-the Hermes **gateway** runs on your host. There are two halves, and you need **both**:
+End-to-end setup for a **Hermes / Owl** agent. Two halves, both needed:
 
 - **Read** (MCP) — so the agent can traverse memory.
-- **Capture** (model proxy) — so your conversations *grow* the graph.
+- **Capture** (the state.db watcher) — so your conversations *grow* the graph.
 
-Throughout, **`<port>`** = the port your NodeDex server runs on (the TUI shows it; default `3001`,
-examples here assume you picked one like `3002`).
+Throughout, **`<port>`** = the port your NodeDex server runs on (the TUI shows it; default `3001`).
+
+> **Why a watcher and not a proxy or a hook?** Hermes resists every *cooperative* capture method:
+> it **hardcodes its OpenRouter endpoint** (`credential_pool.py`) and ignores `model.base_url`, so a
+> model-proxy never sees the traffic; and it **registers shell hooks but never invokes them** on the
+> gateway path, so a `transform_llm_output` hook never fires. What Hermes *does* do is write every
+> turn to its own `state.db`. So NodeDex captures by **reading that file** — zero Hermes cooperation,
+> and it can't be silently ignored.
 
 ---
 
 ## 0. Prerequisites
 
-- A NodeDex server running, **bound `0.0.0.0` + protected with a token**. The TUI's
-  **Servers → launch → "Docker / another machine"** does this for you and shows the token + URL.
-- A valid **NodeDex pipeline key** (so extraction works — see *Two keys* below).
+- A NodeDex server running (the TUI's **Servers → launch**, or onboarding). Same machine as Hermes —
+  so loopback (`127.0.0.1`) reaches it and **no token is needed**.
+- A valid **NodeDex pipeline key** (so extraction works — see *The two keys* below).
 - Reflect **not paused** (`~/.nodedex/reflect-pause` absent).
 
 ---
 
 ## 1. Read — register the MCP server in Hermes
 
-Hermes (the agent) is in a container, so it reaches your host via `host.docker.internal`. Add an
-**HTTP MCP server** in Hermes with the token:
+The Hermes **gateway** (the part that speaks MCP) runs on your **host**, so it reaches NodeDex on
+loopback. Use **`127.0.0.1`**, not `localhost` (on Windows a `0.0.0.0`-bound server is IPv4-only and
+`localhost` resolves to IPv6 `::1` first), and not `host.docker.internal` (that's only for code
+running *inside* a container — the gateway isn't).
 
-```json
-{
-  "url": "http://host.docker.internal:<port>/mcp",
-  "headers": { "Authorization": "Bearer <your-token>" }
-}
+In `%LOCALAPPDATA%\hermes\config.yaml` (Windows) / `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  nodedex:
+    url: http://127.0.0.1:<port>/mcp
 ```
 
-That gives the agent the read tools. (On Linux Docker, also run the container with
-`--add-host=host.docker.internal:host-gateway`.)
+Reload Hermes's MCP connections (or `hermes mcp add nodedex --url http://127.0.0.1:<port>/mcp`) and
+start a new session. The agent now has the read tools + the usage protocol (delivered via the MCP
+`instructions` field — no prompt changes from you). On a localhost server there's **no token**; add
+`headers: { Authorization: "Bearer <token>" }` only if you ran the server network-exposed (`0.0.0.0`).
 
 ---
 
-## 2. Capture — route Hermes's model through NodeDex
+## 2. Capture — turn on the state.db watcher
 
-A sandboxed agent **can't deploy a capture tee** (no host filesystem, no control of the loop). So
-instead, point Hermes's **model base URL** at NodeDex's `/api` proxy: it relays each call to your
-real provider unchanged *and* captures the turn.
+The watcher reads Hermes's `state.db`, assembles each finished turn, and POSTs it to NodeDex. The
+**easiest way is the TUI** — it owns the watcher's lifecycle:
 
-Edit `%LOCALAPPDATA%\hermes\config.yaml` (Windows) / `~/.hermes/config.yaml`, under `model:`:
+> **TUI → Settings tab → `hermes capture`:**
+> - **`watcher`** — press **Enter** to start it (the row shows `running`). Enter again stops it.
+> - **`sources`** — press **Enter** to edit the **privacy filter**: a comma-separated list of which
+>   Hermes session sources to capture. Default **`tui`** (your terminal sessions only). Add others
+>   (`tui, telegram`) or set **`*`** for all sources. Changes apply **live** — no restart.
 
-```yaml
-model:
-  default: openrouter/owl-alpha
-  provider: openrouter
-  base_url: http://127.0.0.1:<port>/api    # was https://openrouter.ai/api/v1
-  api_mode: chat_completions
+That's the whole setup. The watcher self-locates the live server from `~/.nodedex/tui-session.json`
+(so switching DB/port never breaks it) and persists a cursor, so it only captures **new** turns from
+when you enable it — it won't replay your whole history.
+
+### What it captures (the turn, assembled)
+One Hermes turn is many rows — `user → assistant(tool_call) → tool → … → assistant(final)`. The
+watcher uses Hermes's `finish_reason` to assemble them into one turn:
+- **response** = the final answer (`finish_reason='stop'`),
+- **user message** = the prompt that opened the turn,
+- **thinking** = the intermediate steps + tool results (where the dead-ends and reasoning live).
+
+So a tool-using turn is captured *with its investigation*, not just the closing summary.
+
+### Run it manually instead (optional)
+The watcher is a plain script if you'd rather not use the TUI toggle:
+```bash
+cd server
+node adapters/hermes-statedb-watcher.mjs            # watch + capture
+node adapters/hermes-statedb-watcher.mjs --dry-run   # print assembled turns, POST nothing
+node adapters/hermes-statedb-watcher.mjs --backfill   # also capture pre-existing history
 ```
-
-Or: `hermes config set model.base_url http://127.0.0.1:<port>/api`. **Then restart the Hermes
-gateway** (config is read at gateway start).
-
-> **⚠ Use `127.0.0.1`, NOT `localhost`.** A `0.0.0.0`-bound server is **IPv4-only**, and on
-> Windows `localhost` resolves to IPv6 `::1` first → the connection times out and **0 turns reach
-> the proxy**. The gateway runs on the host, so `127.0.0.1` is correct (use `host.docker.internal`
-> only if the model call originates *inside* the container).
-
-No tee, no NodeDex token for this leg (the `/api/chat` proxy is token-exempt and forwards your own
-provider key).
+Config (source filter, poll interval, a non-default `state.db` path) lives under `hermesCapture` in
+`~/.nodedex/config.json` and is re-read each poll.
 
 ---
 
@@ -70,11 +88,11 @@ provider key).
 
 | Key | Lives in | Used for |
 |---|---|---|
-| **Your provider key** (OpenRouter `sk-or-…`) | Hermes config | the proxy forwards it to OpenRouter for Owl's **answers** |
+| **Your provider key** (OpenRouter `sk-or-…`) | Hermes config | Hermes uses it for Owl's **answers** — NodeDex is never in the model path |
 | **NodeDex pipeline key** | `~/.nodedex/config.json` | the **extraction** pipeline that turns captured turns into graph blocks |
 
-If turns are captured but the graph stays empty, the **pipeline key** is the culprit (a `401` in
-the server log). Fix it — using the flag to avoid terminal paste-truncation:
+If turns are captured but the graph stays empty, the **pipeline key** is the culprit (a `401` in the
+server log). Fix it with the flag (avoids terminal paste-truncation):
 ```
 cd tui && npm run reconfigure -- --key sk-or-v1-<your-FULL-key>
 ```
@@ -83,33 +101,39 @@ cd tui && npm run reconfigure -- --key sk-or-v1-<your-FULL-key>
 
 ## Verify it's working
 
-1. Restart Hermes, send Owl a message whose **reply is >50 chars** (the pipeline ignores shorter).
-2. The NodeDex **server log** (`~/.nodedex/tui-logs/server-<port>.log`) shows a
-   `POST /api/chat/completions` line per turn — that proves Owl is routing through the proxy.
-3. The TUI **`blocks`** count climbs above 0 within a few seconds.
+1. Send Owl a message whose reply is **≥50 chars** (shorter is skipped).
+2. Within a few seconds the watcher log (`~/.nodedex/tui-logs/hermes-watcher.log`) shows
+   `captured stop_id=… → captured`, and the NodeDex **server log**
+   (`~/.nodedex/tui-logs/server-<port>.log`) shows
+   `Auto-Reflect COMPREHEND: … blocks` → `PIPELINE v2: … block(s)`.
+3. The TUI **`blocks`** count climbs (give it ~30–90s — owl-alpha is slow through all passes).
 
-If step 2 shows **0** proxy hits after a turn, Hermes isn't using the config `base_url` (restart
-the gateway; confirm the port; confirm `127.0.0.1`). If hits appear but `blocks` stays 0, it's the
-**pipeline key** or **reflect is paused**.
+Reading the signal:
+- **No `captured` line in the watcher log** → the watcher isn't running (Settings → `hermes capture`
+  → start) or there's no NodeDex server in `~/.nodedex/tui-session.json`. Try a manual `--dry-run` to
+  see assembled turns without posting.
+- **`captured` but `blocks` stays 0** → the turn was **<50 chars**, **reflect is paused**, or the
+  **pipeline key** is failing extraction (a `401` in the server log) — see *The two keys*.
 
 ---
 
 ## Gotchas (every one hit during a real setup)
 
-- **`localhost` vs `127.0.0.1`** — use `127.0.0.1` (IPv6 trap above).
+- **config silently ignored (the #1 cause of "nothing applies")** — if Hermes logs
+  `unacceptable character #xNNNN … Falling back to default config` (on startup or `hermes mcp list`),
+  it **rejected the entire `config.yaml`** and is ignoring *every* override, `mcp_servers` included. A
+  single stray control character anywhere — often hidden in a mangled/mojibake comment Hermes itself
+  ships — does this. The config *looks* right but never loads. Check by parsing it:
+  `python -c "import yaml;yaml.safe_load(open(r'%LOCALAPPDATA%\hermes\config.yaml',encoding='utf-8'))"`
+  then delete/fix the offending line (keep a backup) and restart.
+- **MCP config shape** — under `mcp_servers:`, each entry is `<name>: { url }` directly. Don't paste a
+  Claude-Desktop `{"mcpServers": {...}}` blob as the value — that double-wraps it and Hermes shows
+  "No MCP servers".
+- **wrong MCP host** — use `127.0.0.1`, not `localhost` (Windows `::1` trap) and not
+  `host.docker.internal` (the gateway is on the host, not in a container).
 - **reflect paused** — the graph won't grow. Delete `~/.nodedex/reflect-pause` and resume
   (TUI Settings → reflect → Enter, or restart the server).
 - **truncated key** — a long key pasted into a terminal field can drop chars; use the
   `reconfigure --key` flag, which is shape-checked.
-- **port mismatch** — NodeDex must be on the port your `base_url` points at.
-- **coupling** — once routed, Owl's model calls flow *through* NodeDex; if NodeDex is down Owl
-  can't reach the model. **Revert:** set `base_url` back to `https://openrouter.ai/api/v1`.
-
----
-
-## Fallback — log-tailer
-
-If Hermes ever can't route the model through the proxy, it still stores conversations on the host
-(`%LOCALAPPDATA%\hermes\sessions` + `state.db`). A small watcher that tails those and POSTs to
-`/api/reflect/trigger` (with the token) is an alternative capture path that needs no agent and no
-host hook. (Not shipped — a build-it-if-you-need-it option.)
+- **privacy** — by default only `tui` sessions are captured. If you use Hermes over telegram/discord
+  and *don't* want those in the graph, leave `sources` as `tui`; to capture them, add them explicitly.

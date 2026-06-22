@@ -789,12 +789,19 @@ export async function runAutoReflect(
   ]);
 
   // Skip trivial turns. NODEDEX_EXTRACT_ALL_SOURCES disables the LENGTH heuristic
-  // (length != residue — a 12-char user turn can be a decision); empty turns then
-  // self-handle (extraction finds nothing -> JUDGE keeps nothing -> no blocks).
+  // entirely (length != residue — a 12-char user turn can be a decision); empty turns
+  // then self-handle (extraction finds nothing -> JUDGE keeps nothing -> no blocks).
+  // NODEDEX_MIN_TURN_CHARS tunes the floor without removing it (default 300). The /trigger
+  // route already enforces a hard 50-char floor on agent_response, so values below ~50 have
+  // little extra effect for capture.
   const extractAllSources = process.env.NODEDEX_EXTRACT_ALL_SOURCES === "1";
+  const minTurnChars = (() => {
+    const n = parseInt(process.env.NODEDEX_MIN_TURN_CHARS ?? "", 10);
+    return Number.isFinite(n) && n >= 0 ? n : 300;
+  })();
   const combinedLength = (agentResponse?.length ?? 0) + (agentThinking?.length ?? 0);
-  if (!extractAllSources && combinedLength < 300) {
-    console.log("Auto-Reflect: skipping trivial turn (< 300 chars)");
+  if (!extractAllSources && combinedLength < minTurnChars) {
+    console.log(`Auto-Reflect: skipping trivial turn (< ${minTurnChars} chars)`);
     return empty;
   }
 

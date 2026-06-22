@@ -101,7 +101,7 @@ export function startApiServer(
   app.use(createSessionRouter(db, dataDir));
   app.use(createWorkspaceRouter(db, embeddings));
   app.use(createInjectRouter(db, dataDir));
-  app.use(createChatProxyRouter());
+  app.use(createChatProxyRouter(db, embeddings));
   app.use(createQuarantineRouter(db));
   app.use(createConversationsRouter(db));
   app.use(createFlagsRouter(db));

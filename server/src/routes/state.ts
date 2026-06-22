@@ -2,6 +2,7 @@
 // All route modules import from here rather than from api-server.ts.
 // Reference: api-server.v1.ts (lines 13-325)
 
+import { v4 as uuidv4 } from "uuid";
 import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine } from "../engine/embeddings.js";
 import { runAutoReflect, reflectTokenStats } from "../middleware/auto-reflect.js";
@@ -54,6 +55,57 @@ export function setReflectProcessing(v: boolean) { reflectProcessing = v; }
 export function setReflectFlushGeneration(v: number) { reflectFlushGeneration = v; }
 export function setReflectPaused(v: boolean) { reflectPaused = v; }
 export function setSpendPaused(v: boolean) { spendPaused = v; }
+
+// Enqueue ONE captured turn for reflection — the SINGLE in-process path, shared by the
+// HTTP trigger route (where hooks / the tee adapter POST in) and the chat proxy (which
+// enqueues directly, no self-HTTP-call). Mechanics only — the CALLER owns pause policy
+// (the proxy honors reflectPaused; the trigger route additionally bypasses it for
+// benchmark runs) and the <50-char gate. Never throws: capture must never break its caller.
+export function enqueueReflectTurn(
+  db: WorkspaceDB,
+  embeddings: EmbeddingEngine | undefined,
+  turn: {
+    agentResponse: string;
+    agentThinking?: string;
+    userMessage?: string;
+    loadedBlockIds?: string[];
+    agentId?: string;
+    turnNumber?: number;
+    turnName?: string;
+  },
+): { jobId: string; queueDepth: number } {
+  const jobId = `rj_${uuidv4().slice(0, 12)}`;
+  try {
+    if (turn.agentId) db.registerAgent(turn.agentId);
+    try {
+      db.insertReflectJob(
+        jobId,
+        turn.agentId || null,
+        JSON.stringify({
+          agentResponse: turn.agentResponse,
+          userMessage: turn.userMessage || "",
+          loadedBlockIds: turn.loadedBlockIds || [],
+        }),
+      );
+    } catch { /* non-critical — the DB row is for status sync only */ }
+    reflectQueue.push({
+      agentResponse: turn.agentResponse,
+      agentThinking: turn.agentThinking || "",
+      userMessage: turn.userMessage || "",
+      loadedBlockIds: turn.loadedBlockIds || [],
+      agentId: turn.agentId,
+      turnNumber: turn.turnNumber,
+      turnName: turn.turnName,
+      dbId: jobId,
+    });
+    processReflectQueue(db, embeddings || undefined).catch((e) =>
+      console.error("[reflect] worker error:", e),
+    );
+  } catch (e) {
+    console.error("[reflect] enqueue error:", e);
+  }
+  return { jobId, queueDepth: reflectQueue.length };
+}
 
 // ─── Session Event Log ────────────────────────────────────────────────────────
 // In-memory per-server-lifetime log. Cleared via POST /api/session/reset.

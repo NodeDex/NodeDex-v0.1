@@ -9,7 +9,7 @@ import { reflectTokenStats } from "../middleware/auto-reflect.js";
 import {
   reflectQueue, reflectProcessing, reflectFlushGeneration, reflectPaused, spendPaused,
   setReflectPaused, setSpendPaused, setReflectFlushGeneration,
-  processReflectQueue, resolveStateLabel,
+  processReflectQueue, resolveStateLabel, enqueueReflectTurn,
 } from "./state.js";
 import { clearSpendPauseFile, readSpendPauseReason } from "../middleware/reflect/cost-guard.js";
 import { clearTurnLogs } from "../middleware/reflect/pipeline.js";
@@ -137,11 +137,7 @@ export function createReflectRouter(db: WorkspaceDB, embeddings?: EmbeddingEngin
         return res.json({ triggered: false, reason: "paused" });
       }
 
-      if (agentId) db.registerAgent(agentId);
-
-      const triggerJobId = `rj_${uuidv4().slice(0, 12)}`;
-      try { db.insertReflectJob(triggerJobId, agentId || null, JSON.stringify({ agentResponse: agentResponseText, userMessage: userMessageText, loadedBlockIds })); } catch { /* non-critical */ }
-      reflectQueue.push({
+      const { queueDepth } = enqueueReflectTurn(db, embeddings, {
         agentResponse: agentResponseText,
         agentThinking: agentThinkingText,
         userMessage: userMessageText,
@@ -149,15 +145,10 @@ export function createReflectRouter(db: WorkspaceDB, embeddings?: EmbeddingEngin
         agentId,
         turnNumber,
         turnName,
-        dbId: triggerJobId,
       });
 
-      processReflectQueue(db, embeddings || undefined).catch(e =>
-        console.error("[reflect-trigger] worker error:", e)
-      );
-
       console.log(`[reflect-trigger] queued (hint=${hint}, agent=${agentId?.slice(0,8) || "anon"})`);
-      res.json({ triggered: true, hint, queue_depth: reflectQueue.length });
+      res.json({ triggered: true, hint, queue_depth: queueDepth });
     } catch (e) { res.status(500).json({ error: String(e) }); }
   });
 

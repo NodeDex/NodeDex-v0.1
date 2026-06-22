@@ -31,6 +31,9 @@
 //     the hooks. Server-side pause (/api/reflect/pause) still gates it via the trigger.
 
 import { Router } from "express";
+import { WorkspaceDB } from "../store/database.js";
+import { EmbeddingEngine } from "../engine/embeddings.js";
+import { enqueueReflectTurn, reflectPaused } from "./state.js";
 
 const REASONING_FIELDS = ["reasoning", "reasoning_content"] as const;
 
@@ -100,7 +103,7 @@ function slugifyTurn(userMessage: string): string {
   );
 }
 
-export function createChatProxyRouter(): Router {
+export function createChatProxyRouter(db?: WorkspaceDB, embeddings?: EmbeddingEngine): Router {
   const router = Router();
 
   router.post("/api/chat/completions", async (req, res) => {
@@ -117,6 +120,12 @@ export function createChatProxyRouter(): Router {
       "https://openrouter.ai/api/v1";
     const url = targetBase.replace(/\/+$/, "") + "/chat/completions";
 
+    // Observability: one line per inbound turn so an operator can SEE the agent is routing
+    // through the proxy (capture is otherwise invisible until blocks appear). Cheap, not verbose.
+    let proxyHost = targetBase;
+    try { proxyHost = new URL(url).host; } catch { /* keep raw */ }
+    console.error(`[chat-proxy] inbound turn (agent=${agentId}, stream=${isStream}) → relaying to ${proxyHost}`);
+
     // Forward the client's key untouched; fall back to env only for same-origin convenience.
     const clientAuth = req.headers["authorization"] as string | undefined;
     const auth = clientAuth || (process.env.OPENAI_API_KEY ? `Bearer ${process.env.OPENAI_API_KEY}` : undefined);
@@ -128,21 +137,26 @@ export function createChatProxyRouter(): Router {
     headers["X-Title"] = (req.headers["x-title"] as string) || "nodedex-proxy";
 
     // Fire-and-forget capture — runs only AFTER the client has its bytes; never throws upward.
+    // Enqueue IN-PROCESS, never a self-HTTP-call. A network round-trip back to our own
+    // /api/reflect/trigger breaks in exactly the deployment this proxy exists for: a
+    // CONTAINERIZED agent reaches us via host.docker.internal, but (a) that name does not
+    // resolve from THIS (host) process, so the Host-header-derived URL is unreachable, and
+    // (b) /api/reflect/trigger is token-gated while the proxy holds no Nodedex token. Direct
+    // enqueue sidesteps both. Capture must never affect the agent's call.
     const capture = (content: string, reasoning: string) => {
-      if (!content || content.trim().length < 50) return; // trigger rejects <50 anyway
-      const triggerUrl = `${req.protocol}://${req.get("host")}/api/reflect/trigger`;
-      fetch(triggerUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          hint: "discovery",
-          agent_response: content.slice(0, 16000),
-          agent_thinking: reasoning.slice(0, 8000),
-          user_message: userMessage.slice(0, 2000),
-          agent_id: agentId,
-          turn_name: slugifyTurn(userMessage),
-        }),
-      }).catch(() => { /* capture must never affect the agent's call */ });
+      if (!content || content.trim().length < 50) { console.error("[chat-proxy] capture skipped (reply <50 chars)"); return; }
+      if (reflectPaused) { console.error("[chat-proxy] capture skipped (reflect paused)"); return; }
+      if (!db) return;                                      // graph not wired (never via server.ts)
+      try {
+        const { queueDepth } = enqueueReflectTurn(db, embeddings, {
+          agentResponse: content.slice(0, 16000),
+          agentThinking: reasoning.slice(0, 8000),
+          userMessage: userMessage.slice(0, 2000),
+          agentId,
+          turnName: slugifyTurn(userMessage),
+        });
+        console.error(`[chat-proxy] capture queued (depth=${queueDepth})`);
+      } catch { /* capture must never affect the agent's call */ }
     };
 
     let upstream: Response;

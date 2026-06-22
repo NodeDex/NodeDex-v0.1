@@ -40,6 +40,19 @@ export function isTrainsOnPrompts(model: string): boolean {
 
 export type Provider = "openrouter";
 
+// Hermes/Owl capture (the state.db watcher). Hermes ignores model-proxy + shell-hook capture, so
+// the only working path is reading its own state.db. These knobs are owned by the TUI Settings tab
+// and read live by server/adapters/hermes-statedb-watcher.mjs each poll (so a change applies without
+// a watcher restart). `sources` is the privacy filter: only Hermes sessions whose `source` matches
+// are captured (default ["tui"]; "*" = all sources).
+export interface HermesCaptureConfig {
+  enabled?: boolean;       // is the watcher meant to run (the TUI starts/stops it on this)
+  sources?: string[];      // allow-list of Hermes session sources; ["*"] = all
+  pollMs?: number;         // poll interval (default 4000)
+  stateDbPath?: string;    // override Hermes state.db location (default %LOCALAPPDATA%/hermes/state.db)
+}
+export const DEFAULT_HERMES_SOURCES = ["tui"];
+
 export interface NodedexConfig {
   provider?: Provider;
   openrouter_key?: string;
@@ -49,6 +62,7 @@ export interface NodedexConfig {
   port?: number;
   dbPath?: string;
   onboarded?: boolean;
+  hermesCapture?: HermesCaptureConfig;
 }
 
 export interface DbChoice { name: string; path: string }
@@ -85,6 +99,31 @@ export function saveConfig(patch: Partial<NodedexConfig>): void {
   } catch {
     /* read-only home → no persistence; the in-session launch env still works */
   }
+}
+
+/** The current Hermes-capture config, with defaults filled in. */
+export function loadHermesCapture(): Required<HermesCaptureConfig> {
+  const h = loadConfig().hermesCapture ?? {};
+  const sources = Array.isArray(h.sources) && h.sources.length ? h.sources.map(String) : [...DEFAULT_HERMES_SOURCES];
+  return {
+    enabled: h.enabled === true,
+    sources,
+    pollMs: Number.isFinite(h.pollMs) && (h.pollMs as number) >= 500 ? (h.pollMs as number) : 4000,
+    stateDbPath: h.stateDbPath ?? "",
+  };
+}
+
+/** Patch the Hermes-capture block (nested merge — saveConfig is a shallow merge, so do it here). */
+export function setHermesCapture(patch: Partial<HermesCaptureConfig>): void {
+  const current = loadConfig().hermesCapture ?? {};
+  saveConfig({ hermesCapture: { ...current, ...patch } });
+}
+
+/** Parse a user-typed source list ("tui, telegram" or "*") into a clean array. */
+export function parseSources(input: string): string[] {
+  const parts = (input || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.includes("*")) return ["*"];
+  return parts.length ? Array.from(new Set(parts)) : [...DEFAULT_HERMES_SOURCES];
 }
 
 /** First run = not yet onboarded, or the chosen provider isn't usable yet. */
