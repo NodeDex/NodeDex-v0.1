@@ -245,6 +245,7 @@ export interface AdminConfig {
   thinking_budget?: string;
   min_credit_usd?: string;
   daily_budget_usd?: string;
+  arc_auto_turns?: string;
   env_file_path?: string;
 }
 

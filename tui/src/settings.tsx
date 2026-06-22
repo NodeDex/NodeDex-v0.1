@@ -24,8 +24,8 @@ import { loadHermesCapture, setHermesCapture, parseSources, loadConfig } from ".
 import { launchWatcher, stopWatcher, isWatcherRunning } from "./servers.js";
 
 // The selectable rows, in navigation order (read-only rows are NOT in this list).
-type FieldId = "reflect" | "model" | "fallback" | "floor" | "cap" | "hermes" | "sources";
-const FIELDS: FieldId[] = ["reflect", "model", "fallback", "floor", "cap", "hermes", "sources"];
+type FieldId = "reflect" | "model" | "fallback" | "autoturns" | "floor" | "cap" | "hermes" | "sources";
+const FIELDS: FieldId[] = ["reflect", "model", "fallback", "autoturns", "floor", "cap", "hermes", "sources"];
 
 // A row inside a panel. `selected` draws the ▸ cursor + highlight; read-only rows
 // pass selected=undefined (never highlighted, skipped by navigation).
@@ -114,6 +114,7 @@ export function SettingsTab({
     setBuf(
       id === "model" ? (cfg?.model ?? "") :
       id === "fallback" ? (cfg?.fallback_model ?? "") :
+      id === "autoturns" ? (cfg?.arc_auto_turns ?? "") :
       id === "sources" ? hc.sources.join(", ") :
       id === "floor" ? (floor != null ? String(floor) : "") :
       cap != null ? String(cap) : "",
@@ -127,6 +128,7 @@ export function SettingsTab({
     setEditing(null); setBuf("");
     if (id === "model")    return save({ model: v }, v ? `model → ${v}` : "model cleared");
     if (id === "fallback") return save({ fallback_model: v }, v ? `fallback → ${v}` : "fallback cleared (none)");
+    if (id === "autoturns") { if (v && (!Number.isInteger(Number(v)) || Number(v) < 0)) { setNotice("auto-turns must be a whole number ≥ 0 (0 or blank = off)"); return; } return save({ arc_auto_turns: v }, v && Number(v) > 0 ? `auto-extract every ${v} turns` : "auto-extract off"); }
     if (id === "sources")  { const arr = parseSources(v); setHermesCapture({ sources: arr }); setHc(loadHermesCapture()); setNotice(`capture sources → ${arr.join(", ")}`); return; }
     if (id === "floor")    { if (v && !Number.isFinite(Number(v))) { setNotice("floor must be a number (or blank to disable)"); return; } return save({ min_credit_usd: v }, v ? `credit floor → $${v}` : "credit floor disabled"); }
     if (id === "cap")      { if (v && !Number.isFinite(Number(v))) { setNotice("cap must be a number (or blank to disable)"); return; } return save({ daily_budget_usd: v }, v ? `daily cap → $${v}` : "daily cap disabled"); }
@@ -150,6 +152,7 @@ export function SettingsTab({
   const editLabel =
     editing === "model" ? "model id:" :
     editing === "fallback" ? "fallback model id (blank = none):" :
+    editing === "autoturns" ? "auto-extract every N turns (0/blank = off):" :
     editing === "sources" ? "capture sources (comma-sep, * = all):" :
     editing === "floor" ? "credit floor USD (blank = off):" :
     editing === "cap" ? "daily cap USD (blank = off):" : "";
@@ -163,6 +166,10 @@ export function SettingsTab({
           hint="enter = pause/resume capture" />
         <Row selected={selId === "model"} label="model" value={cfg?.model || "(default)"} hint="enter = edit" />
         <Row selected={selId === "fallback"} label="fallback" value={cfg?.fallback_model || "(none)"} hint="enter = edit" />
+        <Row selected={selId === "autoturns"} label="auto-turns"
+          value={cfg?.arc_auto_turns && Number(cfg.arc_auto_turns) > 0 ? `every ${cfg.arc_auto_turns} turns` : "off"}
+          valueColor={cfg?.arc_auto_turns && Number(cfg.arc_auto_turns) > 0 ? theme.value : theme.dim}
+          hint="enter = edit · auto-extract cadence (0 = off)" />
         <Row label="provider" value={`${savedProvider || cfg?.provider || "—"}   ·  switch → npm run onboard`} valueColor={theme.dim} />
       </Panel>
 

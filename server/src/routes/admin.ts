@@ -329,6 +329,10 @@ export function createAdminRouter(
       daily_budget_usd:    process.env.NODEDEX_DAILY_BUDGET_USD ?? "",
       // Write-robustness (H1).
       arc_max_retries:     process.env.NODEDEX_ARC_MAX_RETRIES  ?? "",
+      // Arc auto-extract cadence: auto-commit captured turns every N (0/blank = off →
+      // rely on inactivity + the agent's own workspace_extract_arc). Read LIVE by
+      // arcAutoTurns(), so a POST here takes effect on the running server with no restart.
+      arc_auto_turns:      process.env.NODEDEX_ARC_AUTO_TURNS   ?? "",
       pass3_batch_size:    process.env.NODEDEX_PASS3_BATCH_SIZE ?? "",
       thinking_budget:     process.env.NODEDEX_THINKING_BUDGET ?? "high",
       background_knowledge: (process.env.NODEDEX_BACKGROUND_KNOWLEDGE ?? "off").toLowerCase() === "on",
@@ -372,6 +376,7 @@ export function createAdminRouter(
     if (body.min_credit_usd    !== undefined) envUpdates["NODEDEX_MIN_CREDIT_USD"]      = String(body.min_credit_usd);
     if (body.daily_budget_usd  !== undefined) envUpdates["NODEDEX_DAILY_BUDGET_USD"]    = String(body.daily_budget_usd);
     if (body.arc_max_retries   !== undefined) envUpdates["NODEDEX_ARC_MAX_RETRIES"]     = String(body.arc_max_retries);
+    if (body.arc_auto_turns    !== undefined) envUpdates["NODEDEX_ARC_AUTO_TURNS"]      = String(body.arc_auto_turns);
     if (body.pass3_batch_size  !== undefined) envUpdates["NODEDEX_PASS3_BATCH_SIZE"]    = String(body.pass3_batch_size);
     if (body.thinking_budget   !== undefined) envUpdates["NODEDEX_THINKING_BUDGET"]      = body.thinking_budget;
     if (body.background_knowledge !== undefined) envUpdates["NODEDEX_BACKGROUND_KNOWLEDGE"] = body.background_knowledge ? "on" : "off";

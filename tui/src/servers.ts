@@ -4,8 +4,11 @@
 // exception (user-approved): it can LAUNCH and STOP NodeDex servers. That
 // crosses into process-management, so the footguns this project already hit are
 // fenced HERE, in one place:
-//   - launched servers ALWAYS get NODEDEX_FLAG_REVIEWER_ENABLED=0 (the idle
-//     reviewer burned budget in a past session) and NODEDEX_INACTIVITY_REFLECT=0
+//   - launched servers run the FULL system: the maintenance workers (flag-reviewer,
+//     describer, schema-heal, …) default ON — overridable via env / ~/.nodedex/.env.
+//     The legacy per-turn NODEDEX_INACTIVITY_REFLECT stays 0 (arc mode supersedes it).
+//   - user settings saved to ~/.nodedex/.env (arc auto-turns, etc.) are read here so they
+//     survive a relaunch (the launcher's explicit env otherwise shadows the env-file)
 //   - env overrides (PORT, WORKSPACE_DB_PATH) WIN over the server's .env because
 //     node --env-file does not override already-set vars (the isolation the
 //     RUNBOOK relies on)
@@ -26,6 +29,28 @@ import { randomBytes } from "node:crypto";
 // server dir resolved from this file (.../Nodedex/tui/src/servers.ts → ../../server)
 const SERVER_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "server");
 const NODEDEX_HOME = resolve(homedir(), ".nodedex");
+
+/** Read the persisted ~/.nodedex/.env (the file POST /api/admin/config writes) so a user's
+ *  saved settings — e.g. arc auto-turns — survive a TUI relaunch. The launcher sets some env
+ *  keys explicitly, and those WIN over the spawned server's --env-file load, so without reading
+ *  the saved file here a user's choice would be shadowed by the hardcoded default every relaunch.
+ *  Precedence used below: explicit process.env > saved ~/.nodedex/.env > built-in default.
+ *  Best-effort: a missing/garbled file yields {}. */
+function readHomeEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    const p = resolve(NODEDEX_HOME, ".env");
+    if (!existsSync(p)) return out;
+    for (const raw of readFileSync(p, "utf8").split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) continue;
+      const eq = line.indexOf("=");
+      if (eq < 1) continue;
+      out[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+    }
+  } catch { /* best-effort — fall back to defaults */ }
+  return out;
+}
 const PINS_FILE = resolve(NODEDEX_HOME, "tui-servers.json");
 const SESSION_FILE = resolve(NODEDEX_HOME, "tui-session.json");
 const LOG_DIR = resolve(NODEDEX_HOME, "tui-logs");
@@ -370,6 +395,7 @@ export function launchServer(opts: { port: number; dbPath: string; name?: string
     // when it actually exists; otherwise a clean install can't launch at all.
     const nodeArgs = ["--import=tsx/esm", "src/server.ts"];
     if (existsSync(resolve(SERVER_DIR, ".env"))) nodeArgs.unshift("--env-file=.env");
+    const homeEnv = readHomeEnv(); // persisted user settings (Settings → ~/.nodedex/.env)
     const child = spawn(
       process.execPath, // the same node running the TUI
       nodeArgs,
@@ -387,18 +413,24 @@ export function launchServer(opts: { port: number; dbPath: string; name?: string
           // the server's default localhost bind, no token.
           ...(opts.bindHost ? { NODEDEX_BIND_HOST: opts.bindHost } : {}),
           ...(opts.token ? { NODEDEX_API_TOKEN: opts.token } : {}),
-          // fenced footguns — these WIN over .env (node --env-file won't override set vars)
-          NODEDEX_FLAG_REVIEWER_ENABLED: "0",
+          // FULL RUN: the maintenance workers (flag-reviewer, describer, schema-heal, …) are ON
+          // by default — that's the complete system the pipeline is designed to run with.
+          // flag-reviewer is set explicitly so the intent is legible (the gate treats anything
+          // ≠ "off" as on). OVERRIDABLE: an explicit env or the saved ~/.nodedex/.env wins, so a
+          // user who wants to cut the idle reviewer can set NODEDEX_FLAG_REVIEWER_ENABLED=off.
+          NODEDEX_FLAG_REVIEWER_ENABLED: process.env.NODEDEX_FLAG_REVIEWER_ENABLED ?? homeEnv.NODEDEX_FLAG_REVIEWER_ENABLED ?? "on",
+          // Legacy per-turn inactivity-reflect stays OFF — arc mode uses NODEDEX_ARC_INACTIVITY_ENABLED.
           NODEDEX_INACTIVITY_REFLECT: "0",
           // v2 ARC EXTRACTION is the default pipeline (the validated one; per-turn scene-card is
-          // legacy). DEFAULTED here but OVERRIDABLE — a user who sets these in their own env wins
-          // (`?? default`). Arc captures turns for batched extraction; the two triggers commit them:
-          //   · ARC_AUTO_TURNS=8  → auto-extract every 8 captured turns (primary safety net)
+          // legacy). DEFAULTED here but OVERRIDABLE — an explicit env OR a saved ~/.nodedex/.env
+          // value wins (`process.env ?? homeEnv ?? default`), so a user's Settings choice SURVIVES
+          // a relaunch. Arc captures turns for batched extraction; the triggers that commit them:
+          //   · ARC_AUTO_TURNS=N  → auto-extract every N captured turns (0 = off; user-settable in Settings)
           //   · ARC_INACTIVITY    → auto-extract after the conversation goes idle (last-resort sweep)
           // (the agent can still fire workspace_extract_arc sooner at its own task boundaries).
-          NODEDEX_ARC_EXTRACTION:         process.env.NODEDEX_ARC_EXTRACTION         ?? "1",
-          NODEDEX_ARC_INACTIVITY_ENABLED: process.env.NODEDEX_ARC_INACTIVITY_ENABLED ?? "on",
-          NODEDEX_ARC_AUTO_TURNS:         process.env.NODEDEX_ARC_AUTO_TURNS         ?? "8",
+          NODEDEX_ARC_EXTRACTION:         process.env.NODEDEX_ARC_EXTRACTION         ?? homeEnv.NODEDEX_ARC_EXTRACTION         ?? "1",
+          NODEDEX_ARC_INACTIVITY_ENABLED: process.env.NODEDEX_ARC_INACTIVITY_ENABLED ?? homeEnv.NODEDEX_ARC_INACTIVITY_ENABLED ?? "on",
+          NODEDEX_ARC_AUTO_TURNS:         process.env.NODEDEX_ARC_AUTO_TURNS         ?? homeEnv.NODEDEX_ARC_AUTO_TURNS         ?? "8",
         },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
