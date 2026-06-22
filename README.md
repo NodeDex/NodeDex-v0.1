@@ -90,8 +90,9 @@ npm run dev          # first run launches the setup wizard
 
 The wizard walks you through it: **choose your model** — **OpenRouter** (cloud, bring your key,
 with a free-but-trains-on-prompts warning where it applies) or **Local / self-hosted** (Ollama /
-LM Studio / vLLM — offline, no key, $0) → model id → pick a free port → create or name a
-database → it starts the server on **`localhost`**. On first run it also downloads the bundled
+LM Studio / vLLM — offline, no key, $0; the wizard **scans and lists your local models** so you
+just pick one) → pick a free port → create or name a database → it starts the server on
+**`localhost`**. On first run it also downloads the bundled
 local *embedding* model (one-time) so semantic search works offline with no extra key. *(The
 extraction model needs to be reasonably capable — a ~30B+ local model gives the best quality.)*
 
@@ -339,7 +340,7 @@ decontextualized fragment.
 > skill, not the memory. Full write-up:
 > [docs/NODEDEX-MEMORY-MODEL.md](docs/NODEDEX-MEMORY-MODEL.md).
 
-Engine health: **1160/1160 server tests pass**, with extraction → graph → retrieval validated
+Engine health: **1162/1162 server tests pass**, with extraction → graph → retrieval validated
 end-to-end.
 
 ---
