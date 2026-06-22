@@ -939,6 +939,30 @@ describe("DEBT 5 Phase 10: getAgentsWithStalePass01Turns", () => {
   });
 });
 
+// ─── Boot sweep gating — recover arcs a restart stranded mid-extraction ───────
+describe("startBootArcSweep gating", () => {
+  test("off when arc mode is off, and when NODEDEX_ARC_BOOT_SWEEP=off; on otherwise", async () => {
+    const { startBootArcSweep } = await import("../middleware/reflect/arc-inactivity-timer.js");
+    const prevArc = process.env.NODEDEX_ARC_EXTRACTION;
+    const prevSweep = process.env.NODEDEX_ARC_BOOT_SWEEP;
+    const prevDelay = process.env.NODEDEX_ARC_BOOT_SWEEP_DELAY_MS;
+    process.env.NODEDEX_ARC_BOOT_SWEEP_DELAY_MS = "3600000"; // far-future so the "on" case's timer never fires in-suite
+    try {
+      delete process.env.NODEDEX_ARC_EXTRACTION;
+      assert.equal(startBootArcSweep(db), false, "arc mode off → no sweep (no pass01_done turns to recover)");
+      process.env.NODEDEX_ARC_EXTRACTION = "1";
+      process.env.NODEDEX_ARC_BOOT_SWEEP = "off";
+      assert.equal(startBootArcSweep(db), false, "explicit off → no sweep");
+      delete process.env.NODEDEX_ARC_BOOT_SWEEP;
+      assert.equal(startBootArcSweep(db), true, "arc on + default → sweep scheduled");
+    } finally {
+      if (prevArc === undefined) delete process.env.NODEDEX_ARC_EXTRACTION; else process.env.NODEDEX_ARC_EXTRACTION = prevArc;
+      if (prevSweep === undefined) delete process.env.NODEDEX_ARC_BOOT_SWEEP; else process.env.NODEDEX_ARC_BOOT_SWEEP = prevSweep;
+      if (prevDelay === undefined) delete process.env.NODEDEX_ARC_BOOT_SWEEP_DELAY_MS; else process.env.NODEDEX_ARC_BOOT_SWEEP_DELAY_MS = prevDelay;
+    }
+  });
+});
+
 // ─── DEBT 5: getExtractionStatus — agent-facing extraction freshness ──────────
 // The agent PULLS this (via workspace_stats) because, as a passive MCP tool, the
 // system can't push it. It must disambiguate the three look-alike "empty" states.

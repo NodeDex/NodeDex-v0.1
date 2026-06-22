@@ -51,7 +51,7 @@ function arcInactivityEnabled(): boolean {
  * trigger_source='inactivity'. Per-agent failures are logged but don't stop
  * the tick. Exported so tests can drive it directly without setInterval.
  */
-export async function runInactivityTick(db: WorkspaceDB): Promise<{
+export async function runInactivityTick(db: WorkspaceDB, thresholdMs: number = getThresholdMs()): Promise<{
   checked: number;
   extracted: number;
   skipped_in_progress: number;
@@ -59,7 +59,6 @@ export async function runInactivityTick(db: WorkspaceDB): Promise<{
   skipped_min_range: number;
   errors: number;
 }> {
-  const thresholdMs = getThresholdMs();
   const agents = db.getAgentsWithStalePass01Turns(thresholdMs);
   const stats = {
     checked: agents.length,
@@ -121,6 +120,44 @@ export function startArcInactivityTimer(db: WorkspaceDB): boolean {
   // Allow the process to exit even with the timer scheduled (don't block
   // shutdown). Node's setInterval refs by default; unref releases.
   if (typeof _intervalHandle.unref === "function") _intervalHandle.unref();
+  return true;
+}
+
+function bootSweepDelayMs(): number {
+  return intFromEnv("NODEDEX_ARC_BOOT_SWEEP_DELAY_MS", 90_000, 5_000);
+}
+
+/**
+ * One-shot BOOT SWEEP — recover arcs stranded by a restart.
+ *
+ * The per-turn auto-trigger fires arc extraction fire-and-forget, so a restart
+ * mid-extraction kills it and leaves the turns `pass01_done` with nothing to
+ * re-trigger them. Without this they wait up to the full inactivity threshold
+ * (default 30 min) — or forever if the inactivity timer is off.
+ *
+ * After a short settle delay this runs ONE inactivity-style tick using the delay
+ * itself as the idle window, so it sweeps turns that were already sitting at boot
+ * but NOT a conversation that resumed afterwards (those are < delay old and the
+ * normal auto-trigger owns them). Distinct from the proactive inactivity timer:
+ * this is restart RECOVERY, so it's gated only on arc mode being on — a user who
+ * turned off the 30-min inactivity sweep still doesn't want a restart to strand
+ * captured turns. Off-switch: NODEDEX_ARC_BOOT_SWEEP=off. runArcExtraction's own
+ * in-flight + rate guards keep it from racing a live trigger.
+ */
+export function startBootArcSweep(db: WorkspaceDB): boolean {
+  if (process.env.NODEDEX_ARC_EXTRACTION !== "1") return false; // no pass01_done turns otherwise
+  if ((process.env.NODEDEX_ARC_BOOT_SWEEP ?? "").toLowerCase() === "off") {
+    console.log("[arc-boot-sweep] disabled (NODEDEX_ARC_BOOT_SWEEP=off)");
+    return false;
+  }
+  const delayMs = bootSweepDelayMs();
+  console.log(`[arc-boot-sweep] scheduled in ${Math.round(delayMs / 1000)}s (recovers arcs a restart left mid-extraction)`);
+  const h = setTimeout(() => {
+    runInactivityTick(db, delayMs)
+      .then((s) => { if (s.checked > 0) console.log(`[arc-boot-sweep] swept ${s.extracted}/${s.checked} stranded arc(s)`); })
+      .catch((e) => console.warn(`[arc-boot-sweep] threw: ${e?.message ?? e}`));
+  }, delayMs);
+  if (typeof h.unref === "function") h.unref();
   return true;
 }
 

@@ -27,7 +27,7 @@ import { createConversationsRouter } from "./routes/conversations.js";
 import { createFlagsRouter }        from "./routes/flags.js";
 import { createUsageRouter }         from "./routes/usage.js";
 import { createMcpHttpRouter }       from "./routes/mcp-http.js";
-import { startArcInactivityTimer } from "./middleware/reflect/arc-inactivity-timer.js";
+import { startArcInactivityTimer, startBootArcSweep } from "./middleware/reflect/arc-inactivity-timer.js";
 import { startFlagReviewer } from "./middleware/reflect/flag-reviewer-startup.js";
 import { startStageAuditTimer } from "./middleware/reflect/stage-audit-graph.js";
 import { startDescriberTimer } from "./middleware/reflect/describe-roots.js";
@@ -118,6 +118,12 @@ export function startApiServer(
   // off; checks for stale pass01_done turns when on (default every 60s,
   // threshold 30 min idle). Idempotent — safe to call on each server start.
   startArcInactivityTimer(db);
+
+  // Boot sweep: recover arcs a restart stranded mid-extraction (the auto-trigger
+  // is fire-and-forget, so a restart kills an in-flight extraction and leaves the
+  // turns pass01_done with no re-trigger). One-shot, ~90s after boot; gated on arc
+  // mode being on (NODEDEX_ARC_EXTRACTION=1), off-switch NODEDEX_ARC_BOOT_SWEEP=off.
+  startBootArcSweep(db);
 
   // DEBT 5 Slice 2: enrichment-cycle workers (both default OFF, opt-in).
   //   Flag reviewer — consumes pipeline_flags, decides merge/leave/split.
