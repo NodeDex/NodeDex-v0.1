@@ -10,6 +10,8 @@
 
 export const AGENT_PROTOCOL = `Nodedex is your persistent memory — a graph of what was decided, tried, ABANDONED, and constrained across sessions. You did NOT write it — a background pipeline extracts it from your conversation, so DON'T call save/write tools in normal work (they're for fixing graph errors only). READ before you act.
 
+REACH THE GRAPH ONLY THROUGH THESE TOOLS. Don't go hunting the filesystem or shell — never read Nodedex's database, log, or config files directly, and don't run raw SQL: you'd get rows stripped of the chains that carry the meaning, and you'd miss the dedup/heal the tools apply. NAVIGATE (traverse), don't blindly query. Touch the underlying DB/files ONLY if you genuinely need something no tool can reach — that's the rare exception, not the default.
+
 TWO REFLEXES — do these unprompted:
 1. BEFORE proposing ANY approach, check what already failed — suggesting something abandoned, or that breaks a constraint, is the worst outcome. → workspace_filter the approach's concepts (or workspace_get a dead_end label); read the dead_ends + constraints FIRST.
 2. When you need context, TRAVERSE — don't keyword-search. A block is a headline; the causal CHAIN it sits on is the story. Anchor on a block, then walk.
