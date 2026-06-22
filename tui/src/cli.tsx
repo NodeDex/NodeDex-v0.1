@@ -34,10 +34,12 @@ const crashOut = (label: string) => (err: unknown) => {
 process.on("uncaughtException", crashOut("crashed"));
 process.on("unhandledRejection", crashOut("unhandled rejection"));
 
-// First run (no OpenRouter key yet) → the setup wizard, which starts a server and
-// hands off to the TUI. Otherwise, straight into the app.
+// First run (no model configured yet) → the setup wizard, which starts a server and
+// hands off to the TUI. Otherwise, straight into the app. `--onboard` (npm run onboard)
+// FORCES the wizard even when already set up — to switch provider/model/db or re-run setup.
+const forceOnboard = process.argv.includes("--onboard");
 function Root() {
-  const [done, setDone] = useState(() => !needsOnboarding());
+  const [done, setDone] = useState(() => !forceOnboard && !needsOnboarding());
   return done ? <App /> : <Onboarding onDone={() => setDone(true)} />;
 }
 

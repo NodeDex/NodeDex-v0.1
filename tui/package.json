@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "tsx src/cli.tsx",
     "start": "tsx src/cli.tsx",
+    "onboard": "tsx src/cli.tsx --onboard",
     "reconfigure": "node scripts/reconfigure.mjs",
     "uninstall": "node scripts/uninstall.mjs",
     "typecheck": "tsc --noEmit"

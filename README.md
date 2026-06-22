@@ -267,7 +267,8 @@ entry in your agent host's MCP config (remove that on the host).
 | Command | What it does |
 |---|---|
 | `npm run dev` | launch the TUI — first run is the onboarding wizard, then the operator console |
-| `npm run reconfigure` | change the API key or model |
+| `npm run onboard` | re-run the full setup wizard (switch provider/model/port/db) even if already set up |
+| `npm run reconfigure` | change just the API key or model |
 | `npm run uninstall` | remove `~/.nodedex` (data + config) |
 
 In the TUI **Servers** tab: `[l]` launch · `[x]` stop · `[c]` change database · `[r]` rescan free ports.
