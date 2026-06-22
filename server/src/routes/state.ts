@@ -13,6 +13,7 @@ import type { PipelineCheckpoint } from "../middleware/reflect/types.js";
 import { evaluateBudgetLive, writeSpendPauseFile, clearSpendPauseFile, creditExhausted, creditRecovered } from "../middleware/reflect/cost-guard.js";
 import { isInsufficientCreditError } from "../engine/providers/failure-policy.js";
 import { resolveRoutedFlagsFromText } from "../middleware/reflect/nl-accept.js";
+import { arcAutoTurns } from "../middleware/reflect/config.js";
 
 // ─── Gemini Reflect Queue ─────────────────────────────────────────────────────
 // Sequential queue — every agent turn is compiled, no rate-limit gate.
@@ -530,6 +531,27 @@ export async function processReflectQueue(db: WorkspaceDB, embeddings?: Embeddin
           console.log(`[reflect-queue] saved=${r.saved} updated=${r.updated} labels=${r.saved_labels.join(",")}`);
         if (r.uncertain_count > 0)
           console.log(`[reflect-queue] uncertain_refs=${r.uncertain_count} — stored for next turn`);
+
+        // ── Every-N arc auto-extract (safety net) ────────────────────────────────
+        // In arc mode this turn was just CAPTURED (pass01_done) but not yet extracted. If
+        // the agent doesn't fire workspace_extract_arc itself at a task boundary, auto-commit
+        // once N turns have accumulated (NODEDEX_ARC_AUTO_TURNS; 0/unset = off → inert). The
+        // guard `job.turnNumber !== undefined` means this NEVER runs in per-turn mode. Fire-
+        // and-forget so it never blocks the queue; runArcExtraction's own in-flight + rate
+        // guards stop double-firing. Dynamic import avoids a static arc-pipeline↔state cycle.
+        const autoN = arcAutoTurns();
+        if (autoN > 0 && job.agentId && job.turnNumber !== undefined) {
+          try {
+            const pending = db.getExtractionStatus(job.agentId).pending?.turns ?? 0;
+            if (pending >= autoN) {
+              const agentId = job.agentId;
+              void import("../middleware/reflect/arc-pipeline.js")
+                .then(({ runArcExtraction }) => runArcExtraction(db, { agent_id: agentId, trigger_source: "auto" }))
+                .then((res) => { if (res?.status === "extracted") console.log(`[arc-auto] committed ${res.turns_consumed} turn(s) for ${agentId} (pending>=${autoN})`); })
+                .catch((e) => console.warn(`[arc-auto] ${e?.message ?? e}`));
+            }
+          } catch (e: any) { console.warn(`[arc-auto] check failed: ${e?.message}`); }
+        }
 
         // ── Record session event ──────────────────────────────────────────────
         const processing_ms = Date.now() - jobStart;

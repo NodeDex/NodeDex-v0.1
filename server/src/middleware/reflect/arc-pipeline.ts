@@ -65,7 +65,7 @@ export async function lazyFillPass01(db: WorkspaceDB, provider: LLMProvider, tur
 
 // ─── Public interface ─────────────────────────────────────────────────────────
 
-export type ArcTriggerSource = 'phase_tag' | 'mcp_tool' | 'api' | 'precompact' | 'inactivity';
+export type ArcTriggerSource = 'phase_tag' | 'mcp_tool' | 'api' | 'precompact' | 'inactivity' | 'auto';
 
 export interface ArcExtractionOpts {
   agent_id: string;

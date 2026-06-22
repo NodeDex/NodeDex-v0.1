@@ -4,6 +4,20 @@
 export const PRIMARY_MODEL  = process.env.NODEDEX_PRIMARY_MODEL  ?? "gemini-2.5-flash";
 export const FALLBACK_MODEL = process.env.NODEDEX_FALLBACK_MODEL ?? "gemini-2.5-pro";
 
+// ─── Arc auto-extract cadence ──────────────────────────────────────────────────
+// In arc mode each captured turn waits (pass01_done) until an arc is extracted. The
+// agent SHOULD fire workspace_extract_arc at its own task boundaries (cleanest), but as
+// a safety net we auto-extract once N turns have piled up. NODEDEX_ARC_AUTO_TURNS:
+//   0 / unset → OFF (agent-driven + inactivity timer only)
+//   N > 0     → after each capture, if pending turns >= N, auto-fire arc extraction.
+// Read live (not cached) so the user/TUI — or the agent via /api/admin/config — can
+// retune it without a restart. The recognizer (default-on) means a coarse boundary still
+// won't duplicate roots, so N is a quality/cost knob, not a correctness one.
+export function arcAutoTurns(): number {
+  const n = parseInt(process.env.NODEDEX_ARC_AUTO_TURNS ?? "0", 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 // ─── Per-pass model routing (user-configurable; defaults to the provider model) ──
 // VISION: users bring ANY model/provider. They set 2-3 TIER vars and the pipeline
 // routes each pass to the right tier by its competence need; a per-pass override

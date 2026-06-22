@@ -123,11 +123,21 @@ function assembleTurn(db, sid, prevStopId, stop) {
   const stopThinking = clean(stop.reasoning_content);     // thinking-model reasoning on the final row
   if (stopThinking) toolTrace.unshift(stopThinking);
 
+  // turn_number = the state.db message id of this turn's closing 'stop' row — the turn's identity
+  // in HERMES'S OWN log, NOT a private ordinal. Anchoring to it means NodeDex never keeps a
+  // drift-prone copy of "what's extracted": the extraction RANGE bounds ARE state.db ids
+  // (conversation_turn_ranges.end_turn_number = the last extracted stop-id = a watermark), so
+  // "extracted vs not" is just `state.db stop.id <= watermark`. Globally unique + monotonic.
+  // agent_id is PER-SESSION ("owl-<sid>") so each conversation is its own arc (turns don't bleed
+  // across sessions into one range).
+  const turnNumber = stop.id;
+
   return {
     agentResponse: agentParts.join("\n"),
     userMessage: userParts.join("\n"),
     reasoning: toolTrace.join("\n"),
-    agentId: "owl",
+    agentId: `owl-${String(sid)}`,                  // per-session → one arc per Hermes conversation
+    turnNumber,                                      // = state.db stop-row id (the state-anchored watermark unit)
     turnName: `hermes-${String(sid).slice(0, 15)}-${stop.id}`,
     hint: "discovery",
   };

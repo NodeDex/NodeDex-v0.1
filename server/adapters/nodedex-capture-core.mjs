@@ -79,7 +79,7 @@ export function buildTriggerBody(turn) {
   // Need SOME answer, but floor on COMBINED content — a short answer can ride a rich trace.
   if (!response.trim()) return null;
   if ((response + reasoning + user).trim().length < TRIGGER_MIN_CHARS) return null;
-  return {
+  const body = {
     agent_response: response,
     user_message: user,
     agent_thinking: reasoning,
@@ -88,6 +88,11 @@ export function buildTriggerBody(turn) {
     hint: turn?.hint || "discovery",
     loaded_block_ids: [],
   };
+  // turn_number enables ARC mode: the server stores this turn in conversation_turns keyed by
+  // (agent_id, turn_number) and later assembles the range. Only sent when the adapter supplies a
+  // monotonic ordinal; adapters that don't (per-turn-only capture) simply omit it → atomic mode.
+  if (Number.isInteger(turn?.turnNumber)) body.turn_number = turn.turnNumber;
+  return body;
 }
 
 /** POST a body to a resolved target's /api/reflect/trigger. Never throws → true on success. */

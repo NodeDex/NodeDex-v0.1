@@ -390,6 +390,15 @@ export function launchServer(opts: { port: number; dbPath: string; name?: string
           // fenced footguns — these WIN over .env (node --env-file won't override set vars)
           NODEDEX_FLAG_REVIEWER_ENABLED: "0",
           NODEDEX_INACTIVITY_REFLECT: "0",
+          // v2 ARC EXTRACTION is the default pipeline (the validated one; per-turn scene-card is
+          // legacy). DEFAULTED here but OVERRIDABLE — a user who sets these in their own env wins
+          // (`?? default`). Arc captures turns for batched extraction; the two triggers commit them:
+          //   · ARC_AUTO_TURNS=8  → auto-extract every 8 captured turns (primary safety net)
+          //   · ARC_INACTIVITY    → auto-extract after the conversation goes idle (last-resort sweep)
+          // (the agent can still fire workspace_extract_arc sooner at its own task boundaries).
+          NODEDEX_ARC_EXTRACTION:         process.env.NODEDEX_ARC_EXTRACTION         ?? "1",
+          NODEDEX_ARC_INACTIVITY_ENABLED: process.env.NODEDEX_ARC_INACTIVITY_ENABLED ?? "on",
+          NODEDEX_ARC_AUTO_TURNS:         process.env.NODEDEX_ARC_AUTO_TURNS         ?? "8",
         },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
