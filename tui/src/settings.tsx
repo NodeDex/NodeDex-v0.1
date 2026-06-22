@@ -20,7 +20,7 @@ import { Box, Text, useInput } from "ink";
 import { Panel } from "./components.js";
 import { theme, glyph, fmtMoney } from "./theme.js";
 import { fetchConfig, postConfig, setReflectPausedRemote, type AdminConfig, type Dashboard, type Balance } from "./api.js";
-import { loadHermesCapture, setHermesCapture, parseSources } from "./config.js";
+import { loadHermesCapture, setHermesCapture, parseSources, loadConfig } from "./config.js";
 import { launchWatcher, stopWatcher, isWatcherRunning } from "./servers.js";
 
 // The selectable rows, in navigation order (read-only rows are NOT in this list).
@@ -63,8 +63,12 @@ export function SettingsTab({
   // runtime config above; the watcher reads it live, so a source-filter edit needs no restart.
   const [hc, setHc] = useState(loadHermesCapture());
   const [watching, setWatching] = useState(isWatcherRunning());
+  // The user's CHOSEN provider (config.json: "local" | "openrouter") — both run over the
+  // openai-compatible API, so the server's runtime AI_PROVIDER can't tell them apart; show the
+  // choice the user actually made instead.
+  const [savedProvider, setSavedProvider] = useState<string | undefined>(() => loadConfig().provider);
 
-  const load = useCallback(() => { fetchConfig().then(setCfg); }, []);
+  const load = useCallback(() => { fetchConfig().then(setCfg); setSavedProvider(loadConfig().provider); }, []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { onCapture(editing !== null); }, [editing, onCapture]);
   useEffect(() => {
@@ -159,7 +163,7 @@ export function SettingsTab({
           hint="enter = pause/resume capture" />
         <Row selected={selId === "model"} label="model" value={cfg?.model || "(default)"} hint="enter = edit" />
         <Row selected={selId === "fallback"} label="fallback" value={cfg?.fallback_model || "(none)"} hint="enter = edit" />
-        <Row label="provider" value={`${cfg?.provider || "—"}   ·  switch provider / model source → npm run onboard`} valueColor={theme.dim} />
+        <Row label="provider" value={`${savedProvider || cfg?.provider || "—"}   ·  switch → npm run onboard`} valueColor={theme.dim} />
       </Panel>
 
       <Panel title="cost guardrails" minHeight={6}>
