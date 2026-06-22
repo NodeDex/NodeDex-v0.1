@@ -373,6 +373,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     return (
       <Frame>
         <Text color={theme.title} bold>Pick a local model</Text>
+        <Text color={theme.dim}>Make sure your model server (Ollama / LM Studio / vLLM) is running first.</Text>
         {localScanning ? (
           <Box marginTop={1}><Spinner /><Text color={theme.dim}>{` Scanning Ollama / LM Studio / vLLM…`}</Text></Box>
         ) : (
