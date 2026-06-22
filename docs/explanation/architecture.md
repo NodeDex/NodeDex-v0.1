@@ -19,7 +19,7 @@ Agent session happens
         ↓
 POST /api/reflect/trigger  (agent calls this at end of turn)
         ↓
-6-pass pipeline runs (Pass 0 → 1 → 2 → 3 → 4 → 5)
+v2 pipeline runs (COMPREHEND → fill → JUSTIFY → INTEGRATE → chains)
         ↓
 Blocks saved to graph
         ↓
@@ -145,80 +145,67 @@ Every meaningful connection between blocks is a typed relation:
 
 ## The reflect pipeline — how text becomes blocks
 
-Triggered by: `POST /api/reflect/trigger` at end of agent turn.
+Triggered by `POST /api/reflect/trigger` at the end of an agent turn. The engine is the **v2
+"comprehend-and-structure" pipeline** — it reads the turn *holistically* and structures it, rather
+than atomizing and reassembling it pass-by-pass. (A legacy v1 pass chain remains in-tree but is
+off and unreachable; the stage names below are what actually runs and what the cost panel shows.)
 
 ```
-Pass 0  →  Pass 1  →  Pass 2  →  Pass 3  →  Pass 4  →  Pass 5
+COMPREHEND → [SELECTOR] → fill → JUSTIFY → [CROSS-LINK] → INTEGRATE → chains
 ```
 
-### Pass 0 — Scene card
-**Sees:** Raw transcript only. No graph. No thinking budget.
-**Job:** Build a structured overview for downstream passes. Descriptive, not classificatory.
-**Output:** Projects, people, approaches, committed/planned/vague items, causal links, tried-and-abandoned.
+Stages in `[brackets]` are flag-gated refinements (tunable per deployment); COMPREHEND, fill,
+JUSTIFY and chains are the spine.
 
-Key constraint: Pass 0 cannot classify reliably — it has no thinking budget and no graph.
-It describes what it observes. Classification happens in Pass 1 and Pass 2.
+### COMPREHEND (+ SEAM 1)
+**Sees:** the whole turn (user + agent), holistically.
+**Job:** read the turn and emit typed blocks (`fact` / `decision` / `dead_end` / `insight` /
+`constraint` / …) **grouped by topic-thread**, with the within-group causal links and verbatim
+provenance for each block. One call — or per-group on a very large turn, to survive output
+truncation. This is the comprehender: tuned for **recall** (miss nothing). SEAM 1 then validates
+the structured result before anything downstream runs.
 
-Common failure mode: Pass 0 lifts generic organizational nouns ("company", "team", "the lab")
-as project names. The prompt instructs it to check KNOWN PROJECTS first — generic nouns
-are pronouns, not project identifiers.
+The backward-trace rule lives here: after a decision, ask "what does this replace?" — the
+predecessor is a `dead_end` candidate even without explicit "failed/abandoned" language.
 
-### Pass 1 — Extraction
-**Sees:** Scene card + transcript. No graph. No thinking budget.
-**Job:** Extract every discrete item worth saving. Assign provisional type.
-**Output:** Items with id, text, source, excerpt, provisional_type.
+### SELECTOR — the worth-gate *(flag-gated)*
+**Sees:** the comprehended candidates + the transcript.
+**Job:** the **precision** half. Drop low-worth candidates *before* the per-block fill, so dropped
+ones never pay downstream cost. It keeps a kept block's causal evidence (anchor-override), and if
+the selector itself fails it **keeps everything** — a failed judge must never drop residue.
+COMPREHEND maximizes recall; the SELECTOR adds precision — together they are the selective half
+memory requires.
 
-Tuned for **recall** — miss nothing. Wrong type is fixable in Pass 2. A missed item is gone.
+Worth guard: "was this invested in?" Committed resources = time, money, actual use, formal
+evaluation. A casual mention or speculation is not investment.
 
-The backward trace rule: after extracting any decision, ask "what does this replace?" The
-predecessor is a dead_end candidate even without explicit "failed" or "abandoned" language.
+### fill — `unique{}`
+**Job:** fill each block's structured per-type `unique{}` fields from its verbatim source — the
+focused step the holistic COMPREHEND can't reliably do for every block under load. Runs per-block
+(bounded concurrency) or batched (N blocks per call), with a per-item fallback so a fill is never
+lost.
 
-### Pass 2 — Classify + Causality
-**Sees:** Items from Pass 1 + scene card + full PROJECT GRAPH. Has thinking budget.
-**Job:** Verify types, draw causal links, fill unique fields.
-**Output:** Classified items with correct types, triggered_by_items, based_on_items, unique{}.
+### JUSTIFY
+**Job:** repair grounded conclusions (`decision` / `hypothesis` / `insight`) that arrived without
+their `based_on` wiring, so a conclusion keeps its re-openable WHY. Without it the chain step can't
+reach the conclusion (no causal path) and the reasoning behind it is lost. Runs on the survivors;
+a conclusion whose grounding is genuinely out-of-scope this turn is left unwired (never fabricated).
 
-This is the most powerful pass. It has everything it needs to:
-- Override wrong provisional types from Pass 1
-- Draw causal arrows between items in this batch
-- Fill structured unique{} fields from verbatim excerpts
-- Validate project attribution against PROJECT GRAPH
+### CROSS-LINK *(flag-gated)*
+**Job:** add the sparse causal links that cross *between* topic-threads — within-thread links
+already come from COMPREHEND. Bounded output (just edges), so it can't run away; a no-op for a
+single thread.
 
-Dead_end guard: "Was this invested in?" Resources committed = time, money, actual use,
-formal evaluation. A casual mention is not investment. Speculation is not investment.
+### INTEGRATE *(flag-gated recognizer)*
+**Job:** graph-aware reconciliation — match the new blocks against existing project roots, assign
+the canonical `{project}_{entity}_{type}_{concept}` labels, and attach each block to the right
+root (the only valid orphan is a `project`). Off → blocks keep their as-extracted labels.
 
-Project attribution order: PROJECT GRAPH roots first → scene card COMMITTED prefixes →
-cross-batch context. Generic nouns that don't appear in PROJECT GRAPH as roots are wrong.
-
-### Pass 3 — Build
-**Sees:** Classified items + KNOWN PROJECT ROOTS + full PROJECT GRAPH. Has thinking budget.
-**Job:** Assemble each item into a complete graph block. Name it. Check for duplicates.
-**Output:** new_blocks[], updates[], skip_reasons[].
-
-Pass 3 does NOT re-derive what Pass 2 already computed. It copies:
-- `unique{}` directly from Pass 2 item (never re-derives)
-- `flow_role` directly from Pass 2 item
-- `project` from Pass 2 item (only re-checks if missing or not in KNOWN PROJECT ROOTS)
-
-Naming: concept names WHAT changed, not HOW or WHY. Strip "because", "using", "via" —
-what remains before those words is the concept.
-
-### Pass 4 — Wire relations *(Pro tier only)*
-**Sees:** New blocks from Pass 3 + fresh graph context + scene card. Has thinking budget.
-**Job:** Find causal relations the pipeline didn't wire during Pass 3. Build explicit typed edges.
-**Output:** relations[] — typed connections using: `extends`, `supersedes`, `superseded_by`, `prompted_by`, `based_on`, `resolves`.
-
-Pass 4 only runs when `isProTier()` returns true. On non-Pro instances this step is skipped entirely.
-
-**Pending/activate pattern:** Blocks saved by Pass 3 are stored with `status: "pending"` — they are invisible to agents until Pass 4 completes (or is confirmed skipped). Once Pass 4 finishes, pending blocks are activated and become queryable. This prevents agents from seeing half-wired blocks mid-pipeline.
-
-### Pass 5 — Chain synthesis
-**Sees:** Relations from this turn. Has thinking budget.
-**Job:** Find causal clusters. Name them. Write compressed arc.
-**Output:** Chain blocks with `arc` (type sequence) and `chain_essence` (one-sentence story).
-
-Chain blocks get `chain_id = their own id`. All members get `chain_id` stamped on them
-by server-side BFS. Members can be found via `?chain_id=blk_xxx`.
+### chains
+**Job:** find causal clusters across the turn's blocks, name them, and write a `chain` block with
+the `arc` (type sequence) + a one-sentence `chain_essence`. A block alone is a headline; its chain
+is the story. The chain block gets `chain_id = its own id`; members are stamped with that
+`chain_id` via server-side BFS and are findable via `?chain_id=blk_xxx`.
 
 ---
 
@@ -253,7 +240,7 @@ The primary field agents read in recall results.
 Decision: `{choice, reason, alternatives_rejected}`.
 Dead end: `{approach, reason, alternative}`.
 Constraint: `{limit, reason, source}`.
-Filled by Pass 2. Copied by Pass 3. Never re-derived downstream.
+Filled by the extraction pipeline (the `fill` stage). Never re-derived downstream.
 
 **`quality_score` (0–6)** — structural completeness. Each criterion = +1:
 essence is specific / type valid / unique{} ≥2 fields / has{} present / concepts ≥3 terms / ≥1 relation.
@@ -270,7 +257,7 @@ Rarely changes because `derived_from` propagation almost never fires (pipeline u
 - `session` — calculations, temporary lookups. Cleaned up after session ends.
 
 **`flow_role`** — narrative role in a causal chain: `trigger | problem | cause | mechanism | solution | outcome`.
-Set by Pass 2, copied by Pass 3. Used by Pass 5 to build chain arcs.
+Set during extraction. Used when assembling chain arcs.
 
 **`chain_id`** — UUID shared by all blocks in a causal cluster. Stamped server-side by BFS
 after save. Not a relation — just a flat tag. Chain block has `chain_id = its own id`.
@@ -331,7 +318,7 @@ POST /api/reflect/trigger
 |---|---|
 | Task assignments not reliably saved | Person → task ownership lost. Both benchmarks miss N12. |
 | Dead_end → decision causal links drawn inconsistently | Chain arcs fragmented — some pairs linked, some not |
-| Question suppression in Pass 3 too broad | Valid unresolved questions killed if topically near a decision |
+| Question suppression sometimes too broad | Valid unresolved questions can be dropped if topically near a decision |
 | Chain member traversal requires a second query | Chain block itself doesn't inline members — use `GET /api/blocks?chain_id=xxx` to list them |
 | `unique{}` empty on blocks saved before April 2026 | Older blocks have content only in `essence`, not structured fields |
 

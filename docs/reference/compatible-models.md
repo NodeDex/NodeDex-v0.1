@@ -1,47 +1,44 @@
 # Compatible Models Reference — Nodedex Auto-Reflect
 
-## Pipeline Requirements
+## Pipeline requirements
 
-The auto-reflect pipeline has hard requirements per pass:
+Every stage of the v2 pipeline needs **structured-JSON output** — and the provider layer picks
+tool-use / `response_format` / a prompt-JSON fallback per model, so any reasonably capable model
+works. Beyond that:
 
-| Requirement | Pass 0 | Pass 1 | Pass 2 | Pass 3 | Pass 4 | Pass 5 |
-|---|---|---|---|---|---|---|
-| Structured JSON + schema | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Thinking/reasoning | helpful | helpful | required | required | **required** | minimal |
-| Context window | ~4K in | ~8K in | ~12K in | ~15K in | ~15K in | ~5K in |
+| Need | Where it matters | Notes |
+|---|---|---|
+| Structured JSON | all stages | hard requirement (the provider layer handles the mechanism) |
+| Real reasoning | comprehension · the worth-gate · relation/chain wiring | a model that actually *thinks* produces deeper links — the most reasoning-intensive work |
+| Cheap/fast is fine | the mechanical `unique{}` fill | no reasoning needed |
+| Context | all | modest — one turn, ~4–16K in |
 
-Pass 4 (relation-finding) is the most reasoning-intensive pass. It must hold a full batch of
-blocks in mind and trace narrative chains across them. Models that skip thinking produce
-shallow links here.
+A small local model will *run* (via the prompt-JSON fallback) but tends to produce shallow links on
+the reasoning stages — use a capable model there if quality matters.
 
 ---
 
-## Per-Pass Model Routing (universality)
+## Model routing
 
-Since the structured-output universality fix, **any model/provider works for any pass** (the
-provider layer picks tool-use / `response_format` / prompt-JSON per model, with a prompt-JSON
-fallback). So you can route each pass to the model that fits its job — strong reasoning where it
-matters, cheap/fast where it's mechanical — without touching code.
+**Default: one model runs everything** — `AI_MODEL` / `NODEDEX_PRIMARY_MODEL`, plus an optional
+`NODEDEX_FALLBACK_MODEL` the provider escalates to on a hard failure / 429 / timeout. You do **not**
+have to route per stage.
 
-**Resolution per pass:** `NODEDEX_PASS{ID}_MODEL` (override) → tier var → provider default. Set
-nothing and every pass uses your `AI_MODEL` / `NODEDEX_PRIMARY_MODEL` (i.e. default behaviour).
+For people who want a strong model on the hard work and a cheap one on the mechanical fill, two
+tier vars + per-stage overrides exist (resolution: per-stage override → tier → default):
 
-| Variable | Applies to | For |
-|---|---|---|
-| `NODEDEX_REASONING_MODEL` | 2a, 2c, JUDGE, 3, 4 | typing, dedup, causal wiring, naming, cross-session links, precision |
-| `NODEDEX_STRUCTURAL_MODEL` | 2b, 0 | fill `unique{}`, scene card (mechanical) |
-| `NODEDEX_PASS{0,1,JUDGE,2A,2B,2C,3,4,5}_MODEL` | that one pass | fine-grained override (wins over the tier) |
+| Variable | For |
+|---|---|
+| `NODEDEX_REASONING_MODEL` | the reasoning stages — typing, dedup, causal wiring, naming, cross-session links |
+| `NODEDEX_STRUCTURAL_MODEL` | the mechanical stage — `unique{}` fill |
+| `NODEDEX_PASS{N}_MODEL` | pin one specific stage (highest priority; e.g. `NODEDEX_PASS4_MODEL` for relation-wiring) |
 
-Passes 1 and 5 have no tier — they take the provider default unless a per-pass override is set.
-
-**Bring your own models with two vars:**
 ```
-NODEDEX_REASONING_MODEL=deepseek/deepseek-reasoner    # strong model on the reasoning passes
-NODEDEX_STRUCTURAL_MODEL=anthropic/claude-haiku-4.5   # cheap model on the mechanical passes
+NODEDEX_REASONING_MODEL=deepseek/deepseek-reasoner    # strong model where reasoning matters
+NODEDEX_STRUCTURAL_MODEL=anthropic/claude-haiku-4.5   # cheap model on the mechanical fill
 ```
-This routes the whole pipeline: reasoning passes → DeepSeek-Reasoner, structural → Haiku, the rest
-→ your default. A per-pass var (e.g. `NODEDEX_PASS2C_MODEL=...`) pins a single pass. Use the model-
-name form your provider expects (OpenRouter prefixes like `anthropic/claude-haiku-4.5`).
+Set nothing → every stage uses your default. Use the model-name form your provider expects
+(OpenRouter prefixes like `anthropic/claude-haiku-4.5`).
 
 ---
 
@@ -52,8 +49,8 @@ name form your provider expects (OpenRouter prefixes like `anthropic/claude-haik
 | Model | Schema | Thinking | Context | Notes |
 |---|---|---|---|---|
 | `gemini-2.5-pro` | ✓ native | ✓ reliable | 1M | **Best overall.** Always thinks when budgeted. Ideal for Pass 4. |
-| `gemini-2.5-flash` | ✓ native | ✗ unreliable | 1M | Good for Pass 0–3. Skips thinking on structured tasks. Not recommended for Pass 4. |
-| `gemini-2.0-flash` | ✓ native | ✗ | 1M | No thinking. Works for Pass 0–3 but older generation. |
+| `gemini-2.5-flash` | ✓ native | ✗ unreliable | 1M | Good for the lighter stages; skips thinking on structured tasks, so not ideal for the reasoning-heavy relation/chain wiring. |
+| `gemini-2.0-flash` | ✓ native | ✗ | 1M | No thinking. Works for the lighter stages but older generation. |
 
 **Config:**
 ```
@@ -191,7 +188,7 @@ NODEDEX_PASS4_MODEL=qwen-qwq-32b
 | Model | Schema | Thinking | Context | Notes |
 |---|---|---|---|---|
 | `mistral-large-latest` | ✓ native strict | ✗ | 128K | Reliable nested schema compliance. No thinking. |
-| `mistral-medium` | ✓ | ✗ | 128K | Cheaper. Adequate for Pass 0–3. |
+| `mistral-medium` | ✓ | ✗ | 128K | Cheaper. Adequate for the lighter stages. |
 
 **Config:**
 ```
