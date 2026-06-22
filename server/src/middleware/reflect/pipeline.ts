@@ -845,14 +845,14 @@ export async function runAutoReflect(
     console.warn(`[arc-extract] NODEDEX_ARC_EXTRACTION=1 but agentId/turnNumber missing (agentId=${agentId ?? "<none>"} turnNumber=${turnNumber ?? "<none>"}) — running per-turn pipeline (no arc capture)`);
   }
 
-  // Gap (cost): v2-aware LAZY CAPTURE. The v2 arc engine re-reads the RAW transcript
-  // (arc-pipeline.ts) and IGNORES per-turn pass01 items, so Pass 0-1 here is pure
-  // waste in v2 mode. The transcript is already stored above; persist an EMPTY
-  // pass01 (status → pass01_done = the arc-ready signal) and return, SKIPPING Pass
-  // 0-1. This short-circuits BEFORE any LLM call. If v2 later fails at arc, the v1
-  // fallback (arc-pipeline.ts) fills Pass 0-1 lazily from the raw transcript.
-  // When the flag is OFF this block is inert → the path below is byte-identical.
-  if (_conversationTurnId && v2LazyCaptureEnabled()) {
+  // ARC CAPTURE — ALWAYS lazy (v1 retired & disabled 2026-06-22). The v2 arc engine
+  // re-reads the RAW transcript (arc-pipeline.ts) and IGNORES per-turn pass01 items;
+  // v1 — the only thing that ever consumed them — is now disabled, so running Pass 0-1
+  // at capture is pure waste with NO consumer. The transcript is already stored above;
+  // persist an EMPTY pass01 (status → pass01_done = the arc-ready signal) and return,
+  // SKIPPING Pass 0-1 BEFORE any LLM call. The NODEDEX_V2_LAZY_CAPTURE gate is dropped:
+  // capture is unconditionally lazy now (the v2 arc always reads raw).
+  if (_conversationTurnId) {
     try {
       db.updateConversationTurnPass01(_conversationTurnId, JSON.stringify({ scene_card: null, items: [] }));
       console.log(`[arc-extract] lazy-capture: stored raw, SKIPPED Pass 0-1 (v2 reads raw at arc) — id=${_conversationTurnId}`);
@@ -1022,86 +1022,18 @@ export async function runAutoReflect(
         .map((b) => ({ label: b.label, essence: b.essence || "" }));
 
       if (!pass1) {
-        // (turn-log numbering advances at WRITE time in writeTurnLog now — the old
-        // `if (!checkpoint) _turnCounter++` here treated v2 front-half runs as
-        // retries, so every v2 per-turn log overwrote turn-00.json.)
-
-        // Pass 0: run only if not already available from checkpoint
-        if (!checkpoint?.pass0) {
-          const _t0 = Date.now();
-          let p0 = await callPass0LLM(provider, agentThinking || "", agentResponse, openBlueprints, knownRoots, extractAllSources ? (_userMessage ?? "") : "");
-          if (!p0.result) {
-            console.warn("Auto-Reflect Pass 0: retrying once after 3s...");
-            await new Promise(r => setTimeout(r, 3000));
-            p0 = await callPass0LLM(provider, agentThinking || "", agentResponse, openBlueprints, knownRoots, extractAllSources ? (_userMessage ?? "") : "");
-          }
-          _passWallMs.pass0 = Date.now() - _t0;
-          _pass0Provider = { model: p0.model, attempts: p0.attempts };
-          if (p0.result) {
-            _sceneCard = formatSceneCard(p0.result);
-            _pass0Raw = p0.result;
-            if (p0.result.scene_card_reasoning) console.log(`[Pass 0 reasoning] ${p0.result.scene_card_reasoning}`);
-          }
-          else console.warn("Auto-Reflect Pass 0: both attempts failed — proceeding without scene card");
-        }
-
-        // Pass 1: always runs fresh — receives transcript + Pass 0 scene card.
-        // Retry once on a non-rate-limited failure (e.g. malformed / truncated JSON):
-        // a richer thinking input makes the model likelier to emit invalid JSON, and a
-        // transient parse failure must not silently drop the whole turn (mirrors Pass 0).
-        const _t1 = Date.now();
-        let p1 = await callPass1LLM(provider, agentThinking || "", agentResponse, recentSaves, _sceneCard, openBlueprints, extractAllSources ? (_userMessage ?? "") : "");
-        if (!p1.result && !p1.rateLimited) {
-          console.warn("Auto-Reflect Pass 1: failed (likely malformed JSON) — retrying once after 3s...");
-          await new Promise(r => setTimeout(r, 3000));
-          p1 = await callPass1LLM(provider, agentThinking || "", agentResponse, recentSaves, _sceneCard, openBlueprints, extractAllSources ? (_userMessage ?? "") : "");
-        }
-        _passWallMs.pass1 = Date.now() - _t1;
-        _pass1Provider = { model: p1.model, attempts: p1.attempts };
-        if (p1.rateLimited) {
-          console.log("Auto-Reflect Pass 1: rate limited — re-queuing with Pass 0 output");
-          return { ...empty, checkpoint: { resumeFrom: 'pass1', pass0: { sceneCard: _sceneCard, raw: _pass0Raw } } };
-        }
-        pass1 = p1.result;
-        _pass1Thinking = p1.thinking;
-
-        // ── Code-synthesis: convert each Pass 0 replacements[] entry into one
-        //    dead_end item — the half Pass 1's per-sentence chunking drops. The
-        //    decision half stays the LLM's job, so the two producers never
-        //    overlap. Behind a feature flag; see docs/PIPELINE-REBUILD-PLAN.md.
-        if (process.env.NODEDEX_PASS1_SYNTHESIZE === "1" && _pass0Raw) {
-          const synthesized = synthesizeFromSceneCard(_pass0Raw as Pass0Result, agentResponse);
-          if (synthesized.length > 0) {
-            const llmItems = pass1?.items ?? [];
-            pass1 = { items: [...llmItems, ...synthesized] };
-            console.log(`Auto-Reflect Pass 1 synthesizer: +${synthesized.length} dead_end item(s) from scene card replacements[]`);
-          }
-        }
-
-        // ── PASS JUDGE — precision filter (default ON; disable with NODEDEX_WORTH_JUDGE_ENABLED=0) ──
-        // Applies the charter §2.1 path-specificity test per item, drops scaffolding /
-        // general-knowledge / options-merely-named. Validated 2026-05-24 across refund
-        // (drops 7/14: 5 bare options + 2 decision-constituents + 1 general-knowledge,
-        // all correct verdicts) and popup-dinner (drops 0/30 — dense knowledge with no
-        // scaffolding, correct asymmetric behavior). Default flipped from off→on; the
-        // off-switch is NODEDEX_WORTH_JUDGE_ENABLED=0.
-        // Failure modes (rate limit, error, null result) degrade to keep-all — never
-        // silently drops residue due to infrastructure (rule 6 spirit).
-        if (process.env.NODEDEX_WORTH_JUDGE_ENABLED !== "0" && pass1 && pass1.items.length > 0) {
-          const judgeBudget = getThinkingBudget(1024);
-          const _tj = Date.now();
-          const pj = await callPassJudgeLLM(provider, pass1.items, _sceneCard, agentThinking || "", agentResponse, judgeBudget, extractAllSources ? (_userMessage ?? "") : "");
-          _passWallMs.pass_judge = Date.now() - _tj;
-          _passJudgeProvider = { model: pj.model, attempts: pj.attempts };
-          const { kept, dropped, anchorOverrides } = applyJudgeVerdicts(pass1.items, pj.result);
-          _passJudgeKeptCount = kept.length;
-          _passJudgeDropped = dropped;
-          _passJudgeAnchorOverrides = anchorOverrides;
-          if (anchorOverrides.length > 0) {
-            console.log(`Auto-Reflect JUDGE anchor-overrides: ${anchorOverrides.length} drop(s) reversed because a kept item extends them — ids=${anchorOverrides.join(",")}`);
-          }
-          pass1 = { items: kept };
-        }
+        // ⚠ v1 SCENE-CARD FRONT-HALF — RETIRED & DISABLED (2026-06-22). v2 (COMPREHEND)
+        // ALWAYS supplies pass1/pass2 via a checkpoint (resumeFrom:'pass3' on both the
+        // per-turn and arc paths), so this block is unreachable on every live path.
+        // Guarded to FAIL LOUD on a routing regression rather than silently extracting
+        // through the retired scene-card engine. The Pass 0-1 code below is kept verbatim
+        // for the follow-up deletion PR (which removes pass0.ts / pass1.ts /
+        // synthesizeFromSceneCard.ts and this whole block).
+        throw new Error(
+          "v1 scene-card pipeline is retired and disabled — Pass 1 must arrive from a v2 " +
+          "COMPREHEND checkpoint. Reaching runAutoReflect's Pass 0-1 path indicates an " +
+          "extraction routing bug (see arc-pipeline.ts / routes/state.ts).",
+        );
       }
 
       // ─── DEBT 5 Phase 2: arc-extraction flag-gated early-return ──────────

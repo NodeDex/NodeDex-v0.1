@@ -323,50 +323,17 @@ export async function runArcExtraction(
   // already returned above, and 'empty' is a clean 0-block result. This v1 block is
   // intentionally unreachable — kept in-tree for reference only.
   if (!checkpoint && !v2FrontEmpty) {
-    // ─── LAZY-CAPTURE safety net ────────────────────────────────────────────────
-    // If turns were captured WITHOUT Pass 0-1 (lazy capture) and v2 just failed,
-    // the consolidated items are empty → fill Pass 0-1 now from the raw transcripts
-    // so the v1 path has real input, then re-read + re-consolidate. Cost moves to
-    // this rare failure path; the common (v2-success) path never pays it.
-    if (v2LazyCaptureEnabled() && consolidated.items.length === 0 && turnsInRange.length > 0) {
-      console.warn(`[arc-extract] lazy-capture + v2 unavailable → filling Pass 0-1 from raw (${turnsInRange.length} turn(s))`);
-      await lazyFillPass01(db, getLLMProvider(), turnsInRange);
-      turnsInRange = db.listConversationTurnsByAgent(opts.agent_id, { status: 'pass01_done', minTurn: startTurn, maxTurn: endTurn });
-      consolidated = buildArcConsolidatedInput(opts.agent_id, turnsInRange);
-    }
-
-    // ─── DEBT 5 Slice 1 Sub-step 1.2 — STAGE C: ARC ENTITY RESOLVE (v1 path) ───
-    // Resolves anaphoric entity mentions across per-turn scene cards (Phase 11
-    // surfaced: 5 project roots for 1 arc because per-turn Pass 0 emits drifting
-    // scope_project names and no pass reconciles them at arc time). Graceful
-    // degrade: failures here do NOT block extraction (Pass 3 falls back to
-    // per-turn naming). Opt-out: NODEDEX_STAGE_C_DISABLED=1.
-    let arcEntityResolution: ArcEntityResolveResult | undefined;
-    try {
-      const stageCDisabled = process.env.NODEDEX_STAGE_C_DISABLED === "1";
-      const provider = getLLMProvider();
-      arcEntityResolution = await runArcEntityResolve({
-        provider,
-        agent_id: opts.agent_id,
-        turns:    turnsInRange,
-        disabled: stageCDisabled,
-      });
-      if (arcEntityResolution) {
-        console.log(`[arc-extract] Stage C resolved ${arcEntityResolution.clusters.length} cluster(s), ${arcEntityResolution.unresolved_mentions?.length ?? 0} unresolved`);
-      }
-    } catch (e: any) {
-      console.warn(`[arc-extract] Stage C threw (${e?.message}) — degrading to per-turn names`);
-      arcEntityResolution = undefined;
-    }
-
-    // Construct the checkpoint that makes runAutoReflect skip Pass 0+1 and start
-    // at Pass 2 with the consolidated items.
-    checkpoint = {
-      resumeFrom: 'pass2',
-      pass0: { sceneCard: consolidated.sceneCardFormatted, raw: consolidated.sceneCardMerged },
-      pass1Items: consolidated.items,
-      arcEntityResolution,
-    };
+    // ⚠ v1 ARC FALLBACK — RETIRED & DISABLED (2026-06-22). Unreachable: v2 is
+    // unconditional (pipelineV2Enabled() always true), so success set `checkpoint`, a real
+    // failure already returned failClean above, credit-out returned above, and 'empty' set
+    // v2FrontEmpty. Reaching here = a routing regression. FAIL CLEAN (turns stay
+    // re-extractable) instead of silently running the retired v1 arc path (lazyFillPass01 +
+    // Stage C). The code below is kept verbatim for the follow-up deletion PR.
+    return failClean(
+      'pipeline_incomplete',
+      'v1 arc fallback is retired and disabled — v2 produced neither a checkpoint nor an ' +
+      'empty result (routing bug); turns left re-extractable',
+    );
   }
 
   // 4. Invoke runAutoReflect with the checkpoint — OR, when v2 judged the arc empty,
