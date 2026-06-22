@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import {
   computeCost,
   PRICING,
+  FREE_MODELS,
   COST_PRICING_VERSION,
   _resetWarnings,
   type TokenUsage,
@@ -118,6 +119,19 @@ describe("PRICING table — coverage for currently-routable models", () => {
         assert.ok(rate.thinking_per_million > 0, `${model} thinking rate must be > 0 if set`);
       }
     }
+  });
+});
+
+describe("FREE_MODELS — genuinely-free models cost a known $0 (never render as '?')", () => {
+  test("owl-alpha computes to 0, not null", () => {
+    _resetWarnings();
+    for (const m of ["openrouter/owl-alpha", "owl-alpha"]) {
+      assert.ok(FREE_MODELS.has(m), `${m} should be in FREE_MODELS`);
+      assert.equal(computeCost({ input: 1000, output: 1000 }, m), 0, `${m} should cost a known 0, not null/"?"`);
+    }
+  });
+  test("free models are kept OUT of PRICING (so the no-$0-lines guard stays valid)", () => {
+    for (const m of FREE_MODELS) assert.ok(!(m in PRICING), `${m} must not be in PRICING — it's free, handled by FREE_MODELS`);
   });
 });
 

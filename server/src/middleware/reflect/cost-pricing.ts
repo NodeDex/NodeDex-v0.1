@@ -51,7 +51,7 @@
  * (or future me) reading old turn logs can tell if the cost figures used
  * stale rates.
  */
-export const COST_PRICING_VERSION = "2026-05-25";
+export const COST_PRICING_VERSION = "2026-06-22";
 
 /**
  * Per-million-token rates in USD. `thinking_per_million` is optional and
@@ -100,7 +100,23 @@ export const PRICING: Record<string, ModelRate> = {
   "anthropic/claude-sonnet-4.6":{ input_per_million: 3.00,  output_per_million: 15.00 },
   "anthropic/claude-opus-4-7":  { input_per_million: 15.00, output_per_million: 75.00 },
   "anthropic/claude-opus-4.7":  { input_per_million: 15.00, output_per_million: 75.00 },
+
+  // ── Onboarding's recommended PAID option (so the cost panel doesn't show "?"
+  //    for a model a normal user is told to pick). Free models → FREE_MODELS below.
+  "openai/gpt-4o-mini":         { input_per_million: 0.15, output_per_million: 0.60 },
+  "gpt-4o-mini":                { input_per_million: 0.15, output_per_million: 0.60 },
 };
+
+/**
+ * Genuinely-FREE models ($0 at the provider). Kept OUT of PRICING — whose entries must be
+ * paid/non-zero (the "no accidental $0 lines" guard) — so a real free model is recognized as a
+ * known $0 rather than an "unknown model" (which would render as "?" in the cost panel). owl-alpha
+ * (the onboarding free option) is the case this fixes. Both OpenRouter-slug and bare forms.
+ */
+export const FREE_MODELS = new Set<string>([
+  "openrouter/owl-alpha",
+  "owl-alpha",
+]);
 
 /**
  * Token usage from one (or accumulated) LLM call(s). Matches the shape of
@@ -134,6 +150,7 @@ export function computeCost(usage: TokenUsage | undefined, model: string | undef
     }
     return null;
   }
+  if (FREE_MODELS.has(model)) return 0;  // genuinely free → a KNOWN $0, not "unknown model" ("?")
   const rate = PRICING[model];
   if (!rate) {
     if (!_warnedModels.has(model)) {
