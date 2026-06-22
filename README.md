@@ -4,6 +4,14 @@ A persistent knowledge graph that gives **autonomous AI agents** memory across s
 
 Without NodeDex, every session starts blank. Decisions made last week, dead ends hit last month, reasoning chains built over hours — all gone on context reset. NodeDex stores them in a local SQLite graph the agent navigates deliberately, session after session.
 
+> **Status — early & solo-built.** NodeDex is developed by one person and is at an early stage.
+> The engine is tested end-to-end (1162 passing tests), but it hasn't been battle-tested across
+> many machines and agents yet — **expect rough edges, and please [open an issue](https://github.com/NodeDex/NodeDex-v0.1/issues)
+> when you hit one.** Feedback at this stage is hugely valuable.
+>
+> **On the roadmap:** a web UI (backend built, frontend in progress) · first-class Claude Code
+> integration · packaging (`npx`) · broader agent-host support.
+
 ---
 
 ## What it is
