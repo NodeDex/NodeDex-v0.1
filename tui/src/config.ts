@@ -167,4 +167,36 @@ export function providerEnv(): Record<string, string> {
   return {};
 }
 
+// ─── local model discovery (so the wizard can list your models, not ask for a URL) ──────────
+export interface LocalModel { label: string; baseUrl: string; model: string }
+
+/** Probe the usual local LLM servers (Ollama, LM Studio, vLLM) and list the models they serve,
+ *  so onboarding can show a pick-list instead of asking for a URL + model id. Each server that
+ *  isn't running just fails fast and is skipped. Returns [] if nothing local is up. */
+export async function scanLocalModels(): Promise<LocalModel[]> {
+  const out: LocalModel[] = [];
+  const seen = new Set<string>();
+  const add = (baseUrl: string, model: string, server: string) => {
+    const m = (model || "").trim();
+    const key = `${baseUrl}::${m}`;
+    if (m && !seen.has(key)) { seen.add(key); out.push({ label: `${m}  ·  ${server}`, baseUrl, model: m }); }
+  };
+  const get = async (url: string): Promise<any | null> => {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(1500) });
+      return r.ok ? await r.json() : null;
+    } catch { return null; }
+  };
+  // Ollama's native tags API (richest model list).
+  const tags = await get("http://localhost:11434/api/tags");
+  for (const m of tags?.models ?? []) add("http://localhost:11434/v1", m?.name ?? m?.model, "Ollama");
+  // OpenAI-compatible /v1/models on the common local ports.
+  for (const [port, server] of [[1234, "LM Studio"], [8000, "vLLM"], [11434, "Ollama"]] as const) {
+    const base = `http://localhost:${port}/v1`;
+    const j = await get(`${base}/models`);
+    for (const m of j?.data ?? []) add(base, m?.id, server);
+  }
+  return out;
+}
+
 export { NODEDEX_HOME, CONFIG_FILE };

@@ -17,8 +17,8 @@ import { theme } from "./theme.js";
 import {
   saveConfig, DEFAULT_PORT, DEFAULT_LOCAL_BASE_URL,
   OPENROUTER_BASE_URL,
-  RECOMMENDED_MODELS, isTrainsOnPrompts, listDbs, dbPathForName,
-  type DbChoice,
+  RECOMMENDED_MODELS, isTrainsOnPrompts, listDbs, dbPathForName, scanLocalModels,
+  type DbChoice, type LocalModel,
 } from "./config.js";
 import { launchServer } from "./servers.js";
 import { probeServer, setBase } from "./api.js";
@@ -27,7 +27,7 @@ const README_URL = "https://github.com/NodeDex/NodeDex-v0.1#connect-your-agent";
 
 type Step =
   | "welcome" | "consent" | "provider" | "openrouter" | "model"
-  | "localendpoint" | "localmodel"
+  | "localscan" | "localendpoint" | "localmodel"
   | "port" | "db" | "starting" | "connect";
 
 /** Verify the OpenRouter key before saving — a typo fails here, not at first
@@ -121,6 +121,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [providerSel, setProviderSel] = useState(0);
   const [localBaseUrl, setLocalBaseUrl] = useState(DEFAULT_LOCAL_BASE_URL);
   const [localModel, setLocalModel] = useState("");
+  // local-scan step: discovered models + selection (=== length → "enter manually")
+  const [localScanning, setLocalScanning] = useState(false);
+  const [localModels, setLocalModels] = useState<LocalModel[]>([]);
+  const [localModelSel, setLocalModelSel] = useState(0);
+  const [localScanNonce, setLocalScanNonce] = useState(0);   // bump to rescan
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
@@ -138,6 +143,21 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [newDbName, setNewDbName] = useState("");
   // connect step
   const [serverUrl, setServerUrl] = useState("");
+
+  // Scan local LLM servers when entering the local-scan step (so the user picks a model, not a
+  // URL). Re-runs when localScanNonce bumps ([r] rescan — e.g. after starting the server).
+  useEffect(() => {
+    if (step !== "localscan") return;
+    let cancelled = false;
+    setLocalScanning(true); setError("");
+    scanLocalModels().then((models) => {
+      if (cancelled) return;
+      setLocalModels(models);
+      setLocalModelSel(0);
+      setLocalScanning(false);
+    });
+    return () => { cancelled = true; };
+  }, [step, localScanNonce]);
 
   // Detect free ports when entering the port step (reuse probeServer: a port with no
   // Nodedex responding is free enough to claim; launch fails loudly otherwise).
@@ -179,8 +199,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
   const submitProvider = useCallback(() => {
     setError("");
-    setStep(providerSel === 1 ? "localendpoint" : "openrouter");
+    setStep(providerSel === 1 ? "localscan" : "openrouter");
   }, [providerSel]);
+
+  const submitLocalScan = useCallback(() => {
+    if (localModelSel >= localModels.length) { setError(""); setStep("localendpoint"); return; } // manual entry
+    const pick = localModels[localModelSel]!;
+    saveConfig({ provider: "local", base_url: pick.baseUrl, model: pick.model });
+    setError(""); setStep("port");
+  }, [localModelSel, localModels]);
 
   const submitLocalEndpoint = useCallback(() => {
     const url = localBaseUrl.trim();
@@ -260,9 +287,17 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       if (k.return) void submitOpenRouter();
       else if (k.escape) setStep("provider");
       else typeInto(setOrKey, input, k);
+    } else if (step === "localscan") {
+      if (localScanning) return;
+      const total = localModels.length + 1; // + "enter manually" row
+      if (k.upArrow) setLocalModelSel((s) => (s - 1 + total) % total);
+      else if (k.downArrow) setLocalModelSel((s) => (s + 1) % total);
+      else if (k.escape) setStep("provider");
+      else if (input === "r") setLocalScanNonce((n) => n + 1);
+      else if (k.return) submitLocalScan();
     } else if (step === "localendpoint") {
       if (k.return) submitLocalEndpoint();
-      else if (k.escape) setStep("provider");
+      else if (k.escape) setStep("localscan");
       else typeInto(setLocalBaseUrl, input, k);
     } else if (step === "localmodel") {
       if (k.return) submitLocalModel();
@@ -280,7 +315,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       if (k.upArrow) setPortSel((s) => (s - 1 + freePorts.length) % freePorts.length);
       else if (k.downArrow) setPortSel((s) => (s + 1) % freePorts.length);
       else if (k.return) submitPort();
-      else if (k.escape) setStep(providerSel === 1 ? "localmodel" : "model");
+      else if (k.escape) setStep(providerSel === 1 ? "localscan" : "model");
     } else if (step === "db") {
       const total = dbs.length + 1; // + new row
       if (k.upArrow) setDbSel((s) => (s - 1 + total) % total);
@@ -329,6 +364,30 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             aside="self-hosted (Ollama / LM Studio) — offline, no key, $0" />
         </Box>
         <Hint keys={[["↑↓", "move"], ["Enter", "select"], ["Esc", "back"]]} />
+      </Frame>
+    );
+  }
+
+  if (step === "localscan") {
+    const manualSel = localModelSel >= localModels.length;
+    return (
+      <Frame>
+        <Text color={theme.title} bold>Pick a local model</Text>
+        {localScanning ? (
+          <Box marginTop={1}><Spinner /><Text color={theme.dim}>{` Scanning Ollama / LM Studio / vLLM…`}</Text></Box>
+        ) : (
+          <Box marginTop={1} flexDirection="column">
+            {localModels.length === 0
+              ? <Text color={theme.dim}>No local server found. Start it (e.g. `ollama serve`) and press [r], or enter it manually.</Text>
+              : localModels.map((m, i) => (
+                  <Row key={`${m.baseUrl}:${m.model}`} selected={i === localModelSel} label={m.model} width={30}
+                    aside={m.baseUrl.replace(/^https?:\/\//, "")} />
+                ))}
+            <Row selected={manualSel} label="⌨ Enter manually" width={30} aside="type a URL + model id" />
+          </Box>
+        )}
+        {error ? <Text color={theme.danger}>{`⚠ ${error}`}</Text> : null}
+        <Hint keys={[["↑↓", "move"], ["Enter", "select"], ["r", "rescan"], ["Esc", "back"]]} />
       </Frame>
     );
   }
