@@ -151,6 +151,9 @@ export function LiveTab({ dash }: { dash: Dashboard }) {
         <CostPanel dash={dash} />
         <ErrorTerminalPanel dash={dash} />
       </Box>
+      <Box marginTop={1} paddingX={1}>
+        <Text color={theme.dim}>{`tip · the pipeline auto-extracts every N turns — tune N (turns per extraction) in Settings → auto-turns`}</Text>
+      </Box>
     </Box>
   );
 }
