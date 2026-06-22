@@ -1,12 +1,11 @@
 # MCP Tools Reference — Nodedex
 
 > Source-verified 2026-06-17 against the active registrations in `src/tools/*`.
-> **38 tools registered** (derive 2 · core 10 · tasks 3 · projects 4 · system 19). 18 older
+> **38 tools registered** (derive 2 · core 10 · tasks 3 · projects 4 · system 19).
 > NOTE: the agent's MCP surface is READ-ONLY by default — only 10 tools register (get,
 > search, filter, tree, list, stats, history, find_skill, onboard, install_capture). The write/admin/maintenance
 > tools stay in code (REST-callable for pipeline/workers) but are hidden unless
 > `NODEDEX_EXPOSE_WRITE_TOOLS=on` (and `NODEDEX_EXPOSE_TASKS=on` for tasks).
-> tools are **ARCHIVED** (`src/tools/archived-tools.md` — reference only, NOT registered).
 > Note: the boot-log "Tools:" string in `server.ts` had drifted — it listed a phantom
 > `workspace_file_index` (archived) AND omitted the real `workspace_extract_arc`; both
 > corrected. (The string is hardcoded — a future cleanup should generate it from the

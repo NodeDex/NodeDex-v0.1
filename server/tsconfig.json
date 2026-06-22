@@ -18,10 +18,8 @@
   "exclude": [
     "node_modules",
     "dist",
-    "src/test-client.ts",
     "src/__tests__",
     "src/middleware/reflect/__tests__",
-    "src/tools/archived-tools.ts",
     "src/middleware/auto-reflect.v*.ts"
   ]
 }
