@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const TRIGGER_MIN_CHARS = 50; // the server 400s on a shorter agent_response
+const TRIGGER_MIN_CHARS = 10; // mirror the server's combined-content floor (/api/reflect/trigger)
 const CAPS = { response: 16000, reasoning: 8000, user: 2000 };
 
 /**
@@ -74,11 +74,15 @@ export function resolveNodedexTarget() {
  */
 export function buildTriggerBody(turn) {
   const response = String(turn?.agentResponse ?? "").slice(0, CAPS.response);
-  if (response.trim().length < TRIGGER_MIN_CHARS) return null;
+  const reasoning = String(turn?.reasoning ?? "").slice(0, CAPS.reasoning);
+  const user = String(turn?.userMessage ?? "").slice(0, CAPS.user);
+  // Need SOME answer, but floor on COMBINED content — a short answer can ride a rich trace.
+  if (!response.trim()) return null;
+  if ((response + reasoning + user).trim().length < TRIGGER_MIN_CHARS) return null;
   return {
     agent_response: response,
-    user_message: String(turn?.userMessage ?? "").slice(0, CAPS.user),
-    agent_thinking: String(turn?.reasoning ?? "").slice(0, CAPS.reasoning),
+    user_message: user,
+    agent_thinking: reasoning,
     agent_id: turn?.agentId || "agent",
     turn_name: turn?.turnName || "turn",
     hint: turn?.hint || "discovery",

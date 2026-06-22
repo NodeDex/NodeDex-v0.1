@@ -85,10 +85,9 @@ warning where it applies) → pick a free port → create or name a database →
 server on **`localhost`**. On first run it also downloads the bundled local embedding model
 (one-time) so semantic search works offline with no extra key.
 
-> Localhost is right when your agent runs on **this same machine**. If your agent runs in
-> **Docker or on another machine**, use the wizard to configure your key/model, but start the
-> server as shown in [Connect → *Agent in Docker / on another machine*](#connect-your-agent)
-> (it needs to bind `0.0.0.0` + a token).
+> The wizard sets up a **same-machine** server (localhost) — the default. Running your agent in
+> **Docker or on another machine** is a later, advanced setup (bind `0.0.0.0` + a token); see
+> [docs/how-to/connect-mcp-over-http.md](docs/how-to/connect-mcp-over-http.md).
 
 Embeddings default to a **bundled local model** (offline, free, no key). To use a hosted
 embedder instead, put `EMBEDDING_PROVIDER=gemini` (or `openai`) in `~/.nodedex/.env` — it's a
@@ -110,16 +109,18 @@ happen — and they're separate:
 over MCP (**Streamable-HTTP** at `/mcp`). How depends on **where your agent runs**:
 
 ### Same machine (default)
-Your agent runs on this computer, so it can reach `localhost` — and the wizard already started
-the server there. Point your host at the `/mcp` URL (most MCP hosts take a small JSON config):
+Your agent runs on this computer, so it can reach the server on loopback — and the wizard already
+started it there. Point your host at the `/mcp` URL (most MCP hosts take a small JSON config):
 
 ```json
 {
   "mcpServers": {
-    "nodedex": { "url": "http://localhost:3001/mcp" }
+    "nodedex": { "url": "http://127.0.0.1:3001/mcp" }
   }
 }
 ```
+> **Use `127.0.0.1`, not `localhost`** — the server binds IPv4, and on Windows `localhost`
+> resolves to IPv6 `::1` first, so `localhost` silently fails to connect while `127.0.0.1` works.
 
 Or let the host **spawn it over stdio** (run `npm run build` in `server/` first):
 
@@ -134,46 +135,15 @@ Or let the host **spawn it over stdio** (run `npm run build` in `server/` first)
 }
 ```
 
-CLI-style host (e.g. Hermes): `hermes mcp add nodedex --url http://localhost:3001/mcp`, then
+CLI-style host (e.g. Hermes): `hermes mcp add nodedex --url http://127.0.0.1:3001/mcp`, then
 reload its MCP connections and start a new session.
 
-### Agent in Docker / on another machine
-A containerized or remote agent **cannot** reach the host's `localhost`, so the server must
-(a) bind to all interfaces and (b) be protected with a token.
-
-**Easiest — let the TUI do it.** In the onboarding wizard's *"Where will your agent run?"* step
-(or the **Servers** tab → launch → press `d`), pick **Docker / another machine**. It binds
-`0.0.0.0`, generates a token, and shows you the `host.docker.internal` URL + the `Authorization`
-header to give your agent.
-
-**Or set it up manually**, from `server/`:
-
-```bash
-# macOS / Linux
-NODEDEX_BIND_HOST=0.0.0.0 NODEDEX_API_TOKEN=<a-secret> PORT=3001 npm run dev
-```
-```powershell
-# Windows PowerShell
-$env:NODEDEX_BIND_HOST="0.0.0.0"; $env:NODEDEX_API_TOKEN="<a-secret>"; $env:PORT="3001"; npm run dev
-```
-
-Then point the agent at the **host** address (not `localhost`) and send the token:
-
-```json
-{
-  "mcpServers": {
-    "nodedex": {
-      "url": "http://host.docker.internal:3001/mcp",
-      "headers": { "Authorization": "Bearer <a-secret>" }
-    }
-  }
-}
-```
-
-`host.docker.internal` reaches the host from a Docker Desktop container (on Linux Docker, add
-`--add-host=host.docker.internal:host-gateway`). **Without `0.0.0.0` you get *connection
-refused*; without the token the graph is reachable on your network unauthenticated.** Full
-detail: [docs/how-to/connect-mcp-over-http.md](docs/how-to/connect-mcp-over-http.md).
+### Agent in Docker / on another machine (advanced — not first-run)
+A containerized or remote agent can't reach the host's loopback, so the server must bind
+`0.0.0.0` and use a token, and the agent connects via the host address (e.g.
+`host.docker.internal`). That's a deliberate, later setup — full steps (bind host, token,
+Docker networking) are in
+[docs/how-to/connect-mcp-over-http.md](docs/how-to/connect-mcp-over-http.md).
 
 The agent now sees the **read tools** and can traverse the graph. (The server delivers its own
 usage protocol via the MCP `instructions` field — no prompt changes needed from you.)

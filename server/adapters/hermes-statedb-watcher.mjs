@@ -13,11 +13,14 @@
 //   One logical agent turn spans many rows:
 //     user → assistant(tool_calls) → tool → assistant(tool_calls) → tool → … → assistant(stop)
 //   Hermes marks the END of a turn with finish_reason='stop'; every intermediate assistant row is
-//   finish_reason='tool_calls' (just a "let me check…" preamble). So:
-//     • agent_response  = the FINAL stop row's content (the actual answer)
+//   finish_reason='tool_calls' (a "let me check…" preamble). So:
+//     • agent_response  = the agent's whole NARRATION across the turn — the tool-call preambles
+//                         AND the final answer, joined — so extraction (v2 COMPREHEND reads
+//                         user+response) sees the tool-driven investigation (dead-ends,
+//                         decisions), not just the closing summary.
 //     • user_message    = the user row(s) that opened the turn
-//     • agent_thinking  = the intermediate preambles + tool results (where dead-ends live) + any
-//                         reasoning_content (thinking models)
+//     • agent_thinking  = the raw tool RESULTS + any reasoning_content — recorded to the turn
+//                         but NOT fed to extraction (raw tool JSON there adds noise / over-seg).
 //   Pairing "each assistant with the preceding user" would instead emit garbage fragments.
 //
 // SAFETY
@@ -108,22 +111,22 @@ function assembleTurn(db, sid, prevStopId, stop) {
   ).all(sid, prevStopId, stop.id);
 
   const userParts = [];
-  const reasoningParts = [];
+  const agentParts = [];                                  // agent narration across the turn (preambles + final answer) → response
+  const toolTrace = [];                                   // raw tool outputs → thinking (recorded, not extracted)
   for (const r of rows) {
-    if (r.id === stop.id) continue;                       // the final answer is the response, not thinking
     if (r.role === "user") { const c = clean(r.content); if (c) userParts.push(c); }
-    else if (r.role === "assistant") { const c = clean(r.content); if (c) reasoningParts.push(c); }      // "let me check…" preambles
-    else if (r.role === "tool") { const c = clean(r.content); if (c) reasoningParts.push(`[${r.tool_name || "tool"}] ${truncate(c, TOOL_PREVIEW)}`); }
+    else if (r.role === "assistant") { const c = clean(r.content); if (c) agentParts.push(c); }          // incl. the final 'stop' row
+    else if (r.role === "tool") { const c = clean(r.content); if (c) toolTrace.push(`[${r.tool_name || "tool"}] ${truncate(c, TOOL_PREVIEW)}`); }
   }
-  if (!userParts.length) return null;                     // no prompt in this window → skip (orphan)
+  if (!userParts.length || !agentParts.length) return null;   // no prompt or no agent text → skip (orphan)
 
   const stopThinking = clean(stop.reasoning_content);     // thinking-model reasoning on the final row
-  if (stopThinking) reasoningParts.unshift(stopThinking);
+  if (stopThinking) toolTrace.unshift(stopThinking);
 
   return {
-    agentResponse: String(stop.content ?? ""),
+    agentResponse: agentParts.join("\n"),
     userMessage: userParts.join("\n"),
-    reasoning: reasoningParts.join("\n"),
+    reasoning: toolTrace.join("\n"),
     agentId: "owl",
     turnName: `hermes-${String(sid).slice(0, 15)}-${stop.id}`,
     hint: "discovery",
@@ -182,8 +185,9 @@ async function main() {
     process.exit(1);
   }
 
-  // Where to start. Persisted cursor wins; else current max stop-id (forward-only) unless --backfill.
-  let cursor = loadCursor();
+  // Where to start. --backfill reprocesses from the very start (ignores any saved cursor);
+  // otherwise the persisted cursor wins; else current max stop-id (forward-only).
+  let cursor = BACKFILL ? 0 : loadCursor();
   if (!cursor && !BACKFILL) {
     const db = openRO(boot.stateDbPath);
     try { cursor = db.prepare(`SELECT MAX(id) AS m FROM messages WHERE role='assistant' AND finish_reason='stop'`).get()?.m ?? 0; }

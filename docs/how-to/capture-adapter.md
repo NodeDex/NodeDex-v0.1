@@ -4,20 +4,25 @@ Nodedex's MCP server is **passive**: it only ever sees tool-call arguments and i
 responses — never the agent's natural-language output or reasoning. So it **cannot capture
 turns itself**. Something host-side has to *push* each finished turn into the pipeline.
 
-There are two host-side ways to push turns: the **capture adapter (tee)** for agents whose
-code/loop you control (an SDK, your own loop) — installed once via `workspace_install_capture`
-— and, for **hosted or sandboxed agents that can't deploy a tee** (e.g. Hermes/Owl running in a
-container), the **model proxy** (see *"When the tee can't be deployed"* below).
+There are three host-side ways to push turns, by host type:
+- **Hermes / Owl → the `state.db` watcher.** Hermes ignores a model proxy (hardcoded endpoint)
+  and never fires shell hooks, so NodeDex reads its `state.db`. This is THE Hermes path — see
+  [connect-hermes.md](connect-hermes.md). (Not covered further here.)
+- **Agent whose loop you control (SDK, your own loop) → the tee**, installed once via
+  `workspace_install_capture` (the rest of this doc).
+- **OpenAI-compatible host that honors a custom base URL → the model proxy** (see
+  *"When the tee can't be deployed"* below). Note: Hermes is **not** one of these.
 
 ## Why a tee (and not the proxy)
 
-There are three ways to get turns into `POST /api/reflect/trigger`:
+There are four ways to get turns into `POST /api/reflect/trigger`:
 
-| Path | In/out of path | Reasoning | Blast radius | Portable |
-|---|---|---|---|---|
-| `chat-proxy` (swap the LLM `base_url`) | **in-path** | yes | a bug here breaks the agent's call | universal but intrusive |
-| Claude-Code `Stop` hook | out-of-path | redacted on subscription CC | none | CC-only |
-| **capture adapter (tee)** | **out-of-path** | yes (sees the response object) | none | universal |
+| Path | In/out of path | Blast radius | Works for |
+|---|---|---|---|
+| `state.db` watcher | out-of-path | none | Hermes/Owl (reads its DB) |
+| `chat-proxy` (swap the LLM `base_url`) | **in-path** | a bug here breaks the agent's call | hosts that honor `base_url` (**not** Hermes) |
+| Claude-Code `Stop` hook | out-of-path | none | CC-only |
+| **capture adapter (tee)** | **out-of-path** | none | any host whose loop you control |
 
 The tee is the chosen default: it keeps the agent's own LLM call **untouched** (just sends a
 copy *after* the turn finishes), yet can still read reasoning off the response object, and runs
@@ -32,35 +37,18 @@ place or wire a post-turn callback. For these, use the **`/api/chat` proxy**: po
 provider — transparently (same response, no added latency, streaming intact).
 
 In the host's model/provider settings:
-- **base URL** → `http://<nodedex-host>:<port>/api`. Pick the host by **where the model call
-  originates**: if the agent runs in a **Docker container** (the common hosted case, e.g. Hermes),
-  use `http://host.docker.internal:3001/api` — inside the container `localhost`/`127.0.0.1` point at
-  the container itself. Only if the call originates on the **same host** use `http://127.0.0.1:3001/api`.
-  The server must be bound `0.0.0.0` for a container to reach it.
+- **base URL** → `http://127.0.0.1:<port>/api` (same machine). A containerized/remote agent uses
+  the host address instead (e.g. `http://host.docker.internal:<port>/api`) and needs the server
+  bound `0.0.0.0`.
 - **API key / model** → unchanged — forwarded untouched to your provider
 
 No file, no post-turn seam, and **no Nodedex token** for capture (the `/api/chat` path is exempt
-and uses your own provider key). Works for any agent that speaks OpenAI `/chat/completions` and
-lets you set a base URL.
+and uses your own provider key). Works for any host that speaks OpenAI `/chat/completions` **and
+actually honors a custom base URL**.
 
-### Worked example — Hermes
-Hermes's config is at `~/.hermes/config.yaml` (Windows: `%LOCALAPPDATA%\hermes\config.yaml`).
-Under the `model:` block, swap `base_url` from the provider to the proxy:
-
-```yaml
-model:
-  default: openrouter/owl-alpha
-  provider: openrouter
-  base_url: http://host.docker.internal:3002/api   # was https://openrouter.ai/api/v1
-  api_mode: chat_completions
-```
-
-Or `hermes config set model.base_url http://host.docker.internal:3002/api`, then **restart the
-Hermes gateway**. Hermes runs the agent in a Docker container (`terminal.backend: docker`), so it
-reaches your host server via `host.docker.internal` — `localhost`/`127.0.0.1` would resolve to the
-container itself. **Trade-off:** model calls now flow through Nodedex — if Nodedex is down the agent
-can't reach the model; revert by setting `base_url` back to the provider URL. Full walkthrough:
-[connect-hermes.md](connect-hermes.md).
+> ⚠ **Not Hermes.** Hermes hardcodes its OpenRouter endpoint and ignores `model.base_url`, so the
+> proxy never sees its traffic. For Hermes/Owl use the **`state.db` watcher** —
+> [connect-hermes.md](connect-hermes.md).
 
 ## What gets captured
 

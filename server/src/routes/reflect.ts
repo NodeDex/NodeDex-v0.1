@@ -128,8 +128,13 @@ export function createReflectRouter(db: WorkspaceDB, embeddings?: EmbeddingEngin
       const turnNumber = typeof body?.turn_number === "number" ? body.turn_number : undefined;
       const turnName = typeof body?.turn_name === "string" ? body.turn_name : undefined;
 
-      if (!agentResponseText || agentResponseText.length < 50) {
-        return res.status(400).json({ error: "agent_response too short" });
+      // Floor on COMBINED content (answer + investigation + user), not the answer alone:
+      // a short final answer can still sit on a rich tool-call trace worth extracting. Need
+      // SOME agent_response, but the bar is just "not empty" (10 chars). Extraction is the
+      // real filter downstream.
+      const combinedLen = (agentResponseText.length + agentThinkingText.length + userMessageText.length);
+      if (!agentResponseText || combinedLen < 10) {
+        return res.status(400).json({ error: "turn too short (empty)" });
       }
 
       if (reflectPaused && !body?.benchmark) {

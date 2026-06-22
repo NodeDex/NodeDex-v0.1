@@ -788,16 +788,16 @@ export async function runAutoReflect(
     // reasoning_chain/metric/claim collapsed → insight/fact (2026-06-15)
   ]);
 
-  // Skip trivial turns. NODEDEX_EXTRACT_ALL_SOURCES disables the LENGTH heuristic
+  // Skip only EMPTY turns. NODEDEX_EXTRACT_ALL_SOURCES disables the LENGTH heuristic
   // entirely (length != residue — a 12-char user turn can be a decision); empty turns
   // then self-handle (extraction finds nothing -> JUDGE keeps nothing -> no blocks).
-  // NODEDEX_MIN_TURN_CHARS tunes the floor without removing it (default 300). The /trigger
-  // route already enforces a hard 50-char floor on agent_response, so values below ~50 have
-  // little extra effect for capture.
+  // NODEDEX_MIN_TURN_CHARS tunes the floor (default 10 — extraction itself, not length, is
+  // the real filter; a short turn with no residue simply yields 0 blocks). Raise it to cut
+  // pipeline calls on tiny turns when running a PAID extraction model (free models = $0).
   const extractAllSources = process.env.NODEDEX_EXTRACT_ALL_SOURCES === "1";
   const minTurnChars = (() => {
     const n = parseInt(process.env.NODEDEX_MIN_TURN_CHARS ?? "", 10);
-    return Number.isFinite(n) && n >= 0 ? n : 300;
+    return Number.isFinite(n) && n >= 0 ? n : 10;
   })();
   const combinedLength = (agentResponse?.length ?? 0) + (agentThinking?.length ?? 0);
   if (!extractAllSources && combinedLength < minTurnChars) {
