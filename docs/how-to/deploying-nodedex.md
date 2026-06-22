@@ -52,9 +52,9 @@ A containerized agent can't reach a host process over stdio pipes — use HTTP:
 
 **⚠ The URL perspective gotcha** (the thing that bites): use the hostname *from the
 connecting process's point of view*.
-- If the **host app / gateway** opens the connection (it runs on the host) → `http://localhost:3001/mcp`.
+- If the **host app / gateway** opens the connection (it runs on the host) → `http://127.0.0.1:3001/mcp` (use `127.0.0.1`, not `localhost` — on Windows `localhost` hits IPv6 `::1` first and an IPv4-bound server won't answer).
 - If the **container itself** opens the connection → `http://host.docker.internal:3001/mcp`.
-- Unsure? Try `localhost` first; if the app logs `ECONNREFUSED` / can't resolve, try the
+- Unsure? Try `127.0.0.1` first; if the app logs `ECONNREFUSED` / can't resolve, try the
   other. The app's own logs show the actual connection attempt.
 
 ## Do we need to "tell" the agent its tools?

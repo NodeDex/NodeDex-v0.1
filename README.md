@@ -178,16 +178,17 @@ drop into your post-turn seam (it POSTs `{user, response, reasoning}` to the ser
 
 > Without one of these, the agent can *read* memory but the graph never grows.
 
-**So you hand your agent two things, for two endpoints:**
-| For | Endpoint | Credential |
+**What you hand your agent depends on the path.** *Reading* is always the MCP `…/mcp` URL (plus a
+token only on a Docker/network server). *Capturing* differs by host:
+
+| Capture path | Wire up | Credential |
 |---|---|---|
-| **Reading** the graph (MCP) | `…/mcp` | the **NodeDex token** (`Authorization: Bearer <token>`) — only on a Docker/token server |
-| **Capturing** turns (proxy path a) | model base URL `…/api` | your **provider key** (e.g. OpenRouter) |
+| **Watcher** (Hermes/Owl) | nothing — it reads `state.db` locally | none |
+| **Proxy** (base-URL hosts) | model base URL → `…/api` | your **provider key** (forwarded to your provider) |
+| **Tee** (loop you control) | `workspace_install_capture` snippet | `NODEDEX_TOKEN` only if the server is gated |
 
-*(Note these are two different keys: the **NodeDex token** authenticates the MCP read connection; your **provider key** is what the proxy forwards to OpenRouter. On a same-machine localhost server, the NodeDex token isn't needed at all.)*
-
-**Using Hermes / Owl?** Full end-to-end walkthrough (MCP read + proxy capture + every gotcha):
-[docs/how-to/connect-hermes.md](docs/how-to/connect-hermes.md).
+**Using Hermes / Owl?** Full end-to-end walkthrough (MCP read + the state.db watcher + every
+gotcha): [docs/how-to/connect-hermes.md](docs/how-to/connect-hermes.md).
 
 **Full per-host detail** (HTTP transport, Docker / `host.docker.internal`, the capture
 adapter, env toggles): [docs/how-to/connect-mcp-over-http.md](docs/how-to/connect-mcp-over-http.md)
