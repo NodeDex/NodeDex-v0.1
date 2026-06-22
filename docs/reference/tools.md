@@ -213,7 +213,7 @@ Auto-inherits concepts from input blocks. Default TTL is `permanent` unless `pro
 
 ### `workspace_extract_arc`
 
-**What it is:** Triggers **arc extraction** over a range of an agent's conversation turns. Reads the `pass01_done` turns, consolidates them into one arc input, runs Pass 2-5 (the write pipeline), writes the blocks with provenance, and flips the turns to `extracted`. Defaults to ALL pass01_done turns if no range given; `re_extract: true` marks it as an intentional re-extraction. Requires `NODEDEX_ARC_EXTRACTION=1` (so per-turn capture populated the turns) — otherwise returns `no_turns`.
+**What it is:** Triggers **arc extraction** over a range of an agent's conversation turns. Reads the `pass01_done` turns, consolidates them into one arc input, runs the v2 write pipeline (COMPREHEND → SELECTOR → fill → JUSTIFY → CROSS-LINK → INTEGRATE → chains), writes the blocks with provenance, records the `conversation_turn_ranges` watermark, and flips the turns to `extracted`. Defaults to ALL pass01_done turns if no range given; `re_extract: true` marks it as an intentional re-extraction. Requires `NODEDEX_ARC_EXTRACTION=1` (so per-turn capture populated the turns) — otherwise returns `no_turns`.
 
 **What it's for:** The **MCP-native way to trigger extraction**. This tool *is* how the host/agent says "extract the recent conversation now." (Capture and triggering are the host-specific bits; this tool covers the trigger. A server-side inactivity timer can also fire extraction automatically.)
 

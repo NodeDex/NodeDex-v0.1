@@ -143,12 +143,50 @@ Every meaningful connection between blocks is a typed relation:
 
 ---
 
+## Arc extraction — how turns become an arc
+
+By default Nodedex runs in **arc mode** (`NODEDEX_ARC_EXTRACTION=1`, the shipped default). Instead
+of extracting each turn in isolation, it **captures** turns cheaply and **extracts a whole arc at
+once** — so a multi-turn thread (a bug hunt, a design decision) becomes one coherent set of blocks
+with intact chains and supersession, not N fragmented per-turn extractions.
+
+**Capture (per turn, no LLM).** Each `POST /api/reflect/trigger` stores the raw turn in
+`conversation_turns` and marks it `pass01_done` — that's it, no extraction yet. (This is *lazy
+capture*: the arc engine re-reads the raw transcript, so running passes per turn here would be pure
+waste.) Send a monotonic `turn_number` per `agent_id` and the watermark below becomes exact.
+
+**Triggers — what commits an arc.** Any of these runs the pipeline over the accumulated
+`pass01_done` turns:
+
+| Trigger | Fires when | Control |
+|---|---|---|
+| **agent / MCP** | the agent calls `workspace_extract_arc` at its own task boundary | the **quality path** — the agent knows where an arc ends |
+| **auto (every-N)** | N turns have accumulated | `NODEDEX_ARC_AUTO_TURNS` (0 = off); **user-settable in TUI Settings**, applied live |
+| **inactivity** | the conversation goes idle | `NODEDEX_ARC_INACTIVITY_ENABLED` |
+| **api** | `POST /api/conversations/:agent_id/extract` | optional `start_turn`/`end_turn` range |
+| **precompact** | the host is about to compact its context | host hook |
+
+**Extract + watermark.** On a trigger, the engine reads the `pass01_done` turns, consolidates them
+into one arc input, runs the reflect pipeline (below), writes the blocks with provenance, records a
+`conversation_turn_ranges` row (`start/end_turn_number` = the **watermark**, plus `trigger_source`),
+and flips the consumed turns to `extracted`. "Extracted = turn_number ≤ watermark", so the next
+trigger only picks up what is new. A failed extract **fails clean** — turns stay `pass01_done` and
+re-extractable, never silently lost.
+
+> **Granularity matters.** A coherent arc extracts best as *one* unit: split it across triggers and
+> the second half can read as a distinct sub-topic and fork its own (sub-)root (see INTEGRATE). So
+> the agent firing `workspace_extract_arc` at a real task boundary is the highest-quality trigger;
+> every-N and inactivity are safety nets.
+
+---
+
 ## The reflect pipeline — how text becomes blocks
 
-Triggered by `POST /api/reflect/trigger` at the end of an agent turn. The engine is the **v2
-"comprehend-and-structure" pipeline** — it reads the turn *holistically* and structures it, rather
-than atomizing and reassembling it pass-by-pass. (A legacy v1 pass chain remains in-tree but is
-off and unreachable; the stage names below are what actually runs and what the cost panel shows.)
+Runs over one input — a single turn, or (in **arc mode**, the default) a consolidated **arc** of
+captured turns (see *Arc extraction* above). The engine is the **v2 "comprehend-and-structure"
+pipeline** — it reads the input *holistically* and structures it, rather than atomizing and
+reassembling it pass-by-pass. (A legacy v1 pass chain remains in-tree but is off and unreachable;
+the stage names below are what actually runs and what the cost panel shows.)
 
 ```
 COMPREHEND → [SELECTOR] → fill → JUSTIFY → [CROSS-LINK] → INTEGRATE → chains
@@ -197,9 +235,23 @@ already come from COMPREHEND. Bounded output (just edges), so it can't run away;
 single thread.
 
 ### INTEGRATE *(flag-gated recognizer)*
-**Job:** graph-aware reconciliation — match the new blocks against existing project roots, assign
-the canonical `{project}_{entity}_{type}_{concept}` labels, and attach each block to the right
-root (the only valid orphan is a `project`). Off → blocks keep their as-extracted labels.
+**Job:** graph-aware reconciliation — assign the canonical `{project}_{entity}_{type}_{concept}`
+labels and decide where each new topic-cluster belongs in the existing graph (the only valid orphan
+is a `project`). Off → blocks keep their as-extracted labels.
+
+The **recognizer** judges each new cluster against existing roots *by meaning* — it reads the root
+`essence`, not the label. It only **folds** a cluster into an existing root when the cluster has the
+**same owner** AND names a specific **shared subject** (a shared *manner* — "both involve debugging"
+— is not a subject). Otherwise it **forks** a new root: *a fork is the safe failure*, because
+wrongly merging two distinct topics is hard to undo, while forking now and letting the
+self-maintenance dedup loop merge later is reversible.
+
+A forked cluster that is a **sub-topic** of an existing root is nested under it — a new root wired
+`part_of` the parent (the *collection-member* / sub-root rule; this nesting is determined
+structurally in code, not left to LLM judgment). `GET /api/roots/related` then reports the pair as
+containment/dependency and names the parent. Net: a strong model tends to fold a related thread into
+one root, a weaker one tends to fork a properly-subordinated sub-root — either way the relationship
+is preserved and reachable.
 
 ### chains
 **Job:** find causal clusters across the turn's blocks, name them, and write a `chain` block with
