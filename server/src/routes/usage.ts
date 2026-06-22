@@ -47,10 +47,13 @@ function perPassCost(log: any): { turn: number | null; turn_name: string | null;
     // v1 run: cost_breakdown's ran passes.
     for (const k of ["pass0", "pass1", "pass_judge", "pass2", "pass3", "pass4", "pass5"]) { const p = cb[k]; if (p?.ran) passes.push({ name: k, usd: p.usd ?? null }); }
   }
-  // Total = sum of what we show (the front-half spend was the bit cb.total_usd
-  // missed); null only if some shown pass ran unpriced.
-  const allNumeric = passes.length > 0 && passes.every((p) => typeof p.usd === "number");
-  const total_usd = allNumeric ? Math.round(passes.reduce((a, p) => a + (p.usd as number), 0) * 1e6) / 1e6 : null;
+  // Total = the run's known spend. The front-half stages are ledger-measured (real $, $0 on a
+  // free/local model); a back-half pass with no table price (free/local model) genuinely cost $0,
+  // so count it as 0 rather than poisoning the whole total to null/"?". null only when nothing ran.
+  // (The 24h figure shown alongside is the ledger ground-truth for the true spend.)
+  const total_usd = passes.length > 0
+    ? Math.round(passes.reduce((a, p) => a + (p.usd ?? 0), 0) * 1e6) / 1e6
+    : null;
   return { turn: log?.turn ?? null, turn_name: log?.turn_name ?? null, total_usd, passes };
 }
 

@@ -20,6 +20,10 @@ export const DEFAULT_DB = resolve(NODEDEX_HOME, "workspace.db");
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export const OPENROUTER_DEFAULT_MODEL = "google/gemini-2.5-flash";
 
+// Local / self-hosted default (Ollama). LM Studio = :1234/v1, vLLM = your host. Used by the
+// "Local / self-hosted" onboarding path — no API key, fully offline, $0.
+export const DEFAULT_LOCAL_BASE_URL = "http://localhost:11434/v1";
+
 // Models offered in the OpenRouter model step. The first is the recommended default
 // (cheap + capable, paid). owl-alpha is FREE but trains on prompts (flagged below).
 export interface ModelChoice { id: string; label: string; note: string; free?: boolean }
@@ -38,7 +42,7 @@ export function isTrainsOnPrompts(model: string): boolean {
   return TRAINS_ON_PROMPTS.some((needle) => m.includes(needle));
 }
 
-export type Provider = "openrouter";
+export type Provider = "openrouter" | "local";
 
 // Hermes/Owl capture (the state.db watcher). Hermes ignores model-proxy + shell-hook capture, so
 // the only working path is reading its own state.db. These knobs are owned by the TUI Settings tab
@@ -55,7 +59,8 @@ export const DEFAULT_HERMES_SOURCES = ["tui"];
 
 export interface NodedexConfig {
   provider?: Provider;
-  openrouter_key?: string;
+  openrouter_key?: string;       // openrouter path only
+  base_url?: string;             // local path only — the OpenAI-compatible endpoint (e.g. Ollama)
   // chosen model (default applied if blank)
   model?: string;
   // chosen server port + DB path (picked during onboarding; reused on re-run)
@@ -133,12 +138,14 @@ export function needsOnboarding(): boolean {
   const c = loadConfig();
   if (!c.onboarded) return true;
   if (c.provider === "openrouter") return !c.openrouter_key;
+  if (c.provider === "local") return !c.base_url || !c.model;  // local needs an endpoint + model, no key
   return true;
 }
 
-/** The provider env a TUI-launched server needs (OpenRouter via the openai-compatible
- *  path). Empty when un-configured (so launchServer stays a no-op for un-onboarded use).
- *  These WIN over the server's .env because node --env-file won't override set vars. */
+/** The provider env a TUI-launched server needs. Both paths speak the openai-compatible API:
+ *  OpenRouter (cloud, BYO key) or a local/self-hosted endpoint (Ollama/LM Studio/vLLM, no key).
+ *  Empty when un-configured (so launchServer stays a no-op for un-onboarded use). These WIN over
+ *  the server's .env because node --env-file won't override set vars. */
 export function providerEnv(): Record<string, string> {
   const c = loadConfig();
   if (c.provider === "openrouter" && c.openrouter_key) {
@@ -147,6 +154,14 @@ export function providerEnv(): Record<string, string> {
       OPENAI_BASE_URL: OPENROUTER_BASE_URL,
       OPENAI_API_KEY: c.openrouter_key,
       AI_MODEL: c.model || OPENROUTER_DEFAULT_MODEL,
+    };
+  }
+  if (c.provider === "local" && c.base_url && c.model) {
+    return {
+      AI_PROVIDER: "openai-compatible",
+      OPENAI_BASE_URL: c.base_url,
+      OPENAI_API_KEY: "local",         // local servers ignore the key; a non-empty value keeps clients happy
+      AI_MODEL: c.model,
     };
   }
   return {};

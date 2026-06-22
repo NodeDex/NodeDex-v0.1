@@ -1,9 +1,10 @@
 // onboarding.tsx — first-run setup wizard (static, no animation).
 //
-// Flow: welcome → consent → key (OpenRouter) → model → port → db → starting → connect.
-// Same-machine only (localhost, no token). The "where will your agent run?" deployment
-// branch (Docker / remote → 0.0.0.0 + token) was removed; reachable-on-network setup is a
-// later concern, not part of first-run.
+// Flow: welcome → consent → provider → {OpenRouter: key → model | Local: endpoint → model}
+//   → port → db → starting → connect.
+// Two model paths: OpenRouter (cloud, BYO key) or Local / self-hosted (Ollama/LM Studio/vLLM —
+// offline, no key, $0). Same-machine server only (localhost, no token); the Docker/remote
+// deployment branch was removed — reachable-on-network setup is a later concern, not first-run.
 // Onboarding sets up + starts the SERVER (OpenRouter key, model, picked port, named DB).
 // Connecting an autonomous agent (e.g. Hermes) to the running /mcp endpoint + wiring
 // capture is the USER's own step — the final screen points at the GitHub README for the
@@ -14,7 +15,7 @@ import { Box, Text, useApp, useInput } from "ink";
 import { Logo } from "./components.js";
 import { theme } from "./theme.js";
 import {
-  saveConfig, DEFAULT_PORT,
+  saveConfig, DEFAULT_PORT, DEFAULT_LOCAL_BASE_URL,
   OPENROUTER_BASE_URL,
   RECOMMENDED_MODELS, isTrainsOnPrompts, listDbs, dbPathForName,
   type DbChoice,
@@ -25,8 +26,9 @@ import { probeServer, setBase } from "./api.js";
 const README_URL = "https://github.com/NodeDex/NodeDex-v0.1#connect-your-agent";
 
 type Step =
-  | "welcome" | "consent" | "openrouter"
-  | "model" | "port" | "db" | "starting" | "connect";
+  | "welcome" | "consent" | "provider" | "openrouter" | "model"
+  | "localendpoint" | "localmodel"
+  | "port" | "db" | "starting" | "connect";
 
 /** Verify the OpenRouter key before saving — a typo fails here, not at first
  *  extraction. GET /key returns the key's usage/limit for a valid key. */
@@ -115,6 +117,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const { exit } = useApp();
   const [step, setStep] = useState<Step>("welcome");
   const [orKey, setOrKey] = useState("");
+  // provider step (0 = OpenRouter cloud, 1 = Local/self-hosted) + local fields
+  const [providerSel, setProviderSel] = useState(0);
+  const [localBaseUrl, setLocalBaseUrl] = useState(DEFAULT_LOCAL_BASE_URL);
+  const [localModel, setLocalModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
@@ -171,6 +177,25 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     setBusy(false); setStatus(""); setError("Server didn't come up in time — see ~/.nodedex/tui-logs/."); setStep("db");
   }, []);
 
+  const submitProvider = useCallback(() => {
+    setError("");
+    setStep(providerSel === 1 ? "localendpoint" : "openrouter");
+  }, [providerSel]);
+
+  const submitLocalEndpoint = useCallback(() => {
+    const url = localBaseUrl.trim();
+    if (!url) { setError("Enter your local endpoint URL (e.g. http://localhost:11434/v1)."); return; }
+    saveConfig({ provider: "local", base_url: url });
+    setError(""); setStep("localmodel");
+  }, [localBaseUrl]);
+
+  const submitLocalModel = useCallback(() => {
+    const m = localModel.trim();
+    if (!m) { setError("Enter the model id your server serves (e.g. qwen3:30b)."); return; }
+    saveConfig({ model: m });
+    setError(""); setStep("port");
+  }, [localModel]);
+
   const submitOpenRouter = useCallback(async () => {
     const k = orKey.trim();
     if (!k) { setError("Paste your OpenRouter API key first."); return; }
@@ -226,11 +251,23 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     if (step === "welcome") {
       if (k.return) setStep("consent"); else if (input === "q") exit();
     } else if (step === "consent") {
-      if (k.return) setStep("openrouter"); else if (input === "q") exit();
+      if (k.return) setStep("provider"); else if (input === "q") exit();
+    } else if (step === "provider") {
+      if (k.upArrow || k.downArrow) setProviderSel((s) => (s === 0 ? 1 : 0));
+      else if (k.escape) setStep("consent");
+      else if (k.return) submitProvider();
     } else if (step === "openrouter") {
       if (k.return) void submitOpenRouter();
-      else if (k.escape) setStep("consent");
+      else if (k.escape) setStep("provider");
       else typeInto(setOrKey, input, k);
+    } else if (step === "localendpoint") {
+      if (k.return) submitLocalEndpoint();
+      else if (k.escape) setStep("provider");
+      else typeInto(setLocalBaseUrl, input, k);
+    } else if (step === "localmodel") {
+      if (k.return) submitLocalModel();
+      else if (k.escape) setStep("localendpoint");
+      else typeInto(setLocalModel, input, k);
     } else if (step === "model") {
       const total = RECOMMENDED_MODELS.length + 1; // + custom row
       if (k.upArrow) setModelSel((s) => (s - 1 + total) % total);
@@ -243,7 +280,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       if (k.upArrow) setPortSel((s) => (s - 1 + freePorts.length) % freePorts.length);
       else if (k.downArrow) setPortSel((s) => (s + 1) % freePorts.length);
       else if (k.return) submitPort();
-      else if (k.escape) setStep("model");
+      else if (k.escape) setStep(providerSel === 1 ? "localmodel" : "model");
     } else if (step === "db") {
       const total = dbs.length + 1; // + new row
       if (k.upArrow) setDbSel((s) => (s - 1 + total) % total);
@@ -273,9 +310,58 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           <Text color={theme.value}>· Nodedex stores your work as a knowledge graph on your machine.</Text>
           <Text color={theme.value}>· An AI pipeline builds your agent's memory from your turns — it</Text>
           <Text color={theme.value}>  can be wrong or incomplete; the agent's notes, not ground truth.</Text>
-          <Text color={theme.value}>· You bring your own model provider; usage is billed to you.</Text>
+          <Text color={theme.value}>· You bring your own model — a cloud key (billed to you) or a local one.</Text>
         </Box>
         <Hint keys={[["Enter", "I understand & agree"], ["q", "quit"]]} />
+      </Frame>
+    );
+  }
+
+  if (step === "provider") {
+    return (
+      <Frame>
+        <Text color={theme.title} bold>How will you run the extraction model?</Text>
+        <Text color={theme.dim}>NodeDex's pipeline uses it to turn your turns into the graph.</Text>
+        <Box marginTop={1} flexDirection="column">
+          <Row selected={providerSel === 0} label="OpenRouter" width={12}
+            aside="cloud — bring your API key (recommended)" />
+          <Row selected={providerSel === 1} label="Local" width={12}
+            aside="self-hosted (Ollama / LM Studio) — offline, no key, $0" />
+        </Box>
+        <Hint keys={[["↑↓", "move"], ["Enter", "select"], ["Esc", "back"]]} />
+      </Frame>
+    );
+  }
+
+  if (step === "localendpoint") {
+    return (
+      <Frame>
+        <Text color={theme.title} bold>Local endpoint</Text>
+        <Box marginTop={1} flexDirection="column" alignItems="center">
+          <Text color={theme.dim}>Your OpenAI-compatible server (Ollama, LM Studio, vLLM)</Text>
+          <Box marginTop={1}>
+            <FieldBox label="url" value={localBaseUrl} focused placeholder={DEFAULT_LOCAL_BASE_URL} />
+          </Box>
+          {error ? <Text color={theme.danger}>{`⚠ ${error}`}</Text> : <Text> </Text>}
+        </Box>
+        <Hint keys={[["Enter", "continue"], ["Esc", "back"]]} />
+      </Frame>
+    );
+  }
+
+  if (step === "localmodel") {
+    return (
+      <Frame>
+        <Text color={theme.title} bold>Local model</Text>
+        <Box marginTop={1} flexDirection="column" alignItems="center">
+          <Text color={theme.dim}>The model id your server serves (e.g. qwen3:30b, llama3.3)</Text>
+          <Box marginTop={1}>
+            <FieldBox label="model" value={localModel} focused placeholder="qwen3:30b" />
+          </Box>
+          <Box marginTop={1}><Text color={theme.dim}>A capable ~30B+ model gives the best extraction quality.</Text></Box>
+          {error ? <Text color={theme.danger}>{`⚠ ${error}`}</Text> : <Text> </Text>}
+        </Box>
+        <Hint keys={[["Enter", "continue"], ["Esc", "back"]]} />
       </Frame>
     );
   }

@@ -80,10 +80,12 @@ npm install
 npm run dev          # first run launches the setup wizard
 ```
 
-The wizard walks you through it: provider + API key → model (with a free-but-trains-on-prompts
-warning where it applies) → pick a free port → create or name a database → it starts the
-server on **`localhost`**. On first run it also downloads the bundled local embedding model
-(one-time) so semantic search works offline with no extra key.
+The wizard walks you through it: **choose your model** — **OpenRouter** (cloud, bring your key,
+with a free-but-trains-on-prompts warning where it applies) or **Local / self-hosted** (Ollama /
+LM Studio / vLLM — offline, no key, $0) → model id → pick a free port → create or name a
+database → it starts the server on **`localhost`**. On first run it also downloads the bundled
+local *embedding* model (one-time) so semantic search works offline with no extra key. *(The
+extraction model needs to be reasonably capable — a ~30B+ local model gives the best quality.)*
 
 > The wizard sets up a **same-machine** server (localhost) — the default. Running your agent in
 > **Docker or on another machine** is a later, advanced setup (bind `0.0.0.0` + a token); see

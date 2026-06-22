@@ -117,27 +117,22 @@ const money4 = (n: number | null | undefined): string => (typeof n === "number" 
 
 function CostPanel({ dash }: { dash: Dashboard }) {
   const pc = dash.passes;
-  const passes = pc?.passes ?? [];
+  const hasRun = (pc?.passes?.length ?? 0) > 0;
   const spend24h = dash.budget?.observed?.spend24h;
   const title = `cost · last run${pc?.turn != null ? ` (turn ${pc.turn})` : ""}`;
   return (
     <Panel title={title} width="50%" minHeight={7}>
-      {passes.length === 0 ? (
-        <Empty msg={pc?.note ?? "no reflect runs yet — per-pass cost shows after the next run"} />
+      {!hasRun ? (
+        <Empty msg={pc?.note ?? "no reflect runs yet — cost shows after the next run"} />
       ) : (
         <>
-          {passes.map((p) => (
-            <Box key={p.name}>
-              <Box width={12}><Text color={theme.label}>{p.name}</Text></Box>
-              <Text color={theme.value}>{money4(p.usd)}</Text>
-            </Box>
-          ))}
+          <Box>
+            <Box width={12}><Text bold color={theme.label}>last run</Text></Box>
+            <Text bold color={theme.value}>{money4(pc?.total_usd)}</Text>
+          </Box>
           <Box marginTop={1}>
-            <Box width={12}><Text bold color={theme.label}>total</Text></Box>
-            <Box width={10}><Text bold color={theme.value}>{money4(pc?.total_usd)}</Text></Box>
-            {typeof spend24h === "number" ? (
-              <Text color={theme.dim}>{`  ·  24h spend ${fmtMoney(spend24h)}`}</Text>
-            ) : null}
+            <Box width={12}><Text color={theme.label}>24h spend</Text></Box>
+            <Text color={theme.value}>{typeof spend24h === "number" ? fmtMoney(spend24h) : "—"}</Text>
           </Box>
         </>
       )}
