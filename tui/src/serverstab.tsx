@@ -80,7 +80,7 @@ export function ServersTab({
   const [chosenDb, setChosenDb] = useState("");
   const [launchPort, setLaunchPort] = useState(0);  // port chosen, pending the bind-mode choice
   const [bindSel, setBindSel] = useState(0);        // 0 = this machine, 1 = docker/remote (arrow-pick)
-  const [launchInfo, setLaunchInfo] = useState<{ port: number; token: string } | null>(null); // network launch → hold the token on screen until acknowledged
+  const [launchInfo, setLaunchInfo] = useState<{ port: number; token?: string; network: boolean } | null>(null); // post-launch connect screen: URL (+ token on network) held until acknowledged
   const [dbView, setDbView] = useState<DbView>({ mode: "list" });
   const seq = useRef(0);
 
@@ -235,15 +235,11 @@ export function ServersTab({
     const r = launchServer({ port, dbPath: chosenDb, bindHost: network ? "0.0.0.0" : undefined, token });
     const db = chosenDb.split(/[\\/]/).pop();
     if (!r.ok) { setMode(null); setNotice(`launch failed: ${r.error}`); return; }
-    if (network && token) {
-      // hold a dedicated screen with the URL + token until the user acknowledges — never
-      // flash a secret past in a notice that auto-clears.
-      setLaunchInfo({ port, token });
-      setMode("launch-info");
-    } else {
-      setMode(null);
-      setNotice(`launching :${port} → ${db} (localhost, reviewer OFF) · log ${r.logPath?.split(/[\\/]/).pop()}`);
-    }
+    // Show the connect screen for BOTH modes so the user always gets the URL to hand the
+    // agent — network also shows the token (a secret, held until acknowledged); local is URL-only.
+    setLaunchInfo({ port, token, network });
+    setMode("launch-info");
+    if (!network) setNotice(`launched :${port} → ${db} (localhost, reviewer OFF) · log ${r.logPath?.split(/[\\/]/).pop()}`);
     setTimeout(() => { rescan(); scanFree(); }, 1800);
   };
 
@@ -481,10 +477,20 @@ export function ServersTab({
       )}
       {mode === "launch-info" && launchInfo ? (
         <Box borderStyle="round" borderColor={theme.accent} paddingX={1} flexDirection="column">
-          <Text color={theme.ok}>{`✓ launched on 0.0.0.0:${launchInfo.port} — reachable from Docker / another machine`}</Text>
-          <Text color={theme.label}>{`  agent URL:   `}<Text color={theme.value}>{`http://host.docker.internal:${launchInfo.port}/mcp`}</Text></Text>
-          <Text color={theme.label}>{`  auth header: `}<Text color={theme.value}>{`Authorization: Bearer ${launchInfo.token}`}</Text></Text>
-          <Text color={theme.warn}>{`  ⚠ keep this token safe & secret — your agent needs it; it won't be shown again.`}</Text>
+          {launchInfo.network ? (
+            <>
+              <Text color={theme.ok}>{`✓ launched on 0.0.0.0:${launchInfo.port} — reachable from Docker / another machine`}</Text>
+              <Text color={theme.label}>{`  agent URL:   `}<Text color={theme.value}>{`http://host.docker.internal:${launchInfo.port}/mcp`}</Text></Text>
+              <Text color={theme.label}>{`  auth header: `}<Text color={theme.value}>{`Authorization: Bearer ${launchInfo.token}`}</Text></Text>
+              <Text color={theme.warn}>{`  ⚠ keep this token safe & secret — your agent needs it; it won't be shown again.`}</Text>
+            </>
+          ) : (
+            <>
+              <Text color={theme.ok}>{`✓ launched on localhost:${launchInfo.port}`}</Text>
+              <Text color={theme.label}>{`  agent URL: `}<Text color={theme.value}>{`http://127.0.0.1:${launchInfo.port}/mcp`}</Text><Text color={theme.dim}>{`  (no token — localhost)`}</Text></Text>
+              <Text color={theme.dim}>{`  hand this URL to a same-machine agent (HTTP), or use stdio — see README. capture is a separate step.`}</Text>
+            </>
+          )}
           <Text color={theme.dim}>{`  [enter] got it`}</Text>
         </Box>
       ) : mode === "launch-bind" ? (

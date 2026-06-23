@@ -743,7 +743,19 @@ Results are HEADLINES (label, type, essence) — and most blocks mean little alo
           if (!chainName.has(cid)) chainName.set(cid, db.getBlock(cid)?.label ?? cid);
           return chainName.get(cid) ?? null;
         };
-        const results = sliced.map((b) => ({ label: b.label, type: b.type, essence: b.essence, on_chain: onChain((b as any).chain_id) }));
+        const results = sliced.map((b) => {
+          const row: Record<string, any> = { label: b.label, type: b.type, essence: b.essence, on_chain: onChain((b as any).chain_id) };
+          // For tasks, status is the headline ("what's still open?") — surface it (+ priority)
+          // so the list is usable as a task view without opening each one.
+          if (b.type === "task") {
+            try {
+              const u = (typeof b.content === "string" ? JSON.parse(b.content) : b.content)?.unique || {};
+              if (u.status) row.status = u.status;
+              if (u.priority) row.priority = u.priority;
+            } catch { /* ignore malformed content */ }
+          }
+          return row;
+        });
         return ok({
           total: blocks.length, returned: results.length, results,
           hint: "Headlines only — a block means little alone. Open one with workspace_get(label, \"relations\") to walk its chain (on_chain shows where each sits).",

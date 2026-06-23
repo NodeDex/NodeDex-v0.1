@@ -73,12 +73,39 @@ connecting process's point of view*.
   self-describe). Endpoints + shapes are in the web-UI kit / [connect-mcp-over-http.md]. This
   works when prompted but the agent won't use memory reflexively — prefer native MCP.
 
-## The write side (how memory grows)
+## The write side (capture) — a SEPARATE wire, pick by host
 
-Separate from the agent's reads. Each turn is pushed to `POST /api/reflect/trigger`; the
-pipeline extracts asynchronously. The agent host pushes each turn via the tee adapter
-(`workspace_install_capture` deploys `adapters/nodedex-capture.mjs`). Reflection can be
-paused with `~/.nodedex/reflect-pause`.
+Capture is **independent of the agent's reads** and is what actually grows the graph:
+something has to push each finished turn to `POST /api/reflect/trigger`, and the pipeline
+extracts asynchronously. **A connected agent does NOT do this** — MCP is read-only, so
+**without a capture wire the graph stays empty.** (The #1 gotcha: people connect MCP, see an
+empty graph, and assume it's broken. It isn't — capture is a second wire you set up.)
+
+Three mechanisms; pick the one that fits your host:
+
+| Mechanism | How | Use when |
+|---|---|---|
+| **Tee** | `workspace_install_capture` returns a small out-of-path adapter (`adapters/nodedex-capture.mjs`) you drop into the agent's post-turn seam; it POSTs `{user, response, reasoning}` to `${NODEDEX_URL}/api/reflect/trigger`, fire-and-forget (your model call is never touched). | You **control the agent's loop/code** (Agent SDK, your own loop, a container you build). |
+| **Proxy** | Point the agent's **model base-URL** at `…/api`; NodeDex relays each call to your real provider (your key, unchanged, no added latency, streaming intact) and captures the turn in passing. | The host lets you **redirect its model endpoint** and honors a custom base-URL. |
+| **Watcher** | A host-side process reads the agent's own conversation store (e.g. Hermes `state.db`) and POSTs each turn. Needs **zero cooperation** from the agent. | The agent is a **closed sandbox** you can't modify (e.g. Hermes — it ignores a custom base-URL and never fires shell hooks). Turn it on in TUI → Settings → `hermes capture`. |
+
+> ⚠ **The tee can't be deployed inside a sandbox you don't control** (no host filesystem, no
+> loop hook) — that's exactly why the proxy and watcher exist. For **Hermes specifically, only
+> the watcher works** (it ignores base-URLs and never invokes hooks).
+
+On a token-gated server (`NODEDEX_API_TOKEN` set), the tee and watcher must send the token
+(`NODEDEX_TOKEN` where the tee runs); the **proxy is exempt** (it carries your own provider
+key). Reflection can be paused globally with `~/.nodedex/reflect-pause`.
+
+## Putting both wires together — by setup
+
+| Setup | READ (connect) | CAPTURE (write) |
+|---|---|---|
+| Same machine, you control its config | **stdio** (app auto-spawns) | **tee** in its post-turn seam; or **proxy** if it honors a base-URL |
+| Same machine, closed agent (Hermes on host) | **HTTP** `/mcp` @ `127.0.0.1:<port>` | **watcher** (reads its `state.db`) — tee/proxy don't work for Hermes |
+| Docker, you control the loop/code | **HTTP** `/mcp` @ `host.docker.internal:<port>` (+ token) | **tee inside the container**, `NODEDEX_URL=http://host.docker.internal:<port>` |
+| Docker, honors model base-URL | **HTTP** `/mcp` @ `host.docker.internal` | **proxy**: model base-URL → `http://host.docker.internal:<port>/api` |
+| Docker, closed sandbox (store inside container) | **HTTP** `/mcp` @ `host.docker.internal` | **watcher** — mount the store out to the host (the genuinely hard case) |
 
 ## Env essentials (`~/.nodedex/.env`, loaded on every boot)
 
@@ -96,8 +123,12 @@ NODEDEX_API_TOKEN=<secret>              # sent as Authorization: Bearer <secret>
 ```
 
 ## TL;DR
+- **Two wires, set up separately:** READ (MCP — stdio or HTTP `/mcp`) and CAPTURE (tee /
+  proxy / watcher). Connecting MCP alone gives an **empty graph** — capture is the second wire.
 - **Same machine → stdio → the app auto-starts it → done.** This is how it's meant to feel.
 - **Sandboxed/remote → HTTP → you run the server, the app connects by URL** (mind the
   `localhost` vs `host.docker.internal` perspective).
+- **Capture by host:** loop you control → **tee**; honors a base-URL → **proxy**; closed
+  sandbox (Hermes) → **watcher**.
 - Either way, **a connected agent gets its tools automatically** — if it's probing by hand,
   the connection isn't set up.
