@@ -105,6 +105,43 @@ function writeReflectLog(entry: object) {
   } catch { /* non-critical */ }
 }
 
+/**
+ * Recover a drifted/missing `from_item_id` on Pass-3 `new_blocks` by type-matching each
+ * unlinked block to an as-yet-unclaimed Pass-2 item of the same type. Mirrors the
+ * save-loop fallback, but is hoisted ahead of the mandatory-item accounting guard so a
+ * single drifted id no longer discards the entire arc (every correctly-built block
+ * included). Mutates `newBlocks` in place; returns the count recovered.
+ *
+ * Only touches blocks whose `from_item_id` is absent or points at no real Pass-2 item —
+ * a valid id is never reassigned. Matching is greedy against unclaimed items, so the SET
+ * of from_item_ids ends up covering every accounted item even if an individual pairing
+ * is approximate (the block content was already built correctly by Pass 3; this only
+ * re-establishes the item↔block join used for accounting, relation-wiring, provenance).
+ */
+export function recoverDriftedFromItemIds(
+  newBlocks: Array<{ from_item_id?: unknown; is_a?: unknown; label?: unknown }>,
+  classified: Array<{ id: string; type: string }>,
+): number {
+  if (!Array.isArray(newBlocks) || newBlocks.length === 0) return 0;
+  const validIds = new Set(classified.map((i) => i.id));
+  const claimed = new Set<string>(
+    newBlocks
+      .map((b) => b.from_item_id)
+      .filter((id): id is string => typeof id === "string" && validIds.has(id)),
+  );
+  let recovered = 0;
+  for (const b of newBlocks) {
+    if (typeof b.from_item_id === "string" && validIds.has(b.from_item_id)) continue;
+    const match = classified.find((i) => i.type === b.is_a && !claimed.has(i.id));
+    if (match) {
+      b.from_item_id = match.id;
+      claimed.add(match.id);
+      recovered++;
+    }
+  }
+  return recovered;
+}
+
 function writeTurnLog(turnData: object) {
   try {
     fs.mkdirSync(REFLECT_TURNS_DIR, { recursive: true });
@@ -1493,6 +1530,20 @@ export async function runAutoReflect(
       const reason = rateLimited ? "rate limited" : "API failure";
       console.warn(`Auto-Reflect Pass 3: ${reason} — saving ${pass2.classified.length} classified items for re-queue`);
       return { ...empty, checkpoint: { resumeFrom: 'pass3', pass0: { sceneCard: _sceneCard, raw: _pass0Raw }, pass1Items: pass1?.items, pass2Classified: pass2.classified } };
+    }
+
+    // ── Recover a drifted/missing from_item_id BEFORE the accounting guards ──
+    // Pass 3 (the model) must echo each block's source item id as from_item_id, but
+    // Gemini occasionally omits or drifts it on ONE block in a large batched write.
+    // The save loop already has a type-match fallback for this (see ~"inferred
+    // from_item_id by type match" below), but it runs DOWNSTREAM of the mandatory-item
+    // guard — so a single unrecovered id there would discard the WHOLE analysis (every
+    // correctly-built block included) before the recovery ever runs. Hoist the same
+    // recovery here so the guard evaluates the recovered state: one drifted id no
+    // longer nukes the entire arc.
+    {
+      const _recovered = recoverDriftedFromItemIds(analysis.new_blocks as any[], pass2.classified as any[]);
+      if (_recovered > 0) console.log(`Auto-Reflect Pass 3: recovered ${_recovered} drifted/missing from_item_id(s) by pre-accounting type-match`);
     }
 
     // Truncation detection: if Pass 3 accounts for far fewer items than Pass 2 sent,
