@@ -1,16 +1,54 @@
+<div align="center">
+
 # NodeDex
 
-A persistent knowledge graph that gives **autonomous AI agents** memory across sessions.
+**the memory your agent lives in**
+
+Most agent memory remembers what your agent *said*. **NodeDex remembers what it _figured out_** — the approaches it tried, why it abandoned them, and the path it took to a decision. A local knowledge graph your agent **traverses**, session after session.
+
+[Quick start](#setup) · [How it works](#how-it-works--three-actors) · [Connect your agent](#connect-your-agent) · [Why NodeDex](#why-nodedex) · [Docs](docs/README.md)
+
+[![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![tests: 1171 passing](https://img.shields.io/badge/tests-1171%20passing-brightgreen.svg)](#evidence-it-works)
+[![status: early & solo-built](https://img.shields.io/badge/status-early%20%26%20solo--built-orange.svg)](#)
+[![MCP: stdio + HTTP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7b5cff.svg)](#connect-your-agent)
+
+<img src="docs/assets/nodedex-demo.png" alt="An agent walking its own memory: a dead-end, why it was abandoned, and the causal chain" width="880"/>
+
+<sub>An agent walking its own memory: a <b>dead-end</b> → <i>why</i> it was abandoned → the <b>causal chain</b>. The structure is the recall.</sub>
+
+</div>
+
+---
 
 Without NodeDex, every session starts blank. Decisions made last week, dead ends hit last month, reasoning chains built over hours — all gone on context reset. NodeDex stores them in a local SQLite graph the agent navigates deliberately, session after session.
 
 > **Status — early & solo-built.** NodeDex is developed by one person and is at an early stage.
-> The engine is tested end-to-end (1162 passing tests), but it hasn't been battle-tested across
+> The engine is tested end-to-end (1171 passing tests), but it hasn't been battle-tested across
 > many machines and agents yet — **expect rough edges, and please [open an issue](https://github.com/NodeDex/NodeDex-v0.1/issues)
 > when you hit one.** Feedback at this stage is hugely valuable.
 >
 > **On the roadmap:** a web UI (backend built, frontend in progress) · first-class agent
 > integrations · packaging (`npx`) · broader agent-host support.
+
+---
+
+## Why NodeDex
+
+Most "agent memory" (mem0, vector RAG) stores **facts and preferences** and retrieves the top-k at query time. Perfect for *"the user prefers TypeScript."* But it loses the thing that actually costs you re-work: the agent **re-derives** — it re-proposes an approach it tried and abandoned three sessions ago, or re-investigates a cause it already ruled out.
+
+NodeDex stores the **reasoning residue** instead, as a graph the agent *walks*:
+
+| | a fact store (mem0 / RAG) | NodeDex |
+|---|---|---|
+| Stores | facts, preferences | decisions + *why*, **dead-ends**, constraints, insights |
+| Links | shared-entity association | **causal** (`prompted_by → based_on → supersedes`) |
+| Recall | one-shot top-k retrieval | **traverse** root → decision → why → chain |
+| Failed approaches | — | **permanent dead-ends**, never repeated |
+
+A new agent inheriting a project doesn't get a ranked pile of facts — it **walks the investigation**, and learns what *not* to repeat.
+
+**It doesn't replace your fact store.** mem0 / RAG are good at recalling *what's true*; NodeDex captures the reasoning *around* it — what was tried, ruled out, and decided. They're complementary, and many setups run both.
 
 ---
 
@@ -348,7 +386,7 @@ decontextualized fragment.
 > skill, not the memory. Full write-up:
 > [docs/NODEDEX-MEMORY-MODEL.md](docs/NODEDEX-MEMORY-MODEL.md).
 
-Engine health: **1162/1162 server tests pass**, with extraction → graph → retrieval validated
+Engine health: **1171/1171 server tests pass**, with extraction → graph → retrieval validated
 end-to-end.
 
 ---
