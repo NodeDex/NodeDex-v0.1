@@ -1,11 +1,11 @@
 // onboarding.tsx — first-run setup wizard (static, no animation).
 //
 // Flow: welcome → consent → provider → {OpenRouter: key → model | Local: endpoint → model}
-//   → port → db → starting → connect.
+//   → port → db → bind → starting → connect.
 // Two model paths: OpenRouter (cloud, BYO key) or Local / self-hosted (Ollama/LM Studio/vLLM —
-// offline, no key, $0). Same-machine server only (localhost, no token); the Docker/remote
-// deployment branch was removed — reachable-on-network setup is a later concern, not first-run.
-// Onboarding sets up + starts the SERVER (OpenRouter key, model, picked port, named DB).
+// offline, no key, $0). After the DB, a bind-mode step asks WHERE the agent runs: this machine
+// (localhost, no token) or Docker/remote (0.0.0.0 + a generated token) — the connect screen then
+// shows the right URL (+ the token to hand the agent). Onboarding sets up + starts the SERVER.
 // Connecting an autonomous agent (e.g. Hermes) to the running /mcp endpoint + wiring
 // capture is the USER's own step — the final screen points at the GitHub README for the
 // format. Config + secrets go to ~/.nodedex/config.json and are injected into the server
@@ -20,7 +20,7 @@ import {
   RECOMMENDED_MODELS, isTrainsOnPrompts, listDbs, dbPathForName, scanLocalModels,
   type DbChoice, type LocalModel,
 } from "./config.js";
-import { launchServer } from "./servers.js";
+import { launchServer, genToken } from "./servers.js";
 import { probeServer, setBase } from "./api.js";
 
 const README_URL = "https://github.com/NodeDex/NodeDex-v0.1#connect-your-agent";
@@ -28,7 +28,7 @@ const README_URL = "https://github.com/NodeDex/NodeDex-v0.1#connect-your-agent";
 type Step =
   | "welcome" | "consent" | "provider" | "openrouter" | "model"
   | "localscan" | "localendpoint" | "localmodel"
-  | "port" | "db" | "starting" | "connect";
+  | "port" | "db" | "bind" | "starting" | "connect";
 
 /** Verify the OpenRouter key before saving — a typo fails here, not at first
  *  extraction. GET /key returns the key's usage/limit for a valid key. */
@@ -143,6 +143,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [newDbName, setNewDbName] = useState("");
   // connect step
   const [serverUrl, setServerUrl] = useState("");
+  // bind step (where will the agent run) + launch details for the connect screen
+  const [chosenDbPath, setChosenDbPath] = useState("");
+  const [bindSel, setBindSel] = useState(0);        // 0 = this machine, 1 = docker/remote
+  const [launchNetwork, setLaunchNetwork] = useState(false);
+  const [launchToken, setLaunchToken] = useState<string | undefined>(undefined);
 
   // Scan local LLM servers when entering the local-scan step (so the user picks a model, not a
   // URL). Re-runs when localScanNonce bumps ([r] rescan — e.g. after starting the server).
@@ -261,10 +266,18 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       dbPath = dbs[dbSel]!.path;
     }
     saveConfig({ dbPath, onboarded: true });
+    setChosenDbPath(dbPath);
+    setError(""); setBindSel(0); setStep("bind");
+  }, [dbSel, dbs, newDbName]);
+
+  // After the db, ask WHERE the agent runs → localhost (no token) or 0.0.0.0 + generated token.
+  const submitBind = useCallback(() => {
+    const network = bindSel === 1;
+    const token = network ? genToken() : undefined;
+    setLaunchNetwork(network); setLaunchToken(token);
     setError("");
-    // same-machine only: launch straight on localhost (no bindHost/token).
-    void finishSetup(chosenPort, dbPath);
-  }, [dbSel, dbs, newDbName, chosenPort, finishSetup]);
+    void finishSetup(chosenPort, chosenDbPath, network ? "0.0.0.0" : undefined, token);
+  }, [bindSel, chosenPort, chosenDbPath, finishSetup]);
 
   const typeInto = (setter: React.Dispatch<React.SetStateAction<string>>, input: string, k: any) => {
     if (k.backspace || k.delete) setter((s) => s.slice(0, -1));
@@ -323,6 +336,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       else if (k.escape) setStep("port");
       else if (k.return) submitDb();
       else if (dbSel >= dbs.length) typeInto(setNewDbName, input, k);
+    } else if (step === "bind") {
+      if (k.upArrow || k.downArrow) setBindSel((s) => (s === 0 ? 1 : 0));
+      else if (k.escape) setStep("db");
+      else if (k.return) submitBind();
     } else if (step === "connect") {
       if (k.return) onDone();
     }
@@ -508,12 +525,35 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     );
   }
 
+  if (step === "bind") {
+    return (
+      <Frame>
+        <Text color={theme.title} bold>Where will your agent run?</Text>
+        <Box marginTop={1} flexDirection="column">
+          <Row selected={bindSel === 0} label="This machine" width={20}
+            aside="localhost — simplest & private, no token" />
+          <Row selected={bindSel === 1} label="Docker / remote" width={20}
+            aside="0.0.0.0 + token — agent in a container or on another machine" />
+        </Box>
+        {error ? <Text color={theme.danger}>{`⚠ ${error}`}</Text> : null}
+        <Hint keys={[["↑↓", "move"], ["Enter", "start server"], ["Esc", "back"]]} />
+      </Frame>
+    );
+  }
+
   if (step === "connect") {
+    const mcpUrl = launchNetwork ? `http://host.docker.internal:${chosenPort}/mcp` : `${serverUrl}/mcp`;
     return (
       <Frame>
         <Text color={theme.title} bold>✓ Server running</Text>
         <Box marginTop={1} flexDirection="column" alignItems="center">
-          <Text color={theme.value}>{`${serverUrl}/mcp`}</Text>
+          <Text color={theme.value}>{mcpUrl}</Text>
+          {launchNetwork ? (
+            <Box marginTop={1} flexDirection="column" alignItems="center">
+              <Text color={theme.value}>{`Authorization: Bearer ${launchToken}`}</Text>
+              <Text color={theme.warn}>{`⚠ keep this token safe — your agent needs it; it won't be shown again.`}</Text>
+            </Box>
+          ) : null}
           <Box marginTop={1} flexDirection="column">
             <Text color={theme.value}>Point your agent (e.g. Hermes) at that URL, then turn on</Text>
             <Text color={theme.value}>capture so your turns flow into the graph — for Hermes,</Text>
