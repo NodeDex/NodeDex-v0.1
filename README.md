@@ -9,8 +9,8 @@ Without NodeDex, every session starts blank. Decisions made last week, dead ends
 > many machines and agents yet — **expect rough edges, and please [open an issue](https://github.com/NodeDex/NodeDex-v0.1/issues)
 > when you hit one.** Feedback at this stage is hugely valuable.
 >
-> **On the roadmap:** a web UI (backend built, frontend in progress) · first-class Claude Code
-> integration · packaging (`npx`) · broader agent-host support.
+> **On the roadmap:** a web UI (backend built, frontend in progress) · first-class agent
+> integrations · packaging (`npx`) · broader agent-host support.
 
 ---
 
@@ -92,7 +92,9 @@ The wizard walks you through it: **choose your model** — **OpenRouter** (cloud
 with a free-but-trains-on-prompts warning where it applies) or **Local / self-hosted** (Ollama /
 LM Studio / vLLM — offline, no key, $0; the wizard **scans and lists your local models** so you
 just pick one) → pick a free port → create or name a database → it starts the server on
-**`localhost`**. On first run it also downloads the bundled
+**`localhost`** and, on the final screen, shows you your **server URL** (and an **auth token**
+if you chose a network/Docker bind) — **save these; they're exactly what you hand your agent**
+in the next step. On first run it also downloads the bundled
 local *embedding* model (one-time) so semantic search works offline with no extra key. *(The
 extraction model needs to be reasonably capable — a ~30B+ local model gives the best quality.)*
 
@@ -115,11 +117,17 @@ config value, not a shell command, so it's the same on every OS. All config live
 NodeDex is built for **autonomous agents** (e.g. Hermes). The onboarding wizard sets up
 and starts the **server**; pointing your agent at it is the one remaining step.
 
+> **Use what the wizard showed you.** Its final screen prints your **server URL**
+> (`http://127.0.0.1:<port>/mcp`, where `<port>` is the port you picked) and — only if you
+> chose a Docker/network bind — an **auth token**. The examples below use the default `3001`
+> as a placeholder: **replace it with your port**, and pass the token only if your server is
+> gated. If you ever lose them, the TUI's **Servers** tab shows the URL + token again.
+
 ### Quickstart (Hermes) — two pastes, once
 
 **1. Connect** NodeDex to Hermes (in your terminal):
 ```bash
-hermes mcp add nodedex --url http://127.0.0.1:3001/mcp
+hermes mcp add nodedex --url http://127.0.0.1:3001/mcp   # 3001 → use the port you chose in the wizard
 ```
 …or add it to `%LOCALAPPDATA%\hermes\config.yaml` (`~/.hermes/config.yaml` on macOS/Linux):
 ```yaml
