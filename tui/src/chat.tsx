@@ -33,11 +33,15 @@ function visibleMessages(messages: Msg[], lineBudget: number, width: number): Ar
   const w = Math.max(20, width);
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    const cap = m.role === "user" ? 2 : 7;
-    const lines = Math.max(1, Math.min(cap, Math.ceil((m.text.length || 1) / w)));
-    if (used + lines > lineBudget && out.length > 0) break;
+    const room = lineBudget - used;
+    if (room < 1 && out.length > 0) break;
+    // The newest message may use the whole pane; older ones take only the leftover,
+    // so a long latest reply shows in full (up to the pane height) instead of a 7-line cap.
+    const full = Math.max(1, Math.ceil((m.text.length || 1) / w));
+    const lines = Math.min(full, Math.max(1, room));
     out.unshift({ ...m, lines });
     used += lines;
+    if (used >= lineBudget) break;
   }
   return out;
 }
