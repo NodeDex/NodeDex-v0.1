@@ -308,6 +308,14 @@ export async function fetchProjectBlocks(projectLabel: string): Promise<BlockRow
   return Array.isArray(r) ? r : [];
 }
 
+// Keyword recall — what the agent "queries + traverses" for a turn. /api/search
+// returns slim block rows (no embedding/content) ranked by keyword match.
+export async function searchMemory(q: string, limit = 6): Promise<BlockRow[]> {
+  if (!q.trim()) return [];
+  const r = await getJSON<BlockRow[]>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+  return Array.isArray(r) ? r : [];
+}
+
 export interface EdgeRef {
   type: string;
   target_id?: string;

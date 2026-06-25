@@ -11,19 +11,21 @@ import { ChainsTab } from "./chains.js";
 import { ReviewTab } from "./review.js";
 import { ServersTab } from "./serverstab.js";
 import { SettingsTab } from "./settings.js";
+import { ChatTab } from "./chat.js";
 import { fetchDashboard, fetchBalance, getBase, setBase, type Dashboard, type Balance } from "./api.js";
 import { killAllManaged, restoreSession, launchWatcher } from "./servers.js";
 import { loadHermesCapture } from "./config.js";
 import { theme } from "./theme.js";
 import { useTermSize } from "./hooks.js";
 
-const TABS = ["Live", "Browse", "Chains", "Review", "Servers", "Stats", "Settings"];
+const TABS = ["Live", "Browse", "Chains", "Review", "Servers", "Stats", "Settings", "Chat"];
 const BROWSE = 1; // Browse owns arrows/j/k/enter while focused
 const CHAINS = 2;
 const REVIEW = 3;
 const SERVERS = 4;
 const STATS = 5;
 const SETTINGS = 6;
+const CHAT = 7;
 const VERSION = "0.2.0";
 const FAST_MS = 2000;
 const SLOW_MS = 30000;
@@ -205,6 +207,8 @@ export function App() {
     body = <ReviewTab dash={dash} isActive={isRawModeSupported === true} onCapture={onCapture} />;
   } else if (active === STATS) {
     body = <StatsTab dash={dash} />;
+  } else if (active === CHAT) {
+    body = <ChatTab dash={dash} isActive={isRawModeSupported === true} onCapture={onCapture} />;
   } else {
     body = <SettingsTab dash={dash} balance={balance} isActive={isRawModeSupported === true} onCapture={onCapture} />;
   }
