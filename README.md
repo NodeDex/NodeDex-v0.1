@@ -309,6 +309,18 @@ entry in your agent host's MCP config (remove that on the host).
 | `npm run restart` | stop any running servers, then start fresh |
 | `npm test` | run the test suite |
 
+**Optional — a `nodedex` command on your PATH.** The server package ships a `nodedex`
+binary (alongside `nodedex-server`). Link it once — `cd server && npm link` — then run it
+from anywhere instead of the `npm` scripts above:
+
+| Command | What it does |
+|---|---|
+| `nodedex run` | start the compiled server (same as `npm start`; run `npm run build` first) |
+| `nodedex setup` | print how to launch the onboarding wizard |
+| `nodedex help` | usage |
+
+*(A clone-free `npx nodedex` is on the roadmap; today the `nodedex` command comes from `npm link`.)*
+
 **Console / setup** (`cd tui`):
 
 | Command | What it does |
