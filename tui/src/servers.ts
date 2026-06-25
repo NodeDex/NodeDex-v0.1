@@ -264,14 +264,25 @@ export async function restoreSession(): Promise<string | null> {
     if ((await probeServer(candidateUrl(m.port))).up) continue;   // something already there
     launchServer({ port: m.port, dbPath: m.dbPath, bindHost: m.bindHost, token: m.token });
   }
-  const target = s.connected?.url ?? (s.managed[0] ? candidateUrl(s.managed[0].port) : null);
-  if (!target) return null;
+  // Prefer the focused server — but ONLY if it's actually reachable. A stale `connected`
+  // pointer (e.g. onboarding just launched a server on a NEW port, leaving the old one dead)
+  // must NOT strand the TUI on a dead url, so fall back to a live MANAGED server and adopt it
+  // as the focus so the next restart is clean.
+  const connected = s.connected?.url ?? null;
+  if (!connected && s.managed.length === 0) return null;
   const deadline = Date.now() + 12000;
   while (Date.now() < deadline) {
-    if ((await probeServer(target)).up) return target;
+    if (connected && (await probeServer(connected)).up) return connected;
+    for (const m of s.managed) {
+      const url = candidateUrl(m.port);
+      if ((await probeServer(url)).up) {
+        if (url !== connected) saveLastServer({ url, port: m.port, dbPath: m.dbPath, managed: true });
+        return url;
+      }
+    }
     await new Promise((res) => setTimeout(res, 300));
   }
-  return target; // hand back even if slow; the poll shows its state
+  return connected ?? (s.managed[0] ? candidateUrl(s.managed[0].port) : null); // hand back; poll shows state
 }
 
 // ─── managed children (only these can be stopped/killed) ────────────────────
