@@ -23,10 +23,10 @@ const cmd = (args[0] || "").toLowerCase();
 const HELP = `nodedex — persistent knowledge-graph memory for AI agents
 
 Usage:
-  nodedex run     Start the MCP + API server
-  nodedex tui     Launch the console / onboarding wizard
-  nodedex setup   First-run setup (alias for \`nodedex tui\`)
-  nodedex help    Show this message
+  nodedex run       Start the MCP + API server
+  nodedex tui       Launch the operator console
+  nodedex onboard   Run the setup wizard (provider / model / port / db)
+  nodedex help      Show this message
 
 With no command, nodedex starts the server (same as \`nodedex run\`).`;
 
@@ -80,7 +80,7 @@ function startServer() {
 // Launch the TUI (operator console + first-run onboarding wizard). The TUI is a
 // sibling package run with tsx; it lives next to server/ in the repo, not in the
 // published server bundle — so this is a clone-only convenience.
-function launchTui() {
+function launchTui(extraArgs = []) {
   const tuiDir = resolve(here, "../../tui");
   if (!existsSync(resolve(tuiDir, "src/cli.tsx"))) {
     console.error(
@@ -88,7 +88,7 @@ function launchTui() {
     );
     process.exit(1);
   }
-  const child = spawn(process.execPath, ["--import", "tsx/esm", "src/cli.tsx"], {
+  const child = spawn(process.execPath, ["--import", "tsx/esm", "src/cli.tsx", ...extraArgs], {
     cwd: tuiDir,
     stdio: "inherit",
   });
@@ -107,8 +107,11 @@ switch (cmd) {
     break;
   case "tui":
   case "dashboard":
-  case "setup":
     launchTui();
+    break;
+  case "onboard":
+  case "setup":
+    launchTui(["--onboard"]);
     break;
   case "help":
   case "-h":
