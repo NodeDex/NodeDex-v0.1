@@ -316,7 +316,8 @@ from anywhere instead of the `npm` scripts above:
 | Command | What it does |
 |---|---|
 | `nodedex run` | start the compiled server (same as `npm start`; run `npm run build` first) |
-| `nodedex setup` | print how to launch the onboarding wizard |
+| `nodedex tui` | launch the console / onboarding wizard |
+| `nodedex setup` | first-run setup (alias for `nodedex tui`) |
 | `nodedex help` | usage |
 
 *(A clone-free `npx nodedex` is on the roadmap; today the `nodedex` command comes from `npm link`.)*
