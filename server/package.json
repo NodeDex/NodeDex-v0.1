@@ -17,6 +17,7 @@
   "type": "module",
   "main": "dist/server.js",
   "bin": {
+    "nodedex": "scripts/nodedex-entry.mjs",
     "nodedex-server": "scripts/nodedex-entry.mjs"
   },
   "files": [
