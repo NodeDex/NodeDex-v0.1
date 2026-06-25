@@ -11,9 +11,10 @@
  * Build first with `npm run build` in server/ (this loads ../dist/server.js).
  */
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, join } from "node:path";
+import { homedir } from "node:os";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -29,7 +30,41 @@ Usage:
 
 With no command, nodedex starts the server (same as \`nodedex run\`).`;
 
+// The server is env-only; the TUI normally injects provider/port/db env at launch
+// (tui/src/config.ts: providerEnv + launchServer). `nodedex run` does the SAME
+// translation here, from ~/.nodedex/config.json, so it works standalone — otherwise
+// the bare server defaults to keyless gemini. Keep this mapping in sync with
+// config.ts. Explicit env always wins (fill-if-unset).
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const OPENROUTER_DEFAULT_MODEL = "google/gemini-2.5-flash";
+
+function applyConfigEnv() {
+  let c;
+  try {
+    c = JSON.parse(readFileSync(join(homedir(), ".nodedex", "config.json"), "utf8"));
+  } catch {
+    return; // no config yet — the server falls back to its own .env / defaults
+  }
+  const set = (k, v) => {
+    if (v != null && v !== "" && !process.env[k]) process.env[k] = String(v);
+  };
+  if (c.provider === "openrouter" && c.openrouter_key) {
+    set("AI_PROVIDER", "openai-compatible");
+    set("OPENAI_BASE_URL", OPENROUTER_BASE_URL);
+    set("OPENAI_API_KEY", c.openrouter_key);
+    set("AI_MODEL", c.model || OPENROUTER_DEFAULT_MODEL);
+  } else if (c.provider === "local" && c.base_url && c.model) {
+    set("AI_PROVIDER", "openai-compatible");
+    set("OPENAI_BASE_URL", c.base_url);
+    set("OPENAI_API_KEY", "local");
+    set("AI_MODEL", c.model);
+  }
+  set("PORT", c.port);
+  set("WORKSPACE_DB_PATH", c.dbPath);
+}
+
 function startServer() {
+  applyConfigEnv();
   const distServer = resolve(here, "../dist/server.js");
   if (!existsSync(distServer)) {
     console.error(
