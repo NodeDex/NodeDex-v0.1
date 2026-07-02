@@ -231,12 +231,19 @@ usage protocol via the MCP `instructions` field — no prompt changes needed fro
 *passive* MCP server: it sees tool calls, **not** your agent's replies. Something has to push
 each finished turn to it. Pick the path that fits your agent:
 
-#### (a) Hermes / Owl — the state.db watcher
-Hermes **ignores a custom model base URL** (it hardcodes its OpenRouter endpoint) and registers but
-never invokes shell hooks, so the cooperative paths below don't work for it. Instead, NodeDex reads
-Hermes's own `state.db` — it writes every turn there. Turn it on in the **TUI → Settings → `hermes
-capture`** (Enter to start; the `sources` row is the privacy filter, default `tui`). Full
-walkthrough, including the MCP read side: **[docs/how-to/connect-hermes.md](docs/how-to/connect-hermes.md)**.
+#### (a) Watchers — zero-setup capture for hosts that persist their own turns
+The lowest-friction path: NodeDex reads the host's **own conversation log** (read-only, on your
+machine, forward-only — never past history) and needs nothing from the host itself. The
+onboarding wizard detects installed hosts and asks which to capture; toggles live in **TUI →
+Settings**.
+
+- **Claude Code** — tails your session transcripts (`~/.claude/projects/…jsonl`). Every session
+  becomes its own arc in the graph; the `projects` row scopes which projects are captured
+  (`*` = all).
+- **Hermes / Owl** — reads Hermes's `state.db` (Hermes **ignores a custom model base URL** and
+  never invokes its shell hooks, so this is the only path that works for it). The `sources` row
+  is the privacy filter (default `tui`). Full walkthrough:
+  **[docs/how-to/connect-hermes.md](docs/how-to/connect-hermes.md)**.
 
 #### (b) OpenAI-compatible host that honors a custom base URL — route the model through NodeDex
 The zero-deploy path for a host that *does* let you redirect its model endpoint (Hermes does not — use
@@ -262,7 +269,7 @@ token only on a Docker/network server). *Capturing* differs by host:
 
 | Capture path | Wire up | Credential |
 |---|---|---|
-| **Watcher** (Hermes/Owl) | nothing — it reads `state.db` locally | none |
+| **Watcher** (Claude Code, Hermes/Owl) | nothing — it reads the host's own log locally | none |
 | **Proxy** (base-URL hosts) | model base URL → `…/api` | your **provider key** (forwarded to your provider) |
 | **Tee** (loop you control) | `workspace_install_capture` snippet | `NODEDEX_TOKEN` only if the server is gated |
 
