@@ -72,6 +72,41 @@ describe("Block CRUD", () => {
     assert.ok(history.length > 0, "Should have history entry");
   });
 
+  test("updateBlock with null clears the field to SQL NULL, not the string 'null'", () => {
+    // Pins the Pass-5 cleanup contract: clearing chain_id means "standalone block"
+    // (NULL), never a literal 'null' — which reads back as a real chain id and
+    // groups every cleared block into one fake chain.
+    const b = db.createBlock({
+      label: "test_null_clear",
+      type: "note",
+      essence: "chain member being dissolved",
+      content: {},
+      ttl: "permanent",
+    });
+    db.updateBlock(b.id, { chain_id: "some-uuid-1234" });
+    assert.equal(db.getBlock(b.id)!.chain_id, "some-uuid-1234");
+
+    db.updateBlock(b.id, { chain_id: null });
+    const cleared = db.getBlock(b.id)!;
+    assert.equal(cleared.chain_id, null, "chain_id must be SQL NULL after clearing");
+    assert.notEqual(cleared.chain_id, "null", "must not be the literal string 'null'");
+  });
+
+  test("init repairs legacy string-'null' chain_id rows, leaves real chain ids alone", async () => {
+    // Rows written by the old stringifying updateBlock. The migration targets ONLY
+    // the corrupt literals — blk_/UUID/chain_ forms are the three legitimate
+    // chain_id families and must survive untouched.
+    const victim = db.createBlock({ label: "test_migrate_victim", type: "note", essence: "corrupt", content: {}, ttl: "permanent" });
+    const keeper = db.createBlock({ label: "test_migrate_keeper", type: "note", essence: "legit member", content: {}, ttl: "permanent" });
+    (db as any)["db"].prepare(`UPDATE blocks SET chain_id = 'null' WHERE id = ?`).run(victim.id);
+    (db as any)["db"].prepare(`UPDATE blocks SET chain_id = 'blk_realchain1' WHERE id = ?`).run(keeper.id);
+
+    await db.init(); // migrations are idempotent — re-running applies the repair
+
+    assert.equal(db.getBlock(victim.id)!.chain_id, null, "string 'null' repaired to NULL");
+    assert.equal(db.getBlock(keeper.id)!.chain_id, "blk_realchain1", "real chain id untouched");
+  });
+
   test("archiveBlock sets status to archived", () => {
     const b = db.createBlock({
       label: "test_archive",

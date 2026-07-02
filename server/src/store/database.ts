@@ -622,6 +622,12 @@ export class WorkspaceDB {
     try { this.db.exec(`ALTER TABLE blocks ADD COLUMN priority TEXT`); } catch { /* exists */ }
     try { this.db.exec(`ALTER TABLE blocks ADD COLUMN flow_role TEXT`); } catch { /* exists */ }
     try { this.db.exec(`ALTER TABLE blocks ADD COLUMN chain_id TEXT`); } catch { /* exists */ }
+    // Repair: updateBlock used to stringify null (typeof null === "object" →
+    // JSON.stringify(null) = 'null'), so Pass 5's chain_id cleanup wrote the literal
+    // string into standalone blocks — which then read as members of one fake "null"
+    // chain. Only the corrupt literals are repaired; blk_/UUID/chain_ values are the
+    // three legitimate chain_id families and must not be touched. Idempotent.
+    try { this.db.exec(`UPDATE blocks SET chain_id = NULL WHERE chain_id IN ('null', 'undefined')`); } catch { /* */ }
     try { this.db.exec(`ALTER TABLE blocks ADD COLUMN review_status TEXT`); } catch { /* exists */ }
     try { this.db.exec(`ALTER TABLE blocks ADD COLUMN review_reason TEXT`); } catch { /* exists */ }
     try { this.db.exec(`ALTER TABLE blocks ADD COLUMN last_reflected_at TEXT`); } catch { /* exists */ }
@@ -990,12 +996,18 @@ export class WorkspaceDB {
       if (!allowedFields.includes(field)) continue;
 
       const oldValue = block[field];
-      const serializedNew = typeof newValue === "object" ? JSON.stringify(newValue) : String(newValue);
+      // null/undefined must stay SQL NULL. `typeof null === "object"` made the old
+      // code JSON.stringify(null) → the literal string 'null' landed in nullable
+      // columns (hit: Pass 5's chain_id cleanup — 146 standalone blocks read as one
+      // fake "null" chain). Clearing a field means NULL, never the string.
+      const serializedNew = newValue == null
+        ? null
+        : typeof newValue === "object" ? JSON.stringify(newValue) : String(newValue);
 
       let dbValue = serializedNew;
       const isEncryptedField = isSensitive && (field === "essence" || field === "content");
 
-      if (isEncryptedField) dbValue = this.encryptText(serializedNew);
+      if (isEncryptedField && serializedNew !== null) dbValue = this.encryptText(serializedNew);
 
       const histOldValue = (field === "essence" || field === "content") && !isEncryptedField
         ? JSON.stringify({ snapshot: fullSnapshot, field_value: String(oldValue ?? "") })
