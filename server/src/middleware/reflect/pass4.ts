@@ -144,6 +144,27 @@ const PASS4_SCHEMA = {
   required: ["relations"],
 };
 
+// ── Batching (2026-07-03) ────────────────────────────────────────────────────
+// Pass 4 emits one relation-judgment per new block; its OUTPUT grows with the
+// new-block count while the input-side slice stays capped. The 200-block dogfood
+// run proved the failure mode: 157 new blocks in ONE call blew the model's output
+// cap → truncated twice → the whole pass failed → every cross-group conclusion
+// landed orphaned. The caller chunks new blocks to ≤ this size per call (mirroring
+// fill_2b's batching), which bounds each call's output and isolates failures —
+// one truncated batch loses only its own links.
+export const PASS4_DEFAULT_BATCH = 20;
+
+export function pass4BatchSize(): number {
+  const n = Number(process.env.NODEDEX_PASS4_BATCH);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : PASS4_DEFAULT_BATCH;
+}
+
+export function chunkForPass4<T>(items: T[], size = pass4BatchSize()): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 export async function callPass4LLM(
   provider: LLMProvider,
   newBlocks: Array<{ id: string; label: string; type: string; essence: string; uniqueFields?: string; chain?: string[] }>,

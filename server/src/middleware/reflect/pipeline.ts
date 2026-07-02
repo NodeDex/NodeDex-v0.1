@@ -19,7 +19,7 @@ import { callPass3Batched } from "./pass3-batch.js";
 import { applyArcEntityCanonicalNames } from "./arc-entity-resolve.js";
 import { recognizeRootsForArc, applyRootRemap, recognizerEnabled } from "./recognize-root.js";
 import { resolveArcEntitiesForItems, type BatchResolveEntry } from "./stage-d-resolve-graph.js";
-import { callPass4LLM } from "./pass4.js";
+import { callPass4LLM, chunkForPass4 } from "./pass4.js";
 import { buildPass4Slice, pass4SliceEnabled, pass4SliceMinGraph } from "./pass4-slice.js";
 import { v2LazyCaptureEnabled } from "./comprehend.js";
 import { callPass5LLM } from "./pass5.js";
@@ -2618,7 +2618,9 @@ export async function runAutoReflect(
       // cheaper than k retrievals). Default OFF; identical output contract.
       let freshContext: string;
       let _reflectedIds2: string[];
+      let p4SliceMode = false;
       if (pass4SliceEnabled() && freshBlocks.length >= pass4SliceMinGraph()) {
+        p4SliceMode = true;
         const newBlocksRaw = freshBlocks.filter((b) => savedLabelSet.has(b.label));
         const slice = buildPass4Slice(db, newBlocksRaw);
         freshContext = slice.context;
@@ -2683,13 +2685,50 @@ export async function runAutoReflect(
         });
 
       if (newBlocksForP4.length > 0) {
-        const p4Budget = getThinkingBudget(newBlocksForP4.length <= 5 ? 1024 : 2048);
+        // ── Batched emission (2026-07-03) ──────────────────────────────────────
+        // ONE call per ≤NODEDEX_PASS4_BATCH new blocks (default 20), mirroring
+        // fill_2b. The input-side slice was always capped; the OUTPUT grows with
+        // the new-block count — 157 new blocks in one call blew the model's output
+        // cap in the dogfood run (truncated twice → whole pass failed → every
+        // cross-group conclusion orphaned). Batching bounds each call's output and
+        // isolates failures: a truncated batch loses only its own links.
+        // Relations still accumulate and apply AFTER all batches (same contract as
+        // the old single call), so the rate-limit checkpoint semantics are
+        // unchanged: nothing is applied on a mid-run rate limit, and the retry
+        // re-runs the whole pass (createRelation is idempotent regardless).
+        const p4Batches = chunkForPass4(newBlocksForP4);
+        const p4Relations: Array<{ source_id: string; type: string; target_id: string; reason?: string }> = [];
+        let p4AnySuccess = false;
+        let p4RateLimited = false;
+        const p4ThinkingParts: string[] = [];
         const _t4 = Date.now();
-        const p4 = await callPass4LLM(provider, newBlocksForP4, freshContext, p4Budget, _sceneCard);
+        for (let bi = 0; bi < p4Batches.length; bi++) {
+          const batch = p4Batches[bi]!;
+          // Slice mode: rebuild the candidate slice for THIS batch only — tighter,
+          // more relevant context per call. Whole-graph mode: the context is the
+          // existing graph (independent of the new blocks), so reuse it.
+          let batchContext = freshContext;
+          if (p4SliceMode && p4Batches.length > 1) {
+            const raw = batch.map((nb) => freshBlockById.get(nb.id)).filter((b): b is NonNullable<typeof b> => !!b);
+            batchContext = buildPass4Slice(db, raw).context;
+          }
+          const p4Budget = getThinkingBudget(batch.length <= 5 ? 1024 : 2048);
+          const p4 = await callPass4LLM(provider, batch, batchContext, p4Budget, _sceneCard);
+          if (!_pass4Provider || p4.model) _pass4Provider = { model: p4.model, attempts: p4.attempts };
+          if (p4.rateLimited) { p4RateLimited = true; break; }
+          if (p4.thinking) p4ThinkingParts.push(p4.thinking);
+          if (p4.result) {
+            p4AnySuccess = true;
+            if (p4.result.relations?.length) p4Relations.push(...p4.result.relations);
+          }
+          // A non-rate-limit failure (e.g. truncation) skips ONLY this batch.
+          if (p4Batches.length > 1) {
+            console.log(`Auto-Reflect Pass 4: batch ${bi + 1}/${p4Batches.length} (${batch.length} block(s)) → ${p4.result ? `${p4.result.relations?.length ?? 0} relation(s)` : "failed, batch skipped"}`);
+          }
+        }
         _passWallMs.pass4 = Date.now() - _t4;
-        _pass4Provider = { model: p4.model, attempts: p4.attempts };
 
-        if (p4.rateLimited) {
+        if (p4RateLimited) {
           // Blocks are in DB as 'pending' — save checkpoint so Pass 4 retries with those blocks.
           // Do NOT activate pending blocks yet; they stay invisible until Pass 4 completes.
           console.log(`Auto-Reflect Pass 4: rate limited — ${p3PendingBlockIds.length} block(s) kept pending, re-queuing`);
@@ -2702,13 +2741,14 @@ export async function runAutoReflect(
           } };
         }
 
-        _pass4Thinking = p4.thinking;
-        _pass4Result = p4.result;
-        writeReflectLog({ pass1, pass2, pass3: analysis, pass4: p4.result });
-        if (p4.result?.relations?.length) {
+        const p4Merged = p4AnySuccess ? { relations: p4Relations } : null;
+        _pass4Thinking = p4ThinkingParts.join("\n");
+        _pass4Result = p4Merged;
+        writeReflectLog({ pass1, pass2, pass3: analysis, pass4: p4Merged });
+        if (p4Merged?.relations?.length) {
           const PASS4_ALLOWED = new Set(["extends", "supersedes", "superseded_by", "prompted_by", "based_on", "resolves"]);
           let linked = 0;
-          for (const rel of p4.result.relations) {
+          for (const rel of p4Merged.relations) {
             if (!rel?.source_id || !rel?.type || !rel?.target_id) continue;
             if (!PASS4_ALLOWED.has(rel.type)) continue;
             const src = freshBlocks.find((b) => b.label === rel.source_id || b.id === rel.source_id);
