@@ -16,8 +16,7 @@ import { Logo } from "./components.js";
 import { theme } from "./theme.js";
 import {
   saveConfig, DEFAULT_PORT, DEFAULT_LOCAL_BASE_URL,
-  OPENROUTER_BASE_URL,
-  RECOMMENDED_MODELS, isTrainsOnPrompts, listDbs, dbPathForName, scanLocalModels,
+  RECOMMENDED_MODELS, isTrainsOnPrompts, validateOpenRouterKey, listDbs, dbPathForName, scanLocalModels,
   scanCaptureHosts, setHermesCapture, setClaudeCapture,
   type DbChoice, type LocalModel, type CaptureHostInfo,
 } from "./config.js";
@@ -31,22 +30,6 @@ type Step =
   | "welcome" | "consent" | "provider" | "openrouter" | "model"
   | "localscan" | "localendpoint" | "localmodel"
   | "port" | "db" | "capture" | "bind" | "starting" | "connect";
-
-/** Verify the OpenRouter key before saving — a typo fails here, not at first
- *  extraction. GET /key returns the key's usage/limit for a valid key. */
-async function validateOpenRouter(key: string): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const r = await fetch(`${OPENROUTER_BASE_URL}/key`, {
-      headers: { Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (r.ok) return { ok: true };
-    if (r.status === 401) return { ok: false, error: "Key rejected (401) — check it and try again." };
-    return { ok: false, error: `OpenRouter returned ${r.status}.` };
-  } catch (e: any) {
-    return { ok: false, error: `Couldn't reach OpenRouter (${e?.message ?? e}).` };
-  }
-}
 
 // Show a secret's prefix (confirms shape) but mask the tail.
 function maskSecret(k: string): string {
@@ -255,7 +238,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       return;
     }
     setBusy(true); setError(""); setStatus("Verifying key…");
-    const v = await validateOpenRouter(k);
+    const v = await validateOpenRouterKey(k);
     if (!v.ok) { setBusy(false); setStatus(""); setError(v.error || "Invalid key."); return; }
     saveConfig({ provider: "openrouter", openrouter_key: k });
     setBusy(false); setStatus(""); setModelSel(0); setStep("model");

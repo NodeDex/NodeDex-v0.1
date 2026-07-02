@@ -16,7 +16,10 @@ import {
 } from "./api.js";
 import {
   loadHermesCapture, setHermesCapture, loadClaudeCapture, setClaudeCapture,
-  parseSources, loadConfig,
+  parseSources, loadConfig, saveConfig,
+  RECOMMENDED_MODELS, isTrainsOnPrompts, validateOpenRouterKey, scanLocalModels,
+  DEFAULT_LOCAL_BASE_URL,
+  type Provider, type LocalModel,
 } from "./config.js";
 import {
   launchWatcher, stopWatcher, isWatcherRunning,
@@ -27,10 +30,14 @@ import { ReviewTab } from "./review.js";
 
 type RowId =
   | "server" | "db"
-  | "reflect" | "model" | "fallback" | "autoturns" | "floor" | "cap"
+  | "reflect" | "provider" | "model" | "fallback" | "autoturns" | "floor" | "cap"
   | "hermes" | "sources" | "claude" | "ccprojects"
   | "review";
-const ROWS: RowId[] = ["server", "db", "reflect", "model", "fallback", "autoturns", "floor", "cap", "hermes", "sources", "claude", "ccprojects", "review"];
+const ROWS: RowId[] = ["server", "db", "reflect", "provider", "model", "fallback", "autoturns", "floor", "cap", "hermes", "sources", "claude", "ccprojects", "review"];
+
+// Provider-overlay steps: pick cloud/local → OpenRouter (key if none saved → model
+// list) | Local (auto-scan Ollama/LM Studio/vLLM → pick, or manual url+model).
+type PStep = "pick" | "key" | "model" | "scan" | "lurl" | "lmodel";
 
 export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
   dash: Dashboard | null;
@@ -46,12 +53,22 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
   const [notice, setNotice] = useState("");
   const [hc, setHc] = useState(loadHermesCapture());
   const [cc, setCc] = useState(loadClaudeCapture());
-  const [overlay, setOverlay] = useState<"none" | "db" | "servers" | "review">("none");
+  const [overlay, setOverlay] = useState<"none" | "db" | "servers" | "review" | "provider">("none");
   const [dbs, setDbs] = useState(listDbs());
   const [dbSel, setDbSel] = useState(0);
   const [servers, setServers] = useState<ServerEntry[]>([]);
   const [srvSel, setSrvSel] = useState(0);
   const [busy, setBusy] = useState(false);
+  // provider overlay state (pSel is reused as the cursor of whichever step's list is showing)
+  const [pStep, setPStep] = useState<PStep>("pick");
+  const [pSel, setPSel] = useState(0);
+  const [pModels, setPModels] = useState<LocalModel[]>([]);
+  const [pScanning, setPScanning] = useState(false);
+  const [pScanNonce, setPScanNonce] = useState(0);
+  const [pBuf, setPBuf] = useState("");   // key / custom model / url / manual model input
+  const [pUrl, setPUrl] = useState("");   // manual local endpoint carried from lurl → lmodel
+  const [pBusy, setPBusy] = useState(false);
+  const [pErr, setPErr] = useState("");
 
   const load = useCallback(() => { void fetchConfig().then(setCfg); }, []);
   useEffect(() => { load(); }, [load]);
@@ -61,6 +78,19 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
     const id = setTimeout(() => setNotice(""), 4000);
     return () => clearTimeout(id);
   }, [notice]);
+
+  // Auto-scan local model servers when the provider overlay enters the scan step
+  // (same probe onboarding uses); [r] bumps the nonce to rescan.
+  useEffect(() => {
+    if (overlay !== "provider" || pStep !== "scan") return;
+    let cancelled = false;
+    setPScanning(true); setPErr("");
+    void scanLocalModels().then((models) => {
+      if (cancelled) return;
+      setPModels(models); setPSel(0); setPScanning(false);
+    });
+    return () => { cancelled = true; };
+  }, [overlay, pStep, pScanNonce]);
 
   const reflect = dash?.reflect;
   const paused = !!reflect?.paused;
@@ -84,6 +114,12 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
     }
     if (id === "db") { setDbs(listDbs()); setDbSel(0); setOverlay("db"); return; }
     if (id === "review") { setOverlay("review"); return; }
+    if (id === "provider") {
+      setPSel(loadConfig().provider === "local" ? 1 : 0);
+      setPStep("pick"); setPBuf(""); setPUrl(""); setPErr(""); setPModels([]);
+      setOverlay("provider");
+      return;
+    }
     if (id === "reflect") {
       const next = !paused;
       setNotice(next ? "pausing capture…" : "resuming capture…");
@@ -111,11 +147,29 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
     setEditing(id);
   }, [paused, cfg, floor, cap, hc, cc]);
 
+  // Persist the provider choice to ~/.nodedex/config.json (what launchServer injects).
+  // A model change WITHIN the same lane (same provider + endpoint) also applies LIVE via
+  // admin config; a lane switch only takes full effect when the server relaunches
+  // (switch db or restart) — the notice says which happened.
+  const applyProvider = useCallback((prov: Provider, baseUrl: string | undefined, model: string) => {
+    const prev = loadConfig();
+    saveConfig(prov === "local" ? { provider: "local", base_url: baseUrl, model } : { provider: "openrouter", model });
+    setOverlay("none"); setPBuf(""); setPErr("");
+    const sameLane = prev.provider === prov && (prov === "openrouter" || prev.base_url === baseUrl);
+    if (sameLane) {
+      void save({ model }, `model → ${model}`);
+    } else {
+      setNotice(`provider saved: ${prov === "local" ? `local (${baseUrl})` : "openrouter"} · ${model} — applies when the server relaunches (switch db or restart)`);
+    }
+  }, [save]);
+
   const submit = useCallback(async () => {
     const v = buf.trim();
     const id = editing;
     setEditing(null); setBuf("");
-    if (id === "model")    return save({ model: v }, v ? `model → ${v}` : "model cleared");
+    // Also persist to config.json — the launch env (providerEnv) wins over ~/.nodedex/.env
+    // on relaunch, so a live-only change would silently revert at the next launch.
+    if (id === "model")    { saveConfig({ model: v || undefined }); return save({ model: v }, v ? `model → ${v}` : "model cleared"); }
     if (id === "fallback") return save({ fallback_model: v }, v ? `fallback → ${v}` : "fallback cleared");
     if (id === "autoturns") { if (v && (!Number.isInteger(Number(v)) || Number(v) < 0)) { setNotice("auto-turns must be a whole number ≥ 0"); return; } return save({ arc_auto_turns: v }, v && Number(v) > 0 ? `auto-extract every ${v} turns` : "auto-extract off"); }
     if (id === "sources")  { const arr = parseSources(v); setHermesCapture({ sources: arr }); setHc(loadHermesCapture()); setNotice(`hermes sources → ${arr.join(", ")}`); return; }
@@ -126,6 +180,88 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
 
   useInput((input, key) => {
     if (overlay === "review") { if (key.escape) setOverlay("none"); return; } // ReviewTab owns the rest
+    if (overlay === "provider") {
+      if (pBusy) return;
+      const typeInto = () => {
+        if (key.backspace || key.delete) setPBuf((b) => b.slice(0, -1));
+        else if (input && !key.ctrl && !key.meta && !key.tab) setPBuf((b) => b + input.replace(/[\r\n]/g, ""));
+      };
+      if (key.escape) {
+        setPErr("");
+        if (pStep === "key" || pStep === "model" || pStep === "scan") { setPBuf(""); setPStep("pick"); }
+        else if (pStep === "lurl") { setPBuf(""); setPStep("scan"); }
+        else if (pStep === "lmodel") { setPBuf(pUrl); setPStep("lurl"); }
+        else setOverlay("none");
+        return;
+      }
+      if (pStep === "pick") {
+        if (key.upArrow || key.downArrow) setPSel((s) => (s === 0 ? 1 : 0));
+        else if (key.return) {
+          setPErr(""); setPBuf("");
+          if (pSel === 1) { setPStep("scan"); }
+          else if (loadConfig().openrouter_key) {
+            const cur = RECOMMENDED_MODELS.findIndex((m) => m.id === loadConfig().model);
+            setPSel(cur >= 0 ? cur : 0); setPStep("model");
+          } else setPStep("key");
+        }
+        return;
+      }
+      if (pStep === "key") {
+        if (key.return) {
+          const k = pBuf.trim();
+          if (!/^sk-or-/.test(k) || k.length < 40) { setPErr("that doesn't look like a full OpenRouter key (sk-or-…) — re-paste the whole key"); return; }
+          setPBusy(true); setPErr("");
+          void validateOpenRouterKey(k).then((v) => {
+            setPBusy(false);
+            if (!v.ok) { setPErr(v.error ?? "invalid key"); return; }
+            saveConfig({ openrouter_key: k });
+            setPBuf(""); setPSel(0); setPStep("model");
+          });
+        } else typeInto();
+        return;
+      }
+      if (pStep === "model") {
+        const total = RECOMMENDED_MODELS.length + 1; // + custom row
+        if (key.upArrow) setPSel((s) => (s - 1 + total) % total);
+        else if (key.downArrow) setPSel((s) => (s + 1) % total);
+        else if (key.return) {
+          const m = pSel >= RECOMMENDED_MODELS.length ? pBuf.trim() : RECOMMENDED_MODELS[pSel]!.id;
+          if (!m) { setPErr("pick a model or type a custom id"); return; }
+          applyProvider("openrouter", undefined, m);
+        } else if (pSel >= RECOMMENDED_MODELS.length) typeInto();
+        return;
+      }
+      if (pStep === "scan") {
+        if (pScanning) return;
+        const total = pModels.length + 1; // + "enter manually" row
+        if (key.upArrow) setPSel((s) => (s - 1 + total) % total);
+        else if (key.downArrow) setPSel((s) => (s + 1) % total);
+        else if (input === "r") setPScanNonce((n) => n + 1);
+        else if (key.return) {
+          setPErr("");
+          if (pSel >= pModels.length) { setPBuf(loadConfig().base_url || DEFAULT_LOCAL_BASE_URL); setPStep("lurl"); return; }
+          const pick = pModels[pSel]!;
+          applyProvider("local", pick.baseUrl, pick.model);
+        }
+        return;
+      }
+      if (pStep === "lurl") {
+        if (key.return) {
+          const url = pBuf.trim();
+          if (!url) { setPErr("enter the endpoint URL (e.g. http://localhost:11434/v1)"); return; }
+          const c = loadConfig();
+          setPUrl(url); setPBuf(c.provider === "local" && c.model ? c.model : ""); setPErr(""); setPStep("lmodel");
+        } else typeInto();
+        return;
+      }
+      // lmodel
+      if (key.return) {
+        const m = pBuf.trim();
+        if (!m) { setPErr("enter the model id your server serves (e.g. qwen3:30b)"); return; }
+        applyProvider("local", pUrl, m);
+      } else typeInto();
+      return;
+    }
     if (overlay === "db") {
       if (key.escape) { setOverlay("none"); return; }
       if (key.upArrow) { setDbSel((s) => Math.max(0, s - 1)); return; }
@@ -184,7 +320,10 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
   }
 
   const selId = ROWS[Math.min(sel, ROWS.length - 1)];
-  const savedProvider = loadConfig().provider;
+  const cfgFile = loadConfig();
+  const providerValue =
+    cfgFile.provider === "local" ? `local · ${trunc(cfgFile.base_url ?? "?", 36)}` :
+    cfgFile.provider === "openrouter" ? "openrouter (cloud)" : "not set";
   const editLabel =
     editing === "model" ? "model id:" :
     editing === "fallback" ? "fallback model id (blank = none):" :
@@ -209,8 +348,9 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
         <R id="db" label="database" value={dash?.session?.db ?? "—"} hint="enter = switch db (relaunches)" />
       </Section>
 
-      <Section title="pipeline" right={<Text color={theme.dim}>{savedProvider ? `provider: ${savedProvider}` : ""}</Text>}>
+      <Section title="pipeline">
         <R id="reflect" label="capture" value={paused ? `${glyph.paused} paused` : reflect?.spend_paused ? `${glyph.paused} spend paused` : `${glyph.up} running`} color={paused || reflect?.spend_paused ? theme.warn : theme.ok} hint="enter = pause/resume" />
+        <R id="provider" label="provider" value={providerValue} hint="enter = switch cloud/local + pick model" />
         <R id="model" label="model" value={cfg?.model || "(default)"} hint="enter = edit" />
         <R id="fallback" label="fallback" value={cfg?.fallback_model || "(none)"} hint="enter = edit" />
         <R id="autoturns" label="auto-turns" value={cfg?.arc_auto_turns && Number(cfg.arc_auto_turns) > 0 ? `every ${cfg.arc_auto_turns}` : "off"} hint="enter = edit" />
@@ -229,6 +369,85 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
         <R id="review" label="queue" value={unreviewed > 0 ? `${glyph.flag} ${unreviewed} unreviewed` : "clear"} color={unreviewed > 0 ? theme.warn : theme.dim} hint="enter = open review" />
       </Section>
 
+      {overlay === "provider" ? (
+        <Panel title="extraction provider" hot>
+          {pStep === "pick" ? (
+            <>
+              <Row selected={pSel === 0}>
+                <Box width={12}><Text bold={pSel === 0} color={pSel === 0 ? theme.value : theme.label}>OpenRouter</Text></Box>
+                <Text color={theme.dim}>cloud — your API key</Text>
+              </Row>
+              <Row selected={pSel === 1}>
+                <Box width={12}><Text bold={pSel === 1} color={pSel === 1 ? theme.value : theme.label}>Local</Text></Box>
+                <Text color={theme.dim}>Ollama / LM Studio / vLLM — auto-scanned, no key, $0</Text>
+              </Row>
+              <Text color={theme.dim}>↑↓ move · enter choose · esc close</Text>
+            </>
+          ) : null}
+          {pStep === "key" ? (
+            <>
+              <Text color={theme.dim}>Paste your OpenRouter key (openrouter.ai/keys)</Text>
+              <Box>
+                <Text color={theme.warn}>{"key: "}</Text>
+                <Text color={theme.value}>{pBuf ? pBuf.slice(0, 8) + "•".repeat(Math.min(Math.max(pBuf.length - 8, 0), 28)) : ""}</Text>
+                <Text color={theme.accent}>▏</Text>
+              </Box>
+              {pBusy ? <Text color={theme.dim}>verifying key…</Text> : <Text color={theme.dim}>enter verify · esc back</Text>}
+            </>
+          ) : null}
+          {pStep === "model" ? (
+            <>
+              {RECOMMENDED_MODELS.map((m, i) => (
+                <Row key={m.id} selected={i === pSel}>
+                  <Box width={22}><Text bold={i === pSel} color={i === pSel ? theme.value : theme.label}>{m.label}</Text></Box>
+                  <Text color={m.free ? theme.danger : theme.dim}>{m.note}</Text>
+                </Row>
+              ))}
+              <Row selected={pSel >= RECOMMENDED_MODELS.length}>
+                <Box width={22}><Text bold={pSel >= RECOMMENDED_MODELS.length} color={pSel >= RECOMMENDED_MODELS.length ? theme.value : theme.label}>Custom…</Text></Box>
+                {pSel >= RECOMMENDED_MODELS.length
+                  ? <Text color={pBuf ? theme.value : theme.dim}>{pBuf || "type any OpenRouter model id"}<Text color={theme.accent}>▏</Text></Text>
+                  : <Text color={theme.dim}>any OpenRouter model id</Text>}
+              </Row>
+              {(pSel >= RECOMMENDED_MODELS.length ? isTrainsOnPrompts(pBuf) : !!RECOMMENDED_MODELS[pSel]?.free)
+                ? <Text color={theme.danger}>⚠ free — trains on your prompts (inputs may improve the model)</Text>
+                : null}
+              <Text color={theme.dim}>↑↓ move · enter apply · esc back</Text>
+            </>
+          ) : null}
+          {pStep === "scan" ? (
+            pScanning ? <Text color={theme.dim}>scanning Ollama / LM Studio / vLLM…</Text> : (
+              <>
+                {pModels.length === 0
+                  ? <Text color={theme.dim}>no local server found — start it (e.g. `ollama serve`) and press [r], or enter manually</Text>
+                  : pModels.map((m, i) => (
+                      <Row key={`${m.baseUrl}:${m.model}`} selected={i === pSel}>
+                        <Box width={30}><Text bold={i === pSel} color={i === pSel ? theme.value : theme.label}>{trunc(m.model, 29)}</Text></Box>
+                        <Text color={theme.dim}>{m.baseUrl.replace(/^https?:\/\//, "")}</Text>
+                      </Row>
+                    ))}
+                <Row selected={pSel >= pModels.length}>
+                  <Box width={30}><Text bold={pSel >= pModels.length} color={pSel >= pModels.length ? theme.value : theme.label}>⌨ Enter manually</Text></Box>
+                  <Text color={theme.dim}>type a URL + model id</Text>
+                </Row>
+                <Text color={theme.dim}>↑↓ move · enter apply · r rescan · esc back</Text>
+              </>
+            )
+          ) : null}
+          {pStep === "lurl" || pStep === "lmodel" ? (
+            <>
+              <Text color={theme.dim}>{pStep === "lurl" ? "your OpenAI-compatible endpoint (Ollama, LM Studio, vLLM)" : "the model id your server serves"}</Text>
+              <Box>
+                <Text color={theme.warn}>{pStep === "lurl" ? "url: " : "model: "}</Text>
+                <Text color={pBuf ? theme.value : theme.dim}>{pBuf || (pStep === "lurl" ? DEFAULT_LOCAL_BASE_URL : "qwen3:30b")}</Text>
+                <Text color={theme.accent}>▏</Text>
+              </Box>
+              <Text color={theme.dim}>{pStep === "lurl" ? "enter continue · esc back" : "enter apply · esc back"}</Text>
+            </>
+          ) : null}
+          {pErr ? <Text color={theme.danger}>{`⚠ ${pErr}`}</Text> : null}
+        </Panel>
+      ) : null}
       {overlay === "db" ? (
         <Panel title="switch database" hot>
           {dbs.map((d, i) => (

@@ -45,6 +45,23 @@ export function isTrainsOnPrompts(model: string): boolean {
   return TRAINS_ON_PROMPTS.some((needle) => m.includes(needle));
 }
 
+/** Verify an OpenRouter key before saving — a typo fails here, not at first
+ *  extraction. GET /key returns the key's usage/limit for a valid key.
+ *  Shared by onboarding and the Health provider picker. */
+export async function validateOpenRouterKey(key: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const r = await fetch(`${OPENROUTER_BASE_URL}/key`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (r.ok) return { ok: true };
+    if (r.status === 401) return { ok: false, error: "Key rejected (401) — check it and try again." };
+    return { ok: false, error: `OpenRouter returned ${r.status}.` };
+  } catch (e: any) {
+    return { ok: false, error: `Couldn't reach OpenRouter (${e?.message ?? e}).` };
+  }
+}
+
 export type Provider = "openrouter" | "local";
 
 // Hermes/Owl capture (the state.db watcher). Hermes ignores model-proxy + shell-hook capture, so
