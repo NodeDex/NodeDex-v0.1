@@ -308,11 +308,22 @@ export async function fetchProjectBlocks(projectLabel: string): Promise<BlockRow
   return Array.isArray(r) ? r : [];
 }
 
-// Keyword recall — what the agent "queries + traverses" for a turn. /api/search
-// returns slim block rows (no embedding/content) ranked by keyword match.
-export async function searchMemory(q: string, limit = 6): Promise<BlockRow[]> {
+// Search — the same three-signal /api/search agents use (semantic + keyword +
+// concept, ranked by match quality only). Slim rows plus per-hit context:
+// root_label/root_essence (which world is this from), superseded_by (stale →
+// current truth), weak_match (nearest-neighbor shrug — nothing really matched).
+export interface SearchRow extends BlockRow {
+  score?: number;
+  match_types?: string[];
+  root_label?: string;
+  root_essence?: string;
+  superseded_by?: string;
+  weak_match?: boolean;
+}
+
+export async function searchMemory(q: string, limit = 6): Promise<SearchRow[]> {
   if (!q.trim()) return [];
-  const r = await getJSON<BlockRow[]>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+  const r = await getJSON<SearchRow[]>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
   return Array.isArray(r) ? r : [];
 }
 

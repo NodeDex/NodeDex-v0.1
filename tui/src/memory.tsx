@@ -6,7 +6,8 @@
 // Navigation model (same keys everywhere):
 //   ←/→ = pane focus · ↑/↓ = move in the focused pane · enter = open/jump
 //   esc = up one level (blocks→roots · jump-trail back · close search)
-//   /   = search overlay (keyword recall — the same /api/search agents use)
+//   /   = search overlay (the same three-signal /api/search agents use; hits carry
+//         root context + superseded/weak-match flags)
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { Section, Row, Keys, Panel, windowSlice } from "./components.js";
@@ -14,7 +15,7 @@ import { theme, typeColorOf, typeGlyphOf, trunc, relTime } from "./theme.js";
 import { useTermSize } from "./hooks.js";
 import {
   fetchTree, fetchProjectBlocks, fetchBlockDetail, fetchChainMembers, searchMemory,
-  type TreeRoot, type BlockRow, type BlockDetail, type ChainMember, type EdgeRef,
+  type TreeRoot, type BlockRow, type SearchRow, type BlockDetail, type ChainMember, type EdgeRef,
 } from "./api.js";
 
 type LeftLevel = "roots" | "blocks";
@@ -44,7 +45,7 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
   // ── search overlay ─────────────────────────────────────────────────────────
   const [searching, setSearching] = useState(false);
   const [q, setQ] = useState("");
-  const [results, setResults] = useState<Array<BlockRow & { superseded_by?: string }>>([]);
+  const [results, setResults] = useState<SearchRow[]>([]);
   const [resSel, setResSel] = useState(0);
 
   useEffect(() => {
@@ -78,7 +79,7 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
   // Debounced search.
   useEffect(() => {
     if (!searching) return;
-    const t = setTimeout(() => { void searchMemory(q, 8).then((r) => { setResults(r as any); setResSel(0); }); }, 150);
+    const t = setTimeout(() => { void searchMemory(q, 8).then((r) => { setResults(r); setResSel(0); }); }, 150);
     return () => clearTimeout(t);
   }, [q, searching]);
 
@@ -259,14 +260,21 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
             <Text color={theme.value}>{q}</Text>
             <Text color={theme.accent}>▏</Text>
           </Box>
+          {results.length > 0 && results[0]!.weak_match ? (
+            <Text color={theme.warn}>⚠ weak matches only — memory likely has nothing on this; showing the nearest blocks</Text>
+          ) : null}
           {results.map((r, i) => (
             <Row key={r.id} selected={i === resSel}>
               <Text color={typeColorOf(r.type)}>{`${typeGlyphOf(r.type)} `}</Text>
-              <Text color={i === resSel ? theme.value : theme.label}>{trunc(r.label, 50)}</Text>
-              {(r as any).superseded_by ? <Text color={theme.warn}>{"  ⚠ superseded"}</Text> : null}
-              <Text color={theme.dim}>{`  ${trunc(r.essence, Math.max(10, cols - 70))}`}</Text>
+              <Text color={i === resSel ? theme.value : theme.label}>{trunc(r.label, 44)}</Text>
+              {r.superseded_by ? <Text color={theme.warn}>{"  ⚠ superseded"}</Text> : null}
+              {r.root_label ? <Text color={theme.dim}>{`  ⌂ ${trunc(r.root_label, 22)}`}</Text> : null}
+              <Text color={theme.dim}>{`  ${trunc(r.essence, Math.max(10, cols - 96))}`}</Text>
             </Row>
           ))}
+          {results.length > 0 && results[resSel]?.root_essence ? (
+            <Text color={theme.dim}>{`  ⌂ ${trunc(results[resSel]!.root_label ?? "", 24)} — ${trunc(results[resSel]!.root_essence!, Math.max(20, cols - 40))}`}</Text>
+          ) : null}
           {q && results.length === 0 ? <Text color={theme.dim}>no hits</Text> : null}
         </Panel>
       ) : (
