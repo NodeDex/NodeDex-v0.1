@@ -1,9 +1,12 @@
-// components.tsx — the chrome: gradient wordmark, tab bar, titled panels, footer.
+// components.tsx — the chrome, v3: quiet slate shell, one frost accent.
+// Minimal primitives: a one-line Brand, a text ViewBar (no boxes), caps Section
+// headers instead of bordered panels, a single bottom StatusLine, and a Keys
+// hint. Panel (bordered) survives for the few overlays that want a frame.
 import React from "react";
 import { Box, Text } from "ink";
 import Gradient from "ink-gradient";
-import { theme, glyph } from "./theme.js";
-import type { BudgetVerdict } from "./api.js";
+import { theme, glyph, fmtNum, fmtMoney } from "./theme.js";
+import type { Dashboard, Balance } from "./api.js";
 
 const WORDMARK = [
   " ███╗   ██╗ ██████╗ ██████╗ ███████╗██████╗ ███████╗██╗  ██╗",
@@ -16,12 +19,10 @@ const WORDMARK = [
 
 const TAGLINE = "the memory your agent lives in";
 
-// Cool palette for the wordmark: teal→sky→indigo. One place to retune the brand
-// color. (The node-graph mark is deferred — to be added back later.)
+// Wordmark gradient — already the cool family (teal→sky→indigo).
 const MARK_COLORS = ["#5eead4", "#38bdf8", "#818cf8"];
 
-// The logo: wordmark + tagline. Reused by the Header (static) and the onboarding
-// intro (static — no animation).
+// Full logo — onboarding's welcome only. The running app uses <Brand/>.
 export function Logo() {
   return (
     <Box flexDirection="column" alignItems="center">
@@ -33,54 +34,65 @@ export function Logo() {
   );
 }
 
-// The full logo eats ~14 rows; below 30 terminal rows it would push panels
-// off-screen (and trigger ink repaint artifacts), so it collapses to one line.
-export function Header({ compact }: { compact?: boolean }) {
-  if (compact) {
-    return (
-      <Box paddingX={1}>
-        <Gradient colors={MARK_COLORS}>
-          <Text bold>NODEDEX</Text>
-        </Gradient>
-        <Text color={theme.dim} italic>
-          {`  · ${TAGLINE}`}
-        </Text>
-      </Box>
-    );
-  }
+// One-line brand for the app shell: wordmark-as-word, nothing shouting.
+export function Brand() {
   return (
-    <Box flexDirection="column" alignItems="center" marginTop={1} marginBottom={1}>
-      <Logo />
+    <Box>
+      <Gradient colors={MARK_COLORS}>
+        <Text bold>{" nodedex"}</Text>
+      </Gradient>
     </Box>
   );
 }
 
-export function TabBar({ tabs, active, version }: { tabs: string[]; active: number; version: string }) {
+// The view switcher — plain text, the active view carries the accent.
+export function ViewBar({ views, active }: { views: string[]; active: number }) {
   return (
-    <Box justifyContent="space-between" paddingX={1}>
-      <Box>
-        {tabs.map((t, i) => (
-          <Box key={t} marginRight={2}>
-            <Text bold={i === active} underline={i === active} color={i === active ? theme.accent : theme.dim}>
-              {`${i + 1} ${t}`}
-            </Text>
-          </Box>
-        ))}
-      </Box>
-      <Text color={theme.dim}>{`nodedex tui · v${version}`}</Text>
+    <Box>
+      {views.map((v, i) => (
+        <Box key={v} marginRight={1}>
+          <Text color={i === active ? theme.accent : theme.dim} bold={i === active}>
+            {`${i + 1} ${v}`}
+          </Text>
+          {i < views.length - 1 ? <Text color={theme.dim}>{"  ·"}</Text> : null}
+        </Box>
+      ))}
     </Box>
   );
 }
 
-// Titled rounded panel — the title sits on the top border (binsider legend look).
-export function Panel({
-  title,
-  children,
-  hot,
-  width,
-  flexGrow,
-  minHeight,
-}: {
+// Caps section header — replaces bordered panels for in-flow content.
+export function Section({ title, hot, right, children }: {
+  title: string; hot?: boolean; right?: React.ReactNode; children?: React.ReactNode;
+}) {
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box justifyContent="space-between">
+        <Text color={hot ? theme.accent : theme.title} bold>{title.toUpperCase()}</Text>
+        {right ?? null}
+      </Box>
+      {children}
+    </Box>
+  );
+}
+
+// A selectable row: focused = accent cursor + bright text; blurred list keeps a
+// quiet cursor so pane focus is always legible.
+export function Row({ selected, focused = true, children }: {
+  selected: boolean; focused?: boolean; children: React.ReactNode;
+}) {
+  return (
+    <Box>
+      <Text color={selected ? (focused ? theme.accent : theme.dim) : undefined}>
+        {selected ? "▸ " : "  "}
+      </Text>
+      {children}
+    </Box>
+  );
+}
+
+// Bordered panel — kept for overlays (search, review) that float over a view.
+export function Panel({ title, children, hot, width, flexGrow, minHeight }: {
   title: string;
   children: React.ReactNode;
   hot?: boolean;
@@ -106,146 +118,53 @@ export function Panel({
   );
 }
 
-// StatusBar — THE single source for connection / reflect / blocks / balance.
-// One line, every tab (k9s-style context bar). Panels must NOT repeat these:
-// the same number in two places was v1's layout bug (caught by the user
-// 2026-06-12) — each value renders in exactly one home.
-// The cost-breaker state, rendered next to the balance it guards (one home per
-// value). Off when no budget is configured; armed/TRIPPED otherwise — so a
-// breaker-paused reflect is never mysterious.
-function BreakerState({ budget }: { budget: BudgetVerdict | null }) {
-  if (!budget) return <Text color={theme.dim}>—</Text>;
-  const { config, tripped } = budget;
-  const configured = config.minCreditUsd !== null || config.dailyBudgetUsd !== null;
-  if (!configured) return <Text color={theme.dim}>off</Text>;
-  if (tripped) return <Text color={theme.danger}>{`${glyph.warn} TRIPPED`}</Text>;
-  const limits = [
-    config.minCreditUsd !== null ? `$${config.minCreditUsd} floor` : null,
-    config.dailyBudgetUsd !== null ? `$${config.dailyBudgetUsd}/24h` : null,
-  ].filter(Boolean).join(" · ");
-  return (
-    <>
-      <Text color={theme.ok}>{`${glyph.okMark} armed`}</Text>
-      <Text color={theme.dim}>{` ${limits}`}</Text>
-    </>
-  );
-}
-
-// StatusBar — THE single source for connection / reflect / blocks / balance /
-// breaker. One line, every tab (k9s-style context bar). Panels must NOT repeat
-// these: the same number in two places was v1's layout bug (caught by the user
-// 2026-06-12) — each value renders in exactly one home.
-export function StatusBar({
-  up,
-  reflect,
-  blocks,
-  balance,
-  budget,
-}: {
-  up: boolean;
-  reflect: { paused: boolean; spend_paused?: boolean; queue_depth: number; processing: boolean } | null;
-  blocks: number | undefined;
-  balance: { remaining: number | null; available: boolean };
-  budget: BudgetVerdict | null;
+// The ONE home for connection / graph / pipeline / spend state — bottom line,
+// every view. Views must not repeat these numbers (one value, one home).
+export function StatusLine({ dash, balance, captureDots }: {
+  dash: Dashboard | null;
+  balance: Balance;
+  captureDots: Array<{ name: string; on: boolean }>;
 }) {
-  // When the breaker tripped reflect, say so on the reflect segment too.
-  const breakerPausedReflect = reflect?.paused && budget?.tripped;
-  // Spending paused (credit-out / cost-breaker) while capture keeps queuing — a
-  // DISTINCT state from a full reflect pause (which also stops capture).
-  const spendPaused = reflect?.spend_paused && !reflect?.paused;
+  const ok = !!dash?.ok;
+  const s = dash?.session;
+  const r = dash?.reflect;
+  const spend24 = dash?.budget?.observed?.spend24h;
   return (
-    <Box paddingX={1} marginBottom={1}>
-      <Text color={up ? theme.ok : theme.danger}>{`${glyph.up} ${up ? "up" : "down"}`}</Text>
-      <Text color={theme.dim}>{"  │  "}</Text>
-      {reflect ? (
-        <>
-          <Text color={reflect.paused || spendPaused ? theme.warn : theme.ok}>
-            {reflect.paused
-              ? `${glyph.paused} reflect paused${breakerPausedReflect ? " (breaker)" : ""}`
-              : spendPaused
-                ? `${glyph.paused} spending paused (credit)`
-                : "reflect running"}
-          </Text>
-          <Text color={theme.dim}>{`  queue ${reflect.queue_depth}${reflect.processing ? " · processing" : ""}`}</Text>
-        </>
-      ) : (
-        <Text color={theme.dim}>reflect unknown</Text>
-      )}
-      <Text color={theme.dim}>{"  │  "}</Text>
-      <Text color={theme.label}>blocks </Text>
-      <Text>{blocks === undefined ? "—" : String(blocks)}</Text>
-      <Text color={theme.dim}>{"  │  "}</Text>
-      <Text color={theme.label}>balance </Text>
-      <Text color={balance.available ? theme.value : theme.dim}>
-        {balance.available && balance.remaining !== null ? `$${balance.remaining.toFixed(2)}` : "n/a"}
-      </Text>
-      <Text color={theme.dim}>{"  │  "}</Text>
-      <Text color={theme.label}>breaker </Text>
-      <BreakerState budget={budget} />
-    </Box>
-  );
-}
-
-// CreditAlert — a prominent, can't-miss banner when SPENDING is paused because the
-// account is out of credit (the StatusBar segment is intentionally subtle; this is the
-// loud one the user asked for). Renders NOTHING in the normal case, so it costs no rows
-// until it matters. Capture keeps queuing, so the message is reassuring, not alarming:
-// nothing is lost, it just resumes on top-up.
-export function CreditAlert({ reflect }: { reflect: { paused: boolean; spend_paused?: boolean; spend_pause_reason?: string | null; queue_depth: number } | null }) {
-  if (!reflect?.spend_paused || reflect.paused) return null;
-  const reason = reflect.spend_pause_reason || "credit exhausted";
-  return (
-    <Box paddingX={1} marginBottom={1} borderStyle="round" borderColor={theme.danger} flexDirection="column">
-      <Text color={theme.danger}>{`${glyph.warn} CREDIT EXHAUSTED — extraction PAUSED (${reason}).`}</Text>
-      <Text color={theme.warn}>{`Turns keep queuing (${reflect.queue_depth} waiting) — nothing is lost. Top up your OpenRouter credit; extraction resumes automatically.`}</Text>
-    </Box>
-  );
-}
-
-// One key-hint, e.g. [Tab→view]
-function Key({ k, label }: { k: string; label: string }) {
-  return (
-    <Box marginRight={2}>
-      <Text color={theme.accent}>{`[${k}`}</Text>
-      <Text color={theme.dim}>{`→${label}]`}</Text>
-    </Box>
-  );
-}
-
-export function Footer({
-  auto,
-  intervalSec,
-  base,
-}: {
-  auto: boolean;
-  intervalSec: number;
-  base: string;
-}) {
-  return (
-    <Box justifyContent="space-between" paddingX={1}>
+    <Box justifyContent="space-between">
       <Box>
-        <Key k="Tab" label="view" />
-        <Key k="r" label="refresh" />
-        <Key k="a" label="auto" />
-        <Key k="q" label="quit" />
+        <Text color={ok ? theme.ok : theme.danger}>{`${glyph.up} `}</Text>
+        <Text color={theme.value}>{s?.db ?? "no server"}</Text>
+        <Text color={theme.dim}>{`  ${fmtNum(s?.total_blocks)} blocks`}</Text>
+        {r ? (
+          <Text color={r.paused || r.spend_paused ? theme.warn : theme.dim}>
+            {r.paused ? "  ‖ capture paused" : r.spend_paused ? "  ‖ spend paused" : r.queue_depth > 0 ? `  ⟳ extracting (${r.queue_depth})` : ""}
+          </Text>
+        ) : null}
       </Box>
-      <Text color={theme.dim}>
-        {base}
-        {"   "}
-        {auto ? `${glyph.tick} ${intervalSec}s` : "auto off"}
-      </Text>
+      <Box marginLeft={2}>
+        {captureDots.map((c) => (
+          <Box key={c.name} marginRight={1}>
+            <Text color={c.on ? theme.ok : theme.dim}>{glyph.up}</Text>
+            <Text color={theme.dim}>{` ${c.name}`}</Text>
+          </Box>
+        ))}
+        {typeof spend24 === "number" ? <Text color={theme.dim}>{` ${fmtMoney(spend24)}/24h`}</Text> : null}
+        {balance.available ? <Text color={theme.dim}>{`  bal ${fmtMoney(balance.remaining)}`}</Text> : null}
+      </Box>
     </Box>
   );
 }
 
-// Small two-column field row used inside panels.
-export function Field({ label, children, width = 9 }: { label: string; children: React.ReactNode; width?: number }) {
+// Bottom-of-view key hints. Quiet; the keycap carries the accent.
+export function Keys({ items }: { items: Array<[string, string]> }) {
   return (
     <Box>
-      <Box width={width}>
-        <Text color={theme.label}>{label}</Text>
-      </Box>
-      <Text>{children as any}</Text>
+      {items.map(([k, label], i) => (
+        <Box key={`${k}-${i}`} marginRight={2}>
+          <Text color={theme.accent}>{`[${k}]`}</Text>
+          <Text color={theme.dim}>{` ${label}`}</Text>
+        </Box>
+      ))}
     </Box>
   );
 }
