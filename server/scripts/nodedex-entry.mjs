@@ -71,6 +71,11 @@ function applyConfigEnv() {
   }
   set("PORT", c.port);
   set("WORKSPACE_DB_PATH", c.dbPath);
+  // Arc mode ON, matching the TUI's launch env (servers.ts). Without this, watcher-fed
+  // turns (turn_number present) route to the retired per-turn v1 path and NO-OP — the
+  // whole capture story silently dead on a headless install. Found the hard way in the
+  // 2026-07-02 dogfood run: a bare `node dist/server.js` captured nothing.
+  set("NODEDEX_ARC_EXTRACTION", "1");
 }
 
 function startServer() {

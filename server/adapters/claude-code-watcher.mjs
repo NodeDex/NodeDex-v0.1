@@ -42,9 +42,14 @@
 //   node server/adapters/claude-code-watcher.mjs             # poll forever
 //   node server/adapters/claude-code-watcher.mjs --dry-run   # print assembled turns, POST nothing
 //   node server/adapters/claude-code-watcher.mjs --once      # one pass then exit (testing)
-//   node server/adapters/claude-code-watcher.mjs --backfill  # also capture pre-existing turns
+//   node server/adapters/claude-code-watcher.mjs --backfill  # also capture ALL pre-existing turns
+//   node server/adapters/claude-code-watcher.mjs --last 50   # bounded backfill: only the last N
+//                                                              turns per file (the "see your memory
+//                                                              in 2 minutes" onboarding path)
+//   node server/adapters/claude-code-watcher.mjs --newest    # only the newest session per project
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, openSync, readSync, closeSync, createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
 import { captureTurn } from "./nodedex-capture-core.mjs";
@@ -57,6 +62,11 @@ const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has("--dry-run");
 const ONCE = args.has("--once");
 const BACKFILL = args.has("--backfill");
+const NEWEST = args.has("--newest");
+const LAST = (() => {
+  const i = process.argv.indexOf("--last");
+  return i >= 0 ? Math.max(1, Number(process.argv[i + 1]) || 0) : 0;
+})();
 
 const TOOL_PREVIEW = 240; // truncate each tool result/args inside the thinking trace
 
@@ -126,6 +136,28 @@ function toolResultPreviews(msg) {
     if (t) out.push(`[result] ${truncate(t, TOOL_PREVIEW)}`);
   }
   return out;
+}
+
+// ─── bounded backfill: find where the Nth-from-last turn STARTS ────────────────────────────────
+// Streams the file once (memory-light even on multi-hundred-MB transcripts), recording the byte
+// offset of every line that opens a turn (a real user prompt), and returns the offset to start
+// from so exactly the last N turns are captured. The cheap `includes` pre-filter skips JSON.parse
+// on the ~90% of lines that can't be user prompts.
+async function offsetOfNthLastPrompt(filePath, n) {
+  const offsets = [];
+  let offset = 0;
+  const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
+  for await (const line of rl) {
+    const lineBytes = Buffer.byteLength(line, "utf8") + 1;
+    if (line.includes('"type":"user"')) {
+      try {
+        const j = JSON.parse(line);
+        if (j?.type === "user" && !j.isMeta && !j.isSidechain && userPromptText(j.message)) offsets.push(offset);
+      } catch { /* garbled line → skip */ }
+    }
+    offset += lineBytes;
+  }
+  return offsets[Math.max(0, offsets.length - n)] ?? 0;
 }
 
 // ─── per-file turn assembly state ──────────────────────────────────────────────────────────────
@@ -249,13 +281,24 @@ async function pass(cfg) {
     if (!projectAllowed(cfg, dir.name)) continue;
     let files = [];
     try { files = readdirSync(join(cfg.projectsDir, dir.name)).filter((f) => f.endsWith(".jsonl")); } catch { continue; }
+    if (NEWEST && files.length > 1) {
+      files = [files
+        .map((f) => ({ f, m: (() => { try { return statSync(join(cfg.projectsDir, dir.name, f)).mtimeMs; } catch { return 0; } })() }))
+        .sort((a, b) => b.m - a.m)[0].f];
+    }
     for (const f of files) {
       const filePath = join(cfg.projectsDir, dir.name, f);
       let fs_ = state.get(filePath);
       if (!fs_) {
-        // New file: forward-only unless --backfill (or a persisted cursor exists).
+        // New file: forward-only unless --backfill / --last N (an explicit bound wins
+        // over a persisted cursor so a bounded backfill run is deterministic).
         const persisted = loadCursors()[filePath];
-        const startAt = BACKFILL ? 0 : persisted?.offset ?? statSync(filePath).size;
+        let startAt;
+        if (LAST > 0) {
+          startAt = await offsetOfNthLastPrompt(filePath, LAST);
+          console.log(`[claude-code-watcher] ${basename(filePath)}: --last ${LAST} → starting at byte ${startAt}`);
+        } else if (BACKFILL) startAt = 0;
+        else startAt = persisted?.offset ?? statSync(filePath).size;
         fs_ = { offset: startAt, pendingStart: startAt, buf: newBuffer(), lastGrowth: Date.now(), sessionId: null, project: dir.name };
         state.set(filePath, fs_);
       }
