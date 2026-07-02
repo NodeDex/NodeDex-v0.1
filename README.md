@@ -9,7 +9,7 @@ Most agent memory remembers what your agent *said*. **NodeDex remembers what it 
 [Quick start](#setup) · [How it works](#how-it-works--three-actors) · [Connect your agent](#connect-your-agent) · [Why NodeDex](#why-nodedex) · [Docs](docs/README.md)
 
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![tests: 1171 passing](https://img.shields.io/badge/tests-1171%20passing-brightgreen.svg)](#evidence-it-works)
+[![tests: 1192 passing](https://img.shields.io/badge/tests-1192%20passing-brightgreen.svg)](#evidence-it-works)
 [![status: early & solo-built](https://img.shields.io/badge/status-early%20%26%20solo--built-orange.svg)](#)
 [![MCP: stdio + HTTP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7b5cff.svg)](#connect-your-agent)
 
@@ -24,7 +24,7 @@ Most agent memory remembers what your agent *said*. **NodeDex remembers what it 
 Without NodeDex, every session starts blank. Decisions made last week, dead ends hit last month, reasoning chains built over hours — all gone on context reset. NodeDex stores them in a local SQLite graph the agent navigates deliberately, session after session.
 
 > **Status — early & solo-built.** NodeDex is developed by one person and is at an early stage.
-> The engine is tested end-to-end (1171 passing tests), but it hasn't been battle-tested across
+> The engine is tested end-to-end (1192 passing tests), but it hasn't been battle-tested across
 > many machines and agents yet — **expect rough edges, and please [open an issue](https://github.com/NodeDex/NodeDex-v0.1/issues)
 > when you hit one.** Feedback at this stage is hugely valuable.
 >
@@ -164,7 +164,9 @@ and starts the **server**; pointing your agent at it is the one remaining step.
 > (`http://127.0.0.1:<port>/mcp`, where `<port>` is the port you picked) and — only if you
 > chose a Docker/network bind — an **auth token**. The examples below use the default `3001`
 > as a placeholder: **replace it with your port**, and pass the token only if your server is
-> gated. If you ever lose them, the TUI's **Servers** tab shows the URL + token again.
+> gated. If you ever lose them, run **`nodedex connect`** — it prints the connection card
+> (per-location URLs + when a token is needed) — and `~/.nodedex/connect-snippets.md` always
+> holds ready-to-paste configs for every host, regenerated at each launch.
 
 ### Quickstart (Hermes) — two pastes, once
 
@@ -239,8 +241,8 @@ each finished turn to it. Pick the path that fits your agent:
 #### (a) Watchers — zero-setup capture for hosts that persist their own turns
 The lowest-friction path: NodeDex reads the host's **own conversation log** (read-only, on your
 machine, forward-only — never past history) and needs nothing from the host itself. The
-onboarding wizard detects installed hosts and asks which to capture; toggles live in **TUI →
-Settings**.
+onboarding wizard detects installed hosts and asks which to capture; toggles live in the
+**TUI's health view**.
 
 - **Claude Code** — tails your session transcripts (`~/.claude/projects/…jsonl`). Every session
   becomes its own arc in the graph; the `projects` row scopes which projects are captured
@@ -297,7 +299,9 @@ npm run reconfigure                                  # interactive
 npm run reconfigure -- --model openai/gpt-4o-mini    # or pass flags
 npm run reconfigure -- --key sk-or-...               # validated before saving
 ```
-Re-launch the server afterward to apply (TUI Servers tab → `[x]` stop, `[l]` launch).
+Or do it inside the TUI: **health view → `provider` row** switches cloud/local and picks a
+model (local models are auto-scanned). A model change within the same provider applies live;
+a provider/endpoint switch applies when the server relaunches (switch db, or restart the TUI).
 
 ```bash
 # remove all local data + config (~/.nodedex: config, API key, databases, logs)
@@ -343,10 +347,14 @@ from anywhere instead of the `npm` scripts above:
 | `npm run reconfigure` | change just the API key or model |
 | `npm run uninstall` | remove `~/.nodedex` (data + config) |
 
-In the TUI **Servers** tab: `[l]` launch · `[x]` stop · `[c]` change database · `[r]` rescan free ports.
+The TUI has **three views** — `1 memory` (browse roots, walk stories, `/` search),
+`2 feed` (memory forming live + what the agent read), `3 health` (server/db switch, provider
++ model picker, pipeline knobs, capture toggles, review queue). Everything is a row: `↑↓`
+move, `enter` acts.
 
 > The TUI is the normal way to run the server (it configures the key/model + picks a port and
-> database). The `server/` scripts above are the manual/advanced path.
+> database, and relaunches it on a db switch). The `server/` scripts above are the
+> manual/advanced path.
 
 ---
 
@@ -378,12 +386,16 @@ Navigate first, search second — the tree shows everything.
 workspace_tree                     # root view — projects + counts
 workspace_filter(concepts)         # cold start: concepts → relevant roots
 workspace_get(label, "relations")  # a block + its causal chain(s)
-workspace_search(query)            # keyword fallback
+workspace_search(query)            # fallback: semantic + keyword + concept, ranked by match
 workspace_stats(agent_id)          # graph landscape + extraction freshness + pending flags
 ```
 
 A block alone is a headline; its **chain** is the story — `workspace_get` returns the
 named causal chain(s) the block sits on, so one read gives the whole arc.
+
+Search is honest about its limits: every hit shows **which root it lives under** and its
+match signals, superseded blocks are flagged with what replaced them, and when nothing
+really matches the results say so (*weak matches only*) instead of posing as an answer.
 
 ---
 
@@ -411,8 +423,15 @@ decontextualized fragment.
 > skill, not the memory. Full write-up:
 > [docs/NODEDEX-MEMORY-MODEL.md](docs/NODEDEX-MEMORY-MODEL.md).
 
-Engine health: **1171/1171 server tests pass**, with extraction → graph → retrieval validated
+Engine health: **1192/1192 server tests pass**, with extraction → graph → retrieval validated
 end-to-end.
+
+We also ran NodeDex on itself: the last ~50 turns of the Claude Code session that *built* it,
+captured by the watcher, extracted into a 223-block graph — audited at 9/10 fidelity, with the
+graph correctly holding its own bug-fix story (the decision, the dead-end it replaced, and the
+constraints, all wired). Search on that graph: on-topic queries returned 15/15 relevant hits;
+off-topic queries come back explicitly labeled *weak — the graph likely has nothing on this*
+rather than posing as answers.
 
 ---
 

@@ -87,7 +87,7 @@ Three mechanisms; pick the one that fits your host:
 |---|---|---|
 | **Tee** | `workspace_install_capture` returns a small out-of-path adapter (`adapters/nodedex-capture.mjs`) you drop into the agent's post-turn seam; it POSTs `{user, response, reasoning}` to `${NODEDEX_URL}/api/reflect/trigger`, fire-and-forget (your model call is never touched). | You **control the agent's loop/code** (Agent SDK, your own loop, a container you build). |
 | **Proxy** | Point the agent's **model base-URL** at `…/api`; NodeDex relays each call to your real provider (your key, unchanged, no added latency, streaming intact) and captures the turn in passing. | The host lets you **redirect its model endpoint** and honors a custom base-URL. |
-| **Watcher** | A host-side process reads the agent's own conversation store (e.g. Hermes `state.db`) and POSTs each turn. Needs **zero cooperation** from the agent. | The agent is a **closed sandbox** you can't modify (e.g. Hermes — it ignores a custom base-URL and never fires shell hooks). Turn it on in TUI → Settings → `hermes capture`. |
+| **Watcher** | A host-side process reads the agent's own conversation store (e.g. Hermes `state.db`) and POSTs each turn. Needs **zero cooperation** from the agent. | The agent is a **closed sandbox** you can't modify (e.g. Hermes — it ignores a custom base-URL and never fires shell hooks). Turn it on in TUI → health view → `hermes` (capture watchers). |
 
 > ⚠ **The tee can't be deployed inside a sandbox you don't control** (no host filesystem, no
 > loop hook) — that's exactly why the proxy and watcher exist. For **Hermes specifically, only

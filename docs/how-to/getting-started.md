@@ -110,7 +110,7 @@ push each finished turn to it. **Pick the path that fits your host:**
 
 | Your agent is… | Capture path | How |
 |---|---|---|
-| **Hermes / Owl** | **state.db watcher** | Hermes ignores a model proxy + never fires hooks, so NodeDex reads its `state.db`. Turn it on in **TUI → Settings → `hermes capture`** (Enter to start; `sources` = the privacy filter). Full walkthrough: [connect-hermes.md](connect-hermes.md). |
+| **Hermes / Owl** | **state.db watcher** | Hermes ignores a model proxy + never fires hooks, so NodeDex reads its `state.db`. Turn it on in **TUI → health view → `hermes` (capture watchers)** (Enter to start; `sources` = the privacy filter). Full walkthrough: [connect-hermes.md](connect-hermes.md). |
 | **OpenAI-compatible host** that honors a custom base URL | **Model proxy** | Point the agent's **model base_url** at `http://127.0.0.1:<port>/api`. It relays to your real provider *and* captures. Token-exempt; forwards your own provider key. (A remote/Docker agent uses the host address instead.) |
 | **Code/loop you control** (Agent SDK, LangChain, own loop) | **Tee** | Have the agent run `workspace_install_capture` once; wire the returned snippet into a post-turn hook. |
 | **Claude Code** | **Stop hook** | Built in (not part of this autonomous-agent release). |
@@ -133,17 +133,17 @@ reflect paused, or the **pipeline key** is failing extraction (a `401` in the lo
 
 ## 6. Monitor + day-to-day (the TUI)
 
-Launch the TUI any time with `npm run dev` (in `tui/`). Tabs: **Live · Browse · Chains · Review ·
-Servers · Stats · Settings**.
+Launch the TUI any time with `npm run dev` (in `tui/`). Three views: **`1` memory** (browse
+roots, walk stories, `/` search), **`2` feed** (memory forming live + what the agent read),
+**`3` health** (server/db switch, provider + model picker, pipeline knobs, capture watcher
+toggles, review queue).
 
-- **Reading the data is token-gated.** The TUI authenticates automatically **only for servers it
-  launched itself** (*managed*). A server started another way shows as **`up · external`** with a
-  `?`, and Live says *"unreachable"* — it just lacks the token.
-  - **Managed** (launch from the **Servers** tab) → every tab works; `[c] change db`, `[x] stop`,
-    rescan, etc. are all available.
-  - **External** → start the TUI with `NODEDEX_TUI_API=http://127.0.0.1:<port>` and
-    `NODEDEX_TUI_TOKEN=<token>` set.
-- **Change/swap DB, stop, relaunch** only work on a *managed* (TUI-launched) server.
+- **Reading the data is token-gated on network servers.** Same-machine (loopback) servers need
+  no token; the TUI also authenticates automatically for servers it launched itself (*managed*).
+  For a server elsewhere, start the TUI with `NODEDEX_TUI_API=http://127.0.0.1:<port>` and
+  `NODEDEX_TUI_TOKEN=<token>` set.
+- **DB switch (with relaunch)** works on a *managed* (TUI-launched) server — health view →
+  `database` row.
 
 ---
 

@@ -18,8 +18,9 @@ Throughout, **`<port>`** = the port your NodeDex server runs on (the TUI shows i
 
 ## 0. Prerequisites
 
-- A NodeDex server running (the TUI's **Servers → launch**, or onboarding). Same machine as Hermes —
-  so loopback (`127.0.0.1`) reaches it and **no token is needed**.
+- A NodeDex server running (the onboarding wizard starts one; the TUI relaunches it on a db
+  switch, or use `nodedex run`). Same machine as Hermes — so loopback (`127.0.0.1`) reaches it
+  and **no token is needed**.
 - A valid **NodeDex pipeline key** (so extraction works — see *The two keys* below).
 - Reflect **not paused** (`~/.nodedex/reflect-pause` absent).
 
@@ -52,8 +53,8 @@ start a new session. The agent now has the read tools + the usage protocol (deli
 The watcher reads Hermes's `state.db`, assembles each finished turn, and POSTs it to NodeDex. The
 **easiest way is the TUI** — it owns the watcher's lifecycle:
 
-> **TUI → Settings tab → `hermes capture`:**
-> - **`watcher`** — press **Enter** to start it (the row shows `running`). Enter again stops it.
+> **TUI → health view (`3`) → capture watchers:**
+> - **`hermes`** — press **Enter** to start it (the row shows `running`). Enter again stops it.
 > - **`sources`** — press **Enter** to edit the **privacy filter**: a comma-separated list of which
 >   Hermes session sources to capture. Default **`tui`** (your terminal sessions only). Add others
 >   (`tui, telegram`) or set **`*`** for all sources. Changes apply **live** — no restart.
@@ -111,7 +112,7 @@ npm run reconfigure -- --key sk-or-v1-<your-FULL-key>
 3. The TUI **`blocks`** count climbs (give it ~30–90s — slower models can take a few minutes).
 
 Reading the signal:
-- **No `captured` line in the watcher log** → the watcher isn't running (Settings → `hermes capture`
+- **No `captured` line in the watcher log** → the watcher isn't running (health view → `hermes` row
   → start) or there's no NodeDex server in `~/.nodedex/tui-session.json`. Try a manual `--dry-run` to
   see assembled turns without posting.
 - **`captured` but `blocks` stays 0** → the turn was **<50 chars**, **reflect is paused**, or the
@@ -134,7 +135,7 @@ Reading the signal:
 - **wrong MCP host** — use `127.0.0.1`, not `localhost` (Windows `::1` trap) and not
   `host.docker.internal` (the gateway is on the host, not in a container).
 - **reflect paused** — the graph won't grow. Delete `~/.nodedex/reflect-pause` and resume
-  (TUI Settings → reflect → Enter, or restart the server).
+  (TUI health view → `capture` row → Enter, or restart the server).
 - **truncated key** — a long key pasted into a terminal field can drop chars; use the
   `reconfigure --key` flag, which is shape-checked.
 - **privacy** — by default only `tui` sessions are captured. If you use Hermes over telegram/discord
