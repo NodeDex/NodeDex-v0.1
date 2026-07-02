@@ -3,7 +3,7 @@ import { z } from "zod";
 import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine, blockEmbeddingText } from "../engine/embeddings.js";
 import { ok, err, cosineSim, assembleBlockChains, filterRootsByConcepts } from "./helpers.js";
-import { searchBlocks, rootContextFor } from "../engine/search-core.js";
+import { searchBlocks, rootContextFor, allWeak, WEAK_NOTE } from "../engine/search-core.js";
 
 // ─── Keyword concept extractor ───────────────────────────────────
 // Extracts meaningful tokens from text as placeholder concepts.
@@ -557,6 +557,9 @@ Three signals: semantic similarity, keyword match, and concept overlap. Concept 
           total_results: results.length,
           results,
           signals_used: signals,
+          // Off-graph queries still return nearest-neighbor hits (semantic never
+          // comes back empty) — label the shrug so it can't be read as an answer.
+          ...(allWeak(hits) ? { note: WEAK_NOTE } : {}),
         });
       } catch (error) {
         return err("SEARCH_FAILED", String(error));

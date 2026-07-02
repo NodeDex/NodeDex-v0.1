@@ -119,6 +119,28 @@ export async function searchBlocks(
   };
 }
 
+// ── Weak-result detection ─────────────────────────────────────────────────────
+// The semantic signal is nearest-neighbor: it always returns the CLOSEST blocks,
+// even when nothing is actually close — so an off-graph query ("kubernetes" on a
+// garden db) still yields hits. Measured signature of that noise (dogfood graph,
+// 2026-07-03): EVERY hit semantic-only at a flat ~0.26, while any real result
+// set has at least one multi-signal hit scoring 0.4+. We LABEL it, never drop
+// it: a silent [] can't be told apart from "search broke" (fail-loud rule), and
+// a weak semantic hit is occasionally a true one (measured: a relevant dead-end
+// at 0.22).
+const WEAK_SCORE = 0.3;
+
+/** True when the ENTIRE result set is weak (semantic-only, sub-0.3): the graph
+ *  likely has nothing on this topic. One strong hit anywhere → not weak. */
+export function allWeak(hits: SearchHit[]): boolean {
+  return hits.length > 0 && hits.every(
+    (h) => h.score < WEAK_SCORE && h.matchTypes.length === 1 && h.matchTypes[0] === "semantic"
+  );
+}
+
+export const WEAK_NOTE =
+  "weak matches only — nothing matched by keyword or concept; the graph likely has nothing on this topic. These are just the nearest blocks, not an answer.";
+
 export interface RootContext {
   root_label: string;
   root_essence: string;

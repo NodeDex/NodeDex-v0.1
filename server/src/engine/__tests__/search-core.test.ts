@@ -12,7 +12,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { WorkspaceDB } from "../../store/database.js";
-import { searchBlocks, rootContextFor } from "../search-core.js";
+import { searchBlocks, rootContextFor, allWeak } from "../search-core.js";
+import type { SearchHit } from "../search-core.js";
 
 const TEST_DB = path.resolve("/tmp/search_core_test.db");
 
@@ -90,6 +91,25 @@ describe("searchBlocks — match-quality ranking", () => {
   test("no query tokens → empty, never throws", async () => {
     const { hits } = await searchBlocks(db, undefined, { query: "zzzz_nothing_matches_this", limit: 5 });
     assert.equal(hits.length, 0);
+  });
+});
+
+describe("allWeak — the nearest-neighbor shrug detector", () => {
+  const hit = (score: number, matchTypes: string[]): SearchHit =>
+    ({ block: {} as any, score, matchTypes });
+
+  test("all semantic-only sub-0.3 hits → weak (off-graph query signature)", () => {
+    assert.equal(allWeak([hit(0.26, ["semantic"]), hit(0.26, ["semantic"])]), true);
+  });
+
+  test("one strong or multi-signal hit anywhere → not weak", () => {
+    assert.equal(allWeak([hit(0.63, ["semantic", "keyword"]), hit(0.22, ["semantic"])]), false);
+    assert.equal(allWeak([hit(0.45, ["semantic"])]), false, "high score alone disarms it");
+    assert.equal(allWeak([hit(0.25, ["keyword"])]), false, "keyword match alone disarms it");
+  });
+
+  test("empty result set is not weak (it is simply empty)", () => {
+    assert.equal(allWeak([]), false);
   });
 });
 

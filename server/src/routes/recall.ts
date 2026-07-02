@@ -4,7 +4,7 @@ import { Router } from "express";
 import { cosineSim } from "../engine/vector-math.js";
 import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine } from "../engine/embeddings.js";
-import { searchBlocks, rootContextFor } from "../engine/search-core.js";
+import { searchBlocks, rootContextFor, allWeak } from "../engine/search-core.js";
 import {
   sessionEvents, SESSION_EVENT_MAX,
   evaluateAlertsAfterRecall, incrementSessionEventCounter,
@@ -54,12 +54,16 @@ export function createRecallRouter(db: WorkspaceDB, embeddings?: EmbeddingEngine
       // Root context per hit — judge relevance from the root's one-liner without
       // resolving project_id block-by-block.
       const rootCtx = rootContextFor(db, hits.map(({ block }) => block));
+      // Response is a bare array (back-compat), so the weak-result label rides on
+      // each hit: weak_match=true ⇒ nearest-neighbor shrug, not an answer.
+      const weak = allWeak(hits);
       const slim = hits.map(({ block, score, matchTypes }) => {
         const { embedding: _e, content: _c, ...b } = block;
         return {
           ...b,
           score: Math.round(score * 100) / 100,
           match_types: matchTypes,
+          ...(weak ? { weak_match: true } : {}),
           ...(typeof block.project_id === "string" && rootCtx.has(block.project_id)
             ? rootCtx.get(block.project_id)!
             : {}),
