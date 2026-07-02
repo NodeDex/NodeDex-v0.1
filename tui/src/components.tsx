@@ -155,6 +155,16 @@ export function StatusLine({ dash, balance, captureDots }: {
   );
 }
 
+// Viewport windowing for selectable lists: slides a cap-sized window so the
+// cursor stays visible (the fix for "cursor moves past the fold but the list
+// doesn't scroll"). Centers the selection where possible; callers render
+// `↑ N more / ↓ N more` from above/below.
+export function windowSlice<T>(items: T[], sel: number, cap: number): { visible: T[]; start: number; above: number; below: number } {
+  if (items.length <= cap) return { visible: items, start: 0, above: 0, below: 0 };
+  const start = Math.min(Math.max(0, sel - Math.floor(cap / 2)), items.length - cap);
+  return { visible: items.slice(start, start + cap), start, above: start, below: items.length - start - cap };
+}
+
 // Bottom-of-view key hints. Quiet; the keycap carries the accent.
 export function Keys({ items }: { items: Array<[string, string]> }) {
   return (

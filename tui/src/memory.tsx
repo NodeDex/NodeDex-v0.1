@@ -9,7 +9,7 @@
 //   /   = search overlay (keyword recall — the same /api/search agents use)
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
-import { Section, Row, Keys, Panel } from "./components.js";
+import { Section, Row, Keys, Panel, windowSlice } from "./components.js";
 import { theme, typeColorOf, typeGlyphOf, trunc, relTime } from "./theme.js";
 import { useTermSize } from "./hooks.js";
 import {
@@ -151,6 +151,11 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
 
   const supersededBy = (detail?.incoming ?? []).find((e: EdgeRef) => e.type === "superseded_by");
 
+  // Sliding viewports — the cursor stays visible past the fold in every list.
+  const rootsWin = windowSlice(roots, rootSel, listCap);
+  const blocksWin = windowSlice(blocks, blockSel, listCap);
+  const jumpWin = windowSlice(jumpables, rightSel, Math.max(4, listCap - 10));
+
   return (
     <Box flexDirection="column" flexGrow={1}>
       <Box flexGrow={1}>
@@ -159,23 +164,32 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
           {level === "roots" ? (
             <Section title="roots" hot={focus === "left"} right={<Text color={theme.dim}>{`${roots.length}`}</Text>}>
               {roots.length === 0 ? <Text color={theme.dim}>empty graph — memory appears as your agents work</Text> : null}
-              {roots.slice(0, listCap).map((r, i) => (
-                <Row key={r.id} selected={i === rootSel} focused={focus === "left"}>
-                  <Text color={typeColorOf("project")}>{"⌂ "}</Text>
-                  <Text color={i === rootSel ? theme.value : theme.label}>{trunc(r.label, leftW - 10)}</Text>
-                  <Text color={theme.dim}>{`  ${r.children_count ?? ""}`}</Text>
-                </Row>
-              ))}
+              {rootsWin.above > 0 ? <Text color={theme.dim}>{`  ↑ ${rootsWin.above} more`}</Text> : null}
+              {rootsWin.visible.map((r, i) => {
+                const idx = rootsWin.start + i;
+                return (
+                  <Row key={r.id} selected={idx === rootSel} focused={focus === "left"}>
+                    <Text color={typeColorOf("project")}>{"⌂ "}</Text>
+                    <Text color={idx === rootSel ? theme.value : theme.label}>{trunc(r.label, leftW - 10)}</Text>
+                    <Text color={theme.dim}>{`  ${r.children_count ?? ""}`}</Text>
+                  </Row>
+                );
+              })}
+              {rootsWin.below > 0 ? <Text color={theme.dim}>{`  ↓ ${rootsWin.below} more`}</Text> : null}
             </Section>
           ) : (
             <Section title={trunc(openRoot?.label ?? "blocks", leftW - 8)} hot={focus === "left"} right={<Text color={theme.dim}>{`${blocks.length}`}</Text>}>
-              {blocks.slice(0, listCap).map((b, i) => (
-                <Row key={b.id} selected={i === blockSel} focused={focus === "left"}>
-                  <Text color={typeColorOf(b.type)}>{`${typeGlyphOf(b.type)} `}</Text>
-                  <Text color={i === blockSel ? theme.value : theme.label}>{trunc(b.label.replace(`${openRoot?.label ?? ""}_`, ""), leftW - 8)}</Text>
-                </Row>
-              ))}
-              {blocks.length > listCap ? <Text color={theme.dim}>{`  … ${blocks.length - listCap} more`}</Text> : null}
+              {blocksWin.above > 0 ? <Text color={theme.dim}>{`  ↑ ${blocksWin.above} more`}</Text> : null}
+              {blocksWin.visible.map((b, i) => {
+                const idx = blocksWin.start + i;
+                return (
+                  <Row key={b.id} selected={idx === blockSel} focused={focus === "left"}>
+                    <Text color={typeColorOf(b.type)}>{`${typeGlyphOf(b.type)} `}</Text>
+                    <Text color={idx === blockSel ? theme.value : theme.label}>{trunc(b.label.replace(`${openRoot?.label ?? ""}_`, ""), leftW - 8)}</Text>
+                  </Row>
+                );
+              })}
+              {blocksWin.below > 0 ? <Text color={theme.dim}>{`  ↓ ${blocksWin.below} more`}</Text> : null}
             </Section>
           )}
         </Box>
@@ -217,15 +231,20 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
               ) : null}
               {jumpables.length > 0 ? (
                 <Section title={chain.length > 0 ? `⛓ chain + edges` : "edges"} hot={focus === "right"}>
-                  {jumpables.slice(0, Math.max(4, listCap - 10)).map((j, i) => (
-                    <Row key={`${j.kind}-${j.id}-${i}`} selected={i === rightSel} focused={focus === "right"}>
-                      <Box width={14}>
-                        <Text color={theme.dim}>{j.kind === "in" ? `← ${trunc(j.via, 11)}` : j.kind === "out" ? `→ ${trunc(j.via, 11)}` : `⛓ ${trunc(j.via, 11)}`}</Text>
-                      </Box>
-                      {j.type ? <Text color={typeColorOf(j.type)}>{`${typeGlyphOf(j.type)} `}</Text> : null}
-                      <Text color={i === rightSel && focus === "right" ? theme.value : theme.label}>{trunc(j.label, essW - 20)}</Text>
-                    </Row>
-                  ))}
+                  {jumpWin.above > 0 ? <Text color={theme.dim}>{`  ↑ ${jumpWin.above} more`}</Text> : null}
+                  {jumpWin.visible.map((j, i) => {
+                    const idx = jumpWin.start + i;
+                    return (
+                      <Row key={`${j.kind}-${j.id}-${idx}`} selected={idx === rightSel} focused={focus === "right"}>
+                        <Box width={14}>
+                          <Text color={theme.dim}>{j.kind === "in" ? `← ${trunc(j.via, 11)}` : j.kind === "out" ? `→ ${trunc(j.via, 11)}` : `⛓ ${trunc(j.via, 11)}`}</Text>
+                        </Box>
+                        {j.type ? <Text color={typeColorOf(j.type)}>{`${typeGlyphOf(j.type)} `}</Text> : null}
+                        <Text color={idx === rightSel && focus === "right" ? theme.value : theme.label}>{trunc(j.label, essW - 20)}</Text>
+                      </Row>
+                    );
+                  })}
+                  {jumpWin.below > 0 ? <Text color={theme.dim}>{`  ↓ ${jumpWin.below} more`}</Text> : null}
                 </Section>
               ) : null}
             </Box>

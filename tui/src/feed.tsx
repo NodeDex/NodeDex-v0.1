@@ -3,7 +3,7 @@
 // what the agent recently pulled back out. Replaces v2's Live + Stats overlap.
 import React, { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
-import { Section, Row, Keys, Panel } from "./components.js";
+import { Section, Row, Keys, Panel, windowSlice } from "./components.js";
 import { theme, glyph, typeColorOf, typeGlyphOf, trunc, relTime } from "./theme.js";
 import { useTermSize } from "./hooks.js";
 import { fetchBlockDetail, type Dashboard, type BlockDetail } from "./api.js";
@@ -24,7 +24,7 @@ export function FeedTab({ dash, isActive }: { dash: Dashboard; isActive: boolean
   useInput((_input, k) => {
     if (peek) { if (k.escape || k.return) setPeek(null); return; }
     if (k.upArrow) setSel((s) => Math.max(0, s - 1));
-    else if (k.downArrow) setSel((s) => Math.min(Math.min(recent.length, cap) - 1, s + 1));
+    else if (k.downArrow) setSel((s) => Math.min(recent.length - 1, s + 1));
     else if (k.return && recent[sel]) void fetchBlockDetail(recent[sel]!.id).then(setPeek);
   }, { isActive });
 
@@ -47,18 +47,28 @@ export function FeedTab({ dash, isActive }: { dash: Dashboard; isActive: boolean
       <Section title="memory forming" right={<Text color={theme.dim}>newest first</Text>}>
         {recent.length === 0 ? (
           <Text color={theme.dim}>nothing yet — once capture is on, new memory streams here</Text>
-        ) : (
-          recent.slice(0, cap).map((b, i) => (
-            <Row key={b.id} selected={i === sel}>
-              <Box width={5}><Text color={theme.dim}>{relTime(b.created_at)}</Text></Box>
-              <Text color={typeColorOf(b.type)}>{`${typeGlyphOf(b.type)} `}</Text>
-              <Box width={Math.min(44, Math.floor(cols * 0.4))}>
-                <Text color={i === sel ? theme.value : theme.label}>{trunc(b.label, Math.min(43, Math.floor(cols * 0.4) - 1))}</Text>
-              </Box>
-              <Text color={theme.dim}>{trunc(b.essence, Math.max(10, cols - 62))}</Text>
-            </Row>
-          ))
-        )}
+        ) : (() => {
+          const win = windowSlice(recent, sel, cap);
+          return (
+            <>
+              {win.above > 0 ? <Text color={theme.dim}>{`  ↑ ${win.above} more`}</Text> : null}
+              {win.visible.map((b, i) => {
+                const idx = win.start + i;
+                return (
+                  <Row key={b.id} selected={idx === sel}>
+                    <Box width={5}><Text color={theme.dim}>{relTime(b.created_at)}</Text></Box>
+                    <Text color={typeColorOf(b.type)}>{`${typeGlyphOf(b.type)} `}</Text>
+                    <Box width={Math.min(44, Math.floor(cols * 0.4))}>
+                      <Text color={idx === sel ? theme.value : theme.label}>{trunc(b.label, Math.min(43, Math.floor(cols * 0.4) - 1))}</Text>
+                    </Box>
+                    <Text color={theme.dim}>{trunc(b.essence, Math.max(10, cols - 62))}</Text>
+                  </Row>
+                );
+              })}
+              {win.below > 0 ? <Text color={theme.dim}>{`  ↓ ${win.below} more`}</Text> : null}
+            </>
+          );
+        })()}
       </Section>
 
       {reads.length > 0 ? (
