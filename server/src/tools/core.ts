@@ -3,6 +3,7 @@ import { z } from "zod";
 import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine, blockEmbeddingText } from "../engine/embeddings.js";
 import { ok, err, cosineSim, assembleBlockChains, filterRootsByConcepts } from "./helpers.js";
+import { searchBlocks, rootContextFor } from "../engine/search-core.js";
 
 // ─── Keyword concept extractor ───────────────────────────────────
 // Extracts meaningful tokens from text as placeholder concepts.
@@ -519,96 +520,33 @@ Three signals: semantic similarity, keyword match, and concept overlap. Concept 
     },
     async (params) => {
       try {
-        const limit = params.limit || 10;
-        const STOPWORDS = new Set(["the","is","a","an","to","of","in","for","on","with","and","or","but","it","this","that","how","what","why","can","do","be","are","was","were","will","i","my","we","our"]);
-
-        // Extract concept tokens from query
-        const queryConcepts = params.query
-          .toLowerCase().replace(/[^a-z0-9_ ]/g, " ").split(/\s+/)
-          .filter((w) => w.length > 2 && !STOPWORDS.has(w));
-
-        // Per-block score accumulator
-        const scoreMap = new Map<string, {
-          block: any; score: number; matchTypes: Set<string>;
-        }>();
-
-        const add = (block: any, delta: number, tag: string) => {
-          const e = scoreMap.get(block.id);
-          if (e) { e.score += delta; e.matchTypes.add(tag); }
-          else scoreMap.set(block.id, { block, score: delta, matchTypes: new Set([tag]) });
-        };
-
-        // ── 1. Semantic ──────────────────────────────────────────
-        const queryEmbedding = await embeddings.embed(params.query);
-        if (queryEmbedding) {
-          const semResults = db.semanticSearch(queryEmbedding, limit * 2, params.type);
-          for (const block of semResults) {
-            const bv = JSON.parse(block.embedding!) as number[];
-            const sim = cosineSim(queryEmbedding, bv);
-            add(block, sim * 0.5, "semantic");
-          }
-        }
-
-        // ── 2. Keyword ───────────────────────────────────────────
-        const kwResults = db.keywordSearch(params.query, limit * 2, params.type);
-        for (const block of kwResults) add(block, 0.3, "keyword");
-
-        // ── 3. Concept overlap ───────────────────────────────────
-        if (queryConcepts.length > 0) {
-          const allBlocks = db.getAllBlocks().filter(
-            (b) => b.status !== "archived" && (!params.type || b.type === params.type)
-          );
-          for (const block of allBlocks) {
-            let blockConcepts: string[] = [];
-            try {
-              const c = typeof block.content === "string" ? JSON.parse(block.content) : block.content;
-              blockConcepts = (c?.concepts || []).map((x: string) => x.toLowerCase());
-            } catch { /* ignore */ }
-            if (!blockConcepts.length) continue;
-
-            const matched = queryConcepts.filter((qc) =>
-              blockConcepts.some((bc) => bc.includes(qc) || qc.includes(bc))
-            );
-            if (matched.length > 0) {
-              add(block, Math.min(matched.length * 0.2, 0.6) * 0.4, `concept(${matched.join(",")})`);
-            }
-          }
-        }
-
-        // ── Rank + format ────────────────────────────────────────
-        // Apply freshness multiplier: blocks accessed recently score higher
-        const now = Date.now();
-        const recallStats = db.getRecallStats(200);
-        const precisionMap = new Map(recallStats.map((s) => [s.block_id, s.precision]));
-
-        const ranked = Array.from(scoreMap.values())
-          .map(({ block, score, matchTypes }) => {
-            // Freshness: 1.0 if accessed today, decays to 0.7 at 30+ days
-            const daysSince = (now - new Date(block.last_accessed || block.updated_at).getTime()) / 86400000;
-            const freshness = Math.max(0.7, 1.0 - (daysSince / 30) * 0.3);
-            // Precision: blocks that are recalled but never used get a small penalty
-            const precision = precisionMap.get(block.id) ?? 1.0; // new blocks: no penalty
-            const precisionWeight = 0.85 + precision * 0.15; // range 0.85-1.0
-            return { block, score: score * freshness * precisionWeight, matchTypes };
-          })
-          .sort((a, b) => b.score - a.score)
-          .slice(0, limit);
+        // Shared scorer (engine/search-core.ts): three signals, ranked by match
+        // quality ONLY — currency comes from the supersedes edge, never a clock.
+        const { hits, signals } = await searchBlocks(db, embeddings, {
+          query: params.query, type: params.type, limit: params.limit || 10,
+        });
 
         // Currency annotation: superseded blocks stay ACTIVE (the supersedes edge is the
         // currency marker, not status) — so a bare search hit must say what replaced it,
         // or stale would leak as current. Batched single query over the result ids.
-        const supersededBy = db.getSupersededByLabels(ranked.map(({ block }) => block.id));
+        const supersededBy = db.getSupersededByLabels(hits.map(({ block }) => block.id));
+        // Root context — the tree's containment attached per hit, so the agent judges
+        // "which world is this from?" on one line instead of resolving project_id each.
+        const rootCtx = rootContextFor(db, hits.map(({ block }) => block));
 
-        const results = ranked.map(({ block, score, matchTypes }) => ({
+        const results = hits.map(({ block, score, matchTypes }) => ({
           id:          block.id,
           label:       block.label,
           type:        block.type,
           essence:     block.essence,
           status:      block.status,
           score:       Math.round(score * 100) / 100,
-          match_types: [...matchTypes],
+          match_types: matchTypes,
           is_sensitive: block.is_sensitive,
           locked:      block.locked || false,
+          ...(typeof block.project_id === "string" && rootCtx.has(block.project_id)
+            ? rootCtx.get(block.project_id)!
+            : {}),
           ...(supersededBy.has(block.id)
             ? { superseded_by: supersededBy.get(block.id), note: "SUPERSEDED — read the superseding block for current truth" }
             : {}),
@@ -618,11 +556,7 @@ Three signals: semantic similarity, keyword match, and concept overlap. Concept 
           query: params.query,
           total_results: results.length,
           results,
-          signals_used: {
-            semantic: !!queryEmbedding,
-            keyword: true,
-            concept: queryConcepts.length > 0,
-          },
+          signals_used: signals,
         });
       } catch (error) {
         return err("SEARCH_FAILED", String(error));

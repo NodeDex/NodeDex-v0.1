@@ -4,6 +4,7 @@ import { Router } from "express";
 import { cosineSim } from "../engine/vector-math.js";
 import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine } from "../engine/embeddings.js";
+import { searchBlocks, rootContextFor } from "../engine/search-core.js";
 import {
   sessionEvents, SESSION_EVENT_MAX,
   evaluateAlertsAfterRecall, incrementSessionEventCounter,
@@ -36,20 +37,35 @@ const RECALL_STOPWORDS = new Set([
 export function createRecallRouter(db: WorkspaceDB, embeddings?: EmbeddingEngine): Router {
   const router = Router();
 
-  // ─── Keyword search ────────────────────────────────────────────────────────
-  router.get("/api/search", (req, res) => {
+  // ─── Search ────────────────────────────────────────────────────────────────
+  // Same three-signal scorer as the MCP workspace_search (engine/search-core.ts) —
+  // every door ranks the same way. Was: bare LIKE scan ORDERED BY access_count,
+  // i.e. popularity — recently-poked blocks outranked actual matches.
+  router.get("/api/search", async (req, res) => {
     try {
       const q = (req.query.q as string) || "";
       const limit = Number(req.query.limit) || 5;
+      const type = (req.query.type as string) || undefined;
       if (!q) return res.json([]);
-      const results = db.keywordSearch(q, limit);
+      const { hits } = await searchBlocks(db, embeddings, { query: q, type, limit });
       // Currency annotation — superseded blocks stay active (edge = currency, not status);
       // a bare search hit must carry what replaced it so stale can't read as current.
-      const supersededBy = db.getSupersededByLabels(results.map((b) => b.id));
-      const slim = results.map(({ embedding: _e, content: _c, ...b }) => ({
-        ...b,
-        ...(supersededBy.has(b.id) ? { superseded_by: supersededBy.get(b.id) } : {}),
-      }));
+      const supersededBy = db.getSupersededByLabels(hits.map(({ block }) => block.id));
+      // Root context per hit — judge relevance from the root's one-liner without
+      // resolving project_id block-by-block.
+      const rootCtx = rootContextFor(db, hits.map(({ block }) => block));
+      const slim = hits.map(({ block, score, matchTypes }) => {
+        const { embedding: _e, content: _c, ...b } = block;
+        return {
+          ...b,
+          score: Math.round(score * 100) / 100,
+          match_types: matchTypes,
+          ...(typeof block.project_id === "string" && rootCtx.has(block.project_id)
+            ? rootCtx.get(block.project_id)!
+            : {}),
+          ...(supersededBy.has(block.id) ? { superseded_by: supersededBy.get(block.id) } : {}),
+        };
+      });
       res.json(slim);
     } catch (e) { res.status(500).json({ error: String(e) }); }
   });
