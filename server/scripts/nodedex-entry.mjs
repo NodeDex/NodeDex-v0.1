@@ -24,6 +24,9 @@ const HELP = `nodedex — persistent knowledge-graph memory for AI agents
 
 Usage:
   nodedex run       Start the MCP + API server (+ any enabled capture watchers)
+  nodedex connect   Print the connection card: the RIGHT url per client location
+                    (host / Docker / LAN), token rule, and copy-paste test commands.
+                    --json for machine-readable (agents).
   nodedex tui       Launch the operator console
   nodedex onboard   Run the setup wizard (provider / model / port / db)
   nodedex setup     Same as onboard; with flags = HEADLESS setup (for agents/scripts):
@@ -203,11 +206,86 @@ function launchTui(extraArgs = []) {
   child.on("exit", (code) => process.exit(code ?? 0));
 }
 
+// ─── `nodedex connect` — the connection card ───────────────────────────────────
+// THE fix for "connecting is messy": one command that reports ground truth instead
+// of the user/agent guessing at ip × port × token. Reads the live server list
+// (tui-session.json), probes health, and prints the RIGHT url for each client
+// location + the exact test command to run from there. --json for agents.
+async function connectCard() {
+  const asJson = args.includes("--json");
+  let session = {};
+  try { session = JSON.parse(readFileSync(join(homedir(), ".nodedex", "tui-session.json"), "utf8")); } catch { /* none */ }
+  let managed = Array.isArray(session?.managed) ? session.managed : [];
+  if (managed.length === 0) {
+    // No TUI-managed record — probe the config/default port directly (headless installs).
+    let port = 3001;
+    try { port = JSON.parse(readFileSync(join(homedir(), ".nodedex", "config.json"), "utf8"))?.port || 3001; } catch { /* default */ }
+    managed = [{ port, token: process.env.NODEDEX_API_TOKEN || "" }];
+  }
+
+  const servers = [];
+  for (const m of managed) {
+    if (!m?.port) continue;
+    let up = false, db = null;
+    try {
+      const r = await fetch(`http://127.0.0.1:${m.port}/api/health`, { signal: AbortSignal.timeout(2500) });
+      up = r.ok;
+      try { db = (await r.json())?.db ?? null; } catch { /* health may be bodyless */ }
+    } catch { /* down */ }
+    servers.push({ port: m.port, token: m.token || "", up, db });
+  }
+
+  // Best-effort LAN address (for a remote machine / LAN agent).
+  const { networkInterfaces } = await import("node:os");
+  let lanIp = null;
+  for (const ifaces of Object.values(networkInterfaces() || {})) {
+    for (const i of ifaces || []) {
+      if (i.family === "IPv4" && !i.internal && !String(i.address).startsWith("169.254.")) { lanIp = i.address; break; }
+    }
+    if (lanIp) break;
+  }
+
+  if (asJson) {
+    console.log(JSON.stringify({
+      token_rule: "same-machine connections NEVER need the token; Docker/remote ALWAYS do (unless NODEDEX_STRICT_TOKEN=1)",
+      servers: servers.map((s) => ({
+        up: s.up, port: s.port, db: s.db,
+        from_this_machine: { mcp: `http://127.0.0.1:${s.port}/mcp`, token_needed: false },
+        from_docker: { mcp: `http://host.docker.internal:${s.port}/mcp`, token_needed: !!s.token, token: s.token || null, linux_note: "add --add-host=host.docker.internal:host-gateway" },
+        from_lan: lanIp ? { mcp: `http://${lanIp}:${s.port}/mcp`, token_needed: !!s.token, token: s.token || null, note: "server must be started with NODEDEX_BIND_HOST=0.0.0.0" } : null,
+      })),
+    }, null, 2));
+    return;
+  }
+
+  if (servers.length === 0) { console.log("[nodedex connect] no server known — run `nodedex run` (or the TUI) first."); return; }
+  console.log("NodeDex connection card — the ONE token rule: same machine = no token; Docker/remote = token.\n");
+  for (const s of servers) {
+    console.log(`● port ${s.port}  ${s.up ? "UP" : "DOWN — start it: nodedex run"}${s.db ? `  db=${s.db}` : ""}`);
+    console.log(`  From THIS machine (Claude Code, local agents):`);
+    console.log(`    http://127.0.0.1:${s.port}/mcp        (no token, ever)`);
+    console.log(`    test: curl http://127.0.0.1:${s.port}/api/health`);
+    console.log(`  From INSIDE Docker (agent in a container):`);
+    console.log(`    http://host.docker.internal:${s.port}/mcp${s.token ? `   + header  Authorization: Bearer ${s.token}` : "   (no token configured — set one for network exposure)"}`);
+    console.log(`    test (run INSIDE the container): curl ${s.token ? `-H "Authorization: Bearer ${s.token}" ` : ""}http://host.docker.internal:${s.port}/api/health`);
+    console.log(`    Linux: add  --add-host=host.docker.internal:host-gateway  to the container.`);
+    if (lanIp) console.log(`  From ANOTHER machine on your network: http://${lanIp}:${s.port}/mcp  (token required; server needs NODEDEX_BIND_HOST=0.0.0.0)`);
+    console.log("");
+  }
+  console.log(`If a Docker connect fails: (1) run the in-container curl above — if it hangs, it's networking
+(host-gateway flag / Windows firewall "allow" prompt for node), not NodeDex; (2) 401 = missing/wrong
+token header; (3) NEVER use "localhost" from a container (that's the container itself).`);
+}
+
 switch (cmd) {
   case "":
   case "run":
   case "start":
     startServer();
+    break;
+  case "connect":
+  case "doctor":
+    void connectCard();
     break;
   case "tui":
   case "dashboard":

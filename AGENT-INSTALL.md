@@ -60,6 +60,10 @@ watchers start with it (you'll see `capture watcher started` lines).
 
 Then verify: call `workspace_stats` — a fresh graph reports 0 blocks without erroring.
 
+Connection trouble (Docker, wrong port, token confusion)? Run
+`node scripts/nodedex-entry.mjs connect` — it prints the correct URL + a test command for
+every client location. The one token rule: same machine = no token; Docker/remote = token.
+
 **5. Report back to the user**
 Tell them: server running (port, db name), capture on/off per host, and that memory builds
 automatically as they work — browsable via `npm run dev` in `nodedex/tui/`. If any step

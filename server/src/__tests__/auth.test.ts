@@ -108,8 +108,14 @@ after(() => {
   }
 });
 
-afterEach(() => { delete process.env.NODEDEX_API_TOKEN; }); // never leak the lock into other suites
+afterEach(() => {
+  delete process.env.NODEDEX_API_TOKEN;    // never leak the lock into other suites
+  delete process.env.NODEDEX_STRICT_TOKEN; // nor strict mode
+});
 
+// CONTRACT (2026-07-02): the token gates the NETWORK, not the machine. These tests
+// run over loopback, so with the token ON they are exempt unless NODEDEX_STRICT_TOKEN=1
+// (the shared-machine escape hatch, which restores the old always-require behavior).
 describe("API auth gate", () => {
   test("token OFF → reads are open (non-breaking)", async () => {
     delete process.env.NODEDEX_API_TOKEN;
@@ -117,32 +123,43 @@ describe("API auth gate", () => {
     assert.equal(res.status, 200);
   });
 
-  test("token ON, no credential → 401 on a data path", async () => {
+  test("token ON, no credential, LOOPBACK → 200 (own machine never needs the token)", async () => {
     process.env.NODEDEX_API_TOKEN = TOKEN;
+    const res = await fetch(`${baseUrl}/api/blocks?limit=1`);
+    assert.equal(res.status, 200);
+  });
+
+  test("token ON + STRICT, no credential → 401 on a data path", async () => {
+    process.env.NODEDEX_API_TOKEN = TOKEN;
+    process.env.NODEDEX_STRICT_TOKEN = "1";
     const res = await fetch(`${baseUrl}/api/blocks?limit=1`);
     assert.equal(res.status, 401);
   });
 
-  test("token ON, correct x-nodedex-token → 200", async () => {
+  test("token ON + STRICT, correct x-nodedex-token → 200", async () => {
     process.env.NODEDEX_API_TOKEN = TOKEN;
+    process.env.NODEDEX_STRICT_TOKEN = "1";
     const res = await fetch(`${baseUrl}/api/blocks?limit=1`, { headers: { "x-nodedex-token": TOKEN } });
     assert.equal(res.status, 200);
   });
 
-  test("token ON, correct Authorization: Bearer → 200", async () => {
+  test("token ON + STRICT, correct Authorization: Bearer → 200", async () => {
     process.env.NODEDEX_API_TOKEN = TOKEN;
+    process.env.NODEDEX_STRICT_TOKEN = "1";
     const res = await fetch(`${baseUrl}/api/blocks?limit=1`, { headers: { authorization: `Bearer ${TOKEN}` } });
     assert.equal(res.status, 200);
   });
 
-  test("token ON, wrong token → 401", async () => {
+  test("token ON + STRICT, wrong token → 401", async () => {
     process.env.NODEDEX_API_TOKEN = TOKEN;
+    process.env.NODEDEX_STRICT_TOKEN = "1";
     const res = await fetch(`${baseUrl}/api/blocks?limit=1`, { headers: { "x-nodedex-token": "nope" } });
     assert.equal(res.status, 401);
   });
 
-  test("token ON → writes are gated too (POST without credential → 401)", async () => {
+  test("token ON + STRICT → writes are gated too (POST without credential → 401)", async () => {
     process.env.NODEDEX_API_TOKEN = TOKEN;
+    process.env.NODEDEX_STRICT_TOKEN = "1";
     const res = await fetch(`${baseUrl}/api/blocks`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ label: "should_not_save", type: "fact", essence: "x" }),
@@ -150,8 +167,9 @@ describe("API auth gate", () => {
     assert.equal(res.status, 401);
   });
 
-  test("token ON → /api/health stays open (supervisor exemption)", async () => {
+  test("token ON + STRICT → /api/health stays open (supervisor exemption)", async () => {
     process.env.NODEDEX_API_TOKEN = TOKEN;
+    process.env.NODEDEX_STRICT_TOKEN = "1";
     const res = await fetch(`${baseUrl}/api/health`);
     assert.equal(res.status, 200);
   });

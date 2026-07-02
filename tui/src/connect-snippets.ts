@@ -32,6 +32,10 @@ export function buildConnectSnippets(p: SnippetParams): string {
 
 MCP endpoint (Streamable HTTP): ${p.mcpUrl}
 ${p.token ? `Auth header: Authorization: Bearer ${p.token}\n` : ""}
+The ONE token rule: connections from THIS machine never need the token; Docker/remote
+connections always do. Lost? \`nodedex connect\` prints the right URL + test command
+for every client location.
+
 Two wires, set up separately:
 1. **READ** — connect your agent to the MCP endpoint below (gives it the memory tools).
 2. **CAPTURE** — wire finished turns into the pipeline (without this the graph stays EMPTY).

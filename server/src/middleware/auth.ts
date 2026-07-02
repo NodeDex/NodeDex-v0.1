@@ -73,19 +73,36 @@ export function safeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+// ─── Loopback exemption (the ONE token rule) ────────────────────────────────
+// The token exists to gate NETWORK exposure (a 0.0.0.0 bind for Docker/remote
+// agents). A same-machine client (Claude Code sitting next to a dockerized
+// agent) is the owner's own process — making it juggle the token is the #1
+// "connecting is messy" complaint. So: requests arriving over loopback are
+// token-exempt; anything with a network source address must authenticate.
+// TCP source addresses can't be spoofed for an established connection, so this
+// is a sound trust boundary for a single-owner tool. Shared/multi-user machines
+// that want local strictness set NODEDEX_STRICT_TOKEN=1.
+export function isLoopbackRequest(req: Request): boolean {
+  if ((process.env.NODEDEX_STRICT_TOKEN || "").trim() === "1") return false;
+  const a = (req.socket?.remoteAddress || "").trim();
+  return a === "127.0.0.1" || a === "::1" || a === "::ffff:127.0.0.1";
+}
+
 // App-level gate. When the token is OFF: pass everything, stamping the owner
 // identity (single-owner tool). When ON: require a valid credential on every
 // /api/* path except those the caller exempts (health for supervisors, the
-// chat-proxy BYO-key passthrough, and non-/api pages like /upgrade).
+// chat-proxy BYO-key passthrough, non-/api pages like /upgrade) — and except
+// loopback clients (see isLoopbackRequest: the token gates the NETWORK).
 export function requireAuth(opts: { exempt: (path: string) => boolean }) {
   return (req: Request, res: Response, next: NextFunction) => {
     req.auth = { kind: "owner" }; // default identity; replaced below if a token authenticates
     if (!apiTokenEnabled()) return next();
     if (opts.exempt(req.path)) return next();
+    if (isLoopbackRequest(req)) return next(); // own machine — the token gates the network
     const identity = validateCredential(extractCredential(req));
     if (!identity) {
       return res.status(401).json({
-        error: "Unauthorized — set header 'x-nodedex-token' or 'Authorization: Bearer <token>' (NODEDEX_API_TOKEN is enabled)",
+        error: "Unauthorized — set header 'x-nodedex-token' or 'Authorization: Bearer <token>' (NODEDEX_API_TOKEN is enabled; only same-machine connections are exempt)",
       });
     }
     req.auth = identity;

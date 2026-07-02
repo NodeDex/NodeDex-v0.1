@@ -21,7 +21,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine } from "../engine/embeddings.js";
 import { buildWorkspaceServer } from "../mcp-server.js";
-import { apiTokenEnabled, validateCredential, extractCredential } from "../middleware/auth.js";
+import { apiTokenEnabled, validateCredential, extractCredential, isLoopbackRequest } from "../middleware/auth.js";
 
 export function createMcpHttpRouter(db: WorkspaceDB, embeddings: EmbeddingEngine): Router {
   const router = Router();
@@ -31,6 +31,7 @@ export function createMcpHttpRouter(db: WorkspaceDB, embeddings: EmbeddingEngine
   // Same owner-token check as the rest of the API (the global gate exempts non-/api paths).
   const authed = (req: Request, res: Response): boolean => {
     if (!apiTokenEnabled()) return true; // open when no token configured (localhost default)
+    if (isLoopbackRequest(req)) return true; // own machine — the token gates the network
     if (validateCredential(extractCredential(req))) return true;
     res.status(401).json({
       jsonrpc: "2.0",
