@@ -2696,19 +2696,30 @@ export async function runAutoReflect(
         // the old single call), so the rate-limit checkpoint semantics are
         // unchanged: nothing is applied on a mid-run rate limit, and the retry
         // re-runs the whole pass (createRelation is idempotent regardless).
-        const p4Batches = chunkForPass4(newBlocksForP4);
+        const p4Queue = chunkForPass4(newBlocksForP4);
+        const p4BatchTotal = p4Queue.length;
         const p4Relations: Array<{ source_id: string; type: string; target_id: string; reason?: string }> = [];
         let p4AnySuccess = false;
         let p4RateLimited = false;
+        let p4Processed = 0;
+        let p4Splits = 0;
+        // A FAILED batch (truncation-shaped: result null, not rate-limited) is REQUEUED
+        // BY BISECTION: output size scales with batch size, so halving and retrying both
+        // halves is the retry that can actually succeed — unlike the provider's same-size
+        // retry, which is a no-op at the model's output ceiling. Split floor of 4 (halves
+        // of ≥2): a 2-3 block batch that still fails is not a size problem — skip it.
+        // Split budget caps the extra calls so a systemically-failing provider can't loop.
+        const P4_MAX_SPLITS = 8;
         const p4ThinkingParts: string[] = [];
         const _t4 = Date.now();
-        for (let bi = 0; bi < p4Batches.length; bi++) {
-          const batch = p4Batches[bi]!;
+        while (p4Queue.length > 0) {
+          const batch = p4Queue.shift()!;
+          p4Processed++;
           // Slice mode: rebuild the candidate slice for THIS batch only — tighter,
           // more relevant context per call. Whole-graph mode: the context is the
           // existing graph (independent of the new blocks), so reuse it.
           let batchContext = freshContext;
-          if (p4SliceMode && p4Batches.length > 1) {
+          if (p4SliceMode && (p4BatchTotal > 1 || p4Splits > 0)) {
             const raw = batch.map((nb) => freshBlockById.get(nb.id)).filter((b): b is NonNullable<typeof b> => !!b);
             batchContext = buildPass4Slice(db, raw).context;
           }
@@ -2717,13 +2728,18 @@ export async function runAutoReflect(
           if (!_pass4Provider || p4.model) _pass4Provider = { model: p4.model, attempts: p4.attempts };
           if (p4.rateLimited) { p4RateLimited = true; break; }
           if (p4.thinking) p4ThinkingParts.push(p4.thinking);
+          const total = p4BatchTotal + p4Splits;
           if (p4.result) {
             p4AnySuccess = true;
             if (p4.result.relations?.length) p4Relations.push(...p4.result.relations);
-          }
-          // A non-rate-limit failure (e.g. truncation) skips ONLY this batch.
-          if (p4Batches.length > 1) {
-            console.log(`Auto-Reflect Pass 4: batch ${bi + 1}/${p4Batches.length} (${batch.length} block(s)) → ${p4.result ? `${p4.result.relations?.length ?? 0} relation(s)` : "failed, batch skipped"}`);
+            if (total > 1) console.log(`Auto-Reflect Pass 4: batch ${p4Processed}/${total} (${batch.length} block(s)) → ${p4.result.relations?.length ?? 0} relation(s)`);
+          } else if (batch.length >= 4 && p4Splits < P4_MAX_SPLITS) {
+            const mid = Math.ceil(batch.length / 2);
+            p4Queue.unshift(batch.slice(0, mid), batch.slice(mid));
+            p4Splits++;
+            console.log(`Auto-Reflect Pass 4: batch ${p4Processed}/${total} (${batch.length} block(s)) failed → split ${mid}+${batch.length - mid}, requeued`);
+          } else {
+            console.log(`Auto-Reflect Pass 4: batch ${p4Processed}/${total} (${batch.length} block(s)) failed — skipped (${batch.length} block(s) left unlinked this run)`);
           }
         }
         _passWallMs.pass4 = Date.now() - _t4;
