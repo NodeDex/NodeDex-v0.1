@@ -129,7 +129,7 @@ Server-side and portable (any MCP host). "Surface the chain and its linked path,
 
 **What it's for:** Finding blocks when you don't know the label. The concept overlap signal enables cross-domain retrieval — a query about "flow control" can surface rate-limiting blocks tagged `backpressure`.
 
-**When to use it:** When you don't know the exact label. For dead-end checks, use the REST endpoint (`GET /api/blocks?label_prefix=<project>_dead_end&q=<concept>`) — it's exact, never cross-project, and cheaper.
+**When to use it:** When you don't know the exact label. For dead-end checks, use the REST endpoint (`GET /api/blocks?project=<project>&type=dead_end&q=<concept>`) — it's exact, never cross-project, and cheaper. (Filter by `type`, not label prefix: labels hyphenate multi-word types — `<project>_dead-end_…` — so an underscore prefix silently matches nothing.)
 
 ---
 

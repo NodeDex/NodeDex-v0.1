@@ -79,8 +79,9 @@ alternative "what replaced it (if known)"
 
 **Rule 3:** Before any agent proposes an approach:
 ```bash
-GET /api/blocks?project=<project>&label_prefix=<project>_dead_end&q=<concept>
+GET /api/blocks?project=<project>&type=dead_end&q=<concept>
 ```
+(Filter by `type`, not label prefix — labels hyphenate multi-word types: `<project>_dead-end_…`.)
 
 ---
 

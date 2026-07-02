@@ -62,16 +62,16 @@ Pinecone, Weaviate, Qdrant — they are search indexes on stored content. Nodede
 I looked at every dead end in the beacon project. Four of them:
 
 ```
-beacon_dead_end_synchronous-replication-for-read-replicas
+beacon_dead-end_synchronous-replication-for-read-replicas
 → "write latency increased from 1.8ms to 290ms for clinical vitals"
 
-beacon_dead_end_kafka-streams-for-real-time-alerting  
+beacon_dead-end_kafka-streams-for-real-time-alerting  
 → "cold-start latency 8-12 seconds, 1.4GB per instance OOM crashes on edge devices"
 
-beacon_dead_end_microservices-first-architecture-shelved
+beacon_dead-end_microservices-first-architecture-shelved
 → "team of six spending more time on service meshes than building product"
 
-orion_dead_end_redis-cluster-for-rate-limiting
+orion_dead-end_redis-cluster-for-rate-limiting
 → "replication lag caused inconsistent token counts, clients exceeded limits by up to 12%"
 ```
 
@@ -81,7 +81,7 @@ When Rule 3 of the agent protocol fires (dead-end check before any new proposal)
 
 This is categorically different from any vector-based memory system. Vector systems store what happened. Nodedex specifically tracks what **failed** so it is never proposed again. The dead end check is mandatory — it runs before any new approach is suggested. Dead ends are the system's immune memory.
 
-I also noticed something subtle: the `beacon_dead_end_synchronous-replication-for-read-replicas` block has outgoing `prompted_by` edges pointing to the async replication decisions that came *after* it. The dead end knows what it caused. Two later decisions exist specifically because this failure happened — and the graph records that causality explicitly.
+I also noticed something subtle: the `beacon_dead-end_synchronous-replication-for-read-replicas` block has outgoing `prompted_by` edges pointing to the async replication decisions that came *after* it. The dead end knows what it caused. Two later decisions exist specifically because this failure happened — and the graph records that causality explicitly.
 
 ---
 
@@ -119,7 +119,7 @@ agent-meta_constraint_navigation-benchmark-untested-multi-hop-reasoning
 → "The existing benchmark does not test multi-hop reasoning, 
    which requires following prompt-referenced relations across chains"
 
-agent-meta_dead_end_synchronous-replication-read-replicas-example
+agent-meta_dead-end_synchronous-replication-read-replicas-example
 → [the pipeline's own rule about not using real project concepts in prompt examples]
 ```
 

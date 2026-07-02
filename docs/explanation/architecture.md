@@ -85,8 +85,9 @@ The naming convention `{project}_{entity}_{type}_{concept}` is a file path.
 When you know what you want, use label filters — no scoring, no variance:
 
 ```bash
-# Rule 3: dead-end check before proposing anything
-GET /api/blocks?label_prefix=forge_dead_end&q=jwt
+# Rule 3: dead-end check before proposing anything (type filter, not label prefix —
+# labels hyphenate multi-word types: forge_dead-end_…)
+GET /api/blocks?project=forge&type=dead_end&q=jwt
 
 # All constraints on a project
 GET /api/blocks?type=constraint&project=helios
@@ -139,7 +140,7 @@ Every meaningful connection between blocks is a typed relation:
 
 **Why `supersedes` keeps history:** When a decision changes, you want to know what it was before and why it changed. The old block stays, the new one points at it with `supersedes`. An agent sees the new block in recall but can traverse back to understand the history.
 
-**Why `part_of` is non-negotiable:** Dead-end checks query by `label_prefix=project_dead_end`. Without a `part_of` relation to the project root, the block won't surface in that query. A dead end with no `part_of` is effectively invisible — it cannot protect against repeating past mistakes.
+**Why `part_of` is non-negotiable:** Dead-end checks query by `project=X&type=dead_end`. Without a link to the project root, the block won't surface in that query. A dead end with no project link is effectively invisible — it cannot protect against repeating past mistakes.
 
 ---
 
@@ -346,7 +347,7 @@ and dead ends (approach abandoned). Double-saving creates duplicates.
 
 **Rule 3 — Check dead ends before suggesting**
 ```bash
-GET /api/blocks?label_prefix={project}_dead_end&q={concept}
+GET /api/blocks?project={project}&type=dead_end&q={concept}
 GET /api/blocks?type=constraint&project={project}
 ```
 Suggesting something that already failed is the system's worst outcome.

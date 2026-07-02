@@ -20,7 +20,7 @@ Example — same four blocks, both structures active simultaneously:
 CAUSAL CHAIN (vertical — what led to what):
   atlas_fact_json-no-schema-enforcement
           ↓  prompted_by
-  atlas_dead_end_json-serialization
+  atlas_dead-end_json-serialization
           ↓  prompted_by
   atlas_decision_avro-serialization
           ↓  prompted_by
@@ -28,7 +28,7 @@ CAUSAL CHAIN (vertical — what led to what):
 
 CONTAINMENT (horizontal — where each block lives):
   atlas_fact_json-no-schema-enforcement  ──part_of──▶  atlas
-  atlas_dead_end_json-serialization      ──part_of──▶  atlas
+  atlas_dead-end_json-serialization      ──part_of──▶  atlas
   atlas_decision_avro-serialization      ──part_of──▶  atlas
   atlas_task_marcus-schema-registry      ──part_of──▶  atlas
 ```

@@ -12,7 +12,7 @@ GET  /api/session                                        # block count, projects
 GET  /api/tree?depth=1                                   # project tree with constraints at top level
 
 # Dead-end check (always before proposing an approach)
-GET  /api/blocks?project=X&label_prefix=X_dead_end&q=Y  # exact structural filter — zero false positives
+GET  /api/blocks?project=X&type=dead_end&q=Y             # exact structural filter — zero false positives
 GET  /api/blocks?project=X&type=constraint               # constraint check
 
 # Recall
@@ -85,9 +85,14 @@ Filters (combine freely):
 
 **Dead-end check pattern (Rule 3):**
 ```bash
-GET /api/blocks?project=forge&label_prefix=forge_dead_end&q=jwt
+GET /api/blocks?project=forge&type=dead_end&q=jwt
 ```
-This is exact structural filtering — it only returns blocks from the `forge` project with `dead_end` in the label. No false positives from other projects.
+This is exact structural filtering — it only returns `dead_end`-typed blocks from the `forge` project. No false positives from other projects.
+
+> ⚠ Filter by `type=dead_end`, not by label prefix. In labels, multi-word types are
+> hyphenated (`forge_dead-end_…` — underscores separate label dimensions only), so
+> `label_prefix=forge_dead_end` can never match and silently returns `[]` — a false
+> "no dead ends" pass.
 
 ### `GET /api/blocks/:id`
 Returns block at surface level. Add `?detail=content`, `?detail=relations`, or `?detail=full` for more.
@@ -217,7 +222,7 @@ Designed for:
 ```json
 {
   "goals": { "vision": "...", "macro": "...", "micro": "...", "task": "..." },
-  "dead_ends": [{ "label": "forge_dead_end_redis", "essence": "...", "unique": { "reason": "..." } }],
+  "dead_ends": [{ "label": "forge_dead-end_redis", "essence": "...", "unique": { "reason": "..." } }],
   "constraints": [{ "label": "forge_constraint_hipaa", "essence": "..." }],
   "open_tasks": [{ "label": "forge_task_setup-db", "essence": "..." }],
   "block_ids": ["blk_xxx", ...],
