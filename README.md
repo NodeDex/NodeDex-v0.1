@@ -94,6 +94,11 @@ The agent is stateless by default. NodeDex makes it stateful. The graph is the i
 
 ## Setup
 
+> **Shortcut — let your agent install it.** If you already run an agent with shell access
+> (Claude Code, OpenClaw, Hermes…), paste **[AGENT-INSTALL.md](AGENT-INSTALL.md)** into it:
+> the agent clones, builds, runs a headless setup (asking you the three consent questions),
+> starts the server, and connects itself. The steps below are the same thing done by hand.
+
 **Prerequisites — install these first.** The project's own commands below (`git clone`,
 `npm install`, `npm run build`, `npm run dev`) are **identical on macOS, Linux, and Windows**.
 What differs per OS is getting the two underlying tools installed:

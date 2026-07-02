@@ -23,12 +23,19 @@ const cmd = (args[0] || "").toLowerCase();
 const HELP = `nodedex — persistent knowledge-graph memory for AI agents
 
 Usage:
-  nodedex run       Start the MCP + API server
+  nodedex run       Start the MCP + API server (+ any enabled capture watchers)
   nodedex tui       Launch the operator console
   nodedex onboard   Run the setup wizard (provider / model / port / db)
+  nodedex setup     Same as onboard; with flags = HEADLESS setup (for agents/scripts):
+    --provider openrouter --key sk-or-...   [--model google/gemini-2.5-flash-lite]
+    --provider local --base-url http://localhost:11434/v1 --model <id>
+    [--port 3001] [--db <name>] [--capture hermes,claude-code | none] [--dry-run]
   nodedex help      Show this message
 
-With no command, nodedex starts the server (same as \`nodedex run\`).`;
+With no command, nodedex starts the server (same as \`nodedex run\`).
+Headless example (what an agent runs after asking its user):
+  nodedex setup --provider openrouter --key sk-or-... --db memory --capture claude-code
+  nodedex run`;
 
 // The server is env-only; the TUI normally injects provider/port/db env at launch
 // (tui/src/config.ts: providerEnv + launchServer). `nodedex run` does the SAME
@@ -75,6 +82,103 @@ function startServer() {
   // On Windows a bare absolute path ("C:\\...") is rejected by the ESM loader;
   // it must be a file:// URL.
   import(pathToFileURL(distServer).href);
+  startEnabledWatchers();
+}
+
+// Headless path parity with the TUI: `nodedex run` also brings up whichever capture
+// watchers the config enables (the TUI spawns its own when it runs; this covers
+// server-only / agent-driven installs where no TUI is ever opened).
+function startEnabledWatchers() {
+  let c = {};
+  try { c = JSON.parse(readFileSync(join(homedir(), ".nodedex", "config.json"), "utf8")); } catch { return; }
+  const defs = [
+    { key: "hermesCapture", script: "hermes-statedb-watcher.mjs", name: "hermes" },
+    { key: "claudeCapture", script: "claude-code-watcher.mjs", name: "claude-code" },
+  ];
+  for (const d of defs) {
+    if (!c[d.key] || c[d.key].enabled === false) continue; // only spawn what setup/TUI explicitly enabled
+    const script = resolve(here, "../adapters", d.script);
+    if (!existsSync(script)) continue;
+    const child = spawn(process.execPath, [script], { cwd: resolve(here, ".."), stdio: ["ignore", "inherit", "inherit"] });
+    child.on("error", (e) => console.error(`[nodedex] ${d.name} watcher failed to start: ${e.message}`));
+    console.error(`[nodedex] ${d.name} capture watcher started (pid ${child.pid}).`);
+  }
+}
+
+// ─── Headless setup (agent/script-driven — no TUI) ─────────────────────────────
+// Writes the SAME ~/.nodedex/config.json the wizard writes, so `nodedex run`, the
+// TUI, and the watchers all pick it up identically. Deterministic on purpose: an
+// agent installing NodeDex for its user runs ONE command instead of improvising.
+function flagValue(name) {
+  const i = args.indexOf(name);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+
+async function headlessSetup() {
+  const provider = (flagValue("--provider") || "").toLowerCase();
+  const dryRun = args.includes("--dry-run");
+  if (provider !== "openrouter" && provider !== "local") {
+    console.error("[nodedex setup] --provider must be 'openrouter' or 'local'. See `nodedex help`.");
+    process.exit(1);
+  }
+  const patch = { provider, onboarded: true };
+
+  if (provider === "openrouter") {
+    const key = flagValue("--key");
+    if (!key) { console.error("[nodedex setup] --key sk-or-... is required for --provider openrouter."); process.exit(1); }
+    // Same validation as the wizard: a typo fails HERE, not at first extraction.
+    try {
+      const r = await fetch(`${OPENROUTER_BASE_URL}/key`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) });
+      if (!r.ok) { console.error(`[nodedex setup] OpenRouter rejected the key (${r.status}).`); process.exit(1); }
+    } catch (e) {
+      console.error(`[nodedex setup] couldn't reach OpenRouter to validate the key (${e?.message ?? e}).`);
+      process.exit(1);
+    }
+    patch.openrouter_key = key;
+    patch.model = flagValue("--model") || "google/gemini-2.5-flash-lite";
+  } else {
+    const baseUrl = flagValue("--base-url");
+    const model = flagValue("--model");
+    if (!baseUrl || !model) { console.error("[nodedex setup] --base-url and --model are required for --provider local."); process.exit(1); }
+    patch.base_url = baseUrl;
+    patch.model = model;
+  }
+
+  const port = Number(flagValue("--port"));
+  patch.port = Number.isInteger(port) && port > 0 ? port : 3001;
+
+  const db = flagValue("--db") || "workspace";
+  patch.dbPath = /[\\/]/.test(db)
+    ? db // explicit path given
+    : join(homedir(), ".nodedex", `${db.trim().replace(/[^a-z0-9_-]/gi, "-").replace(/^-+|-+$/g, "") || "workspace"}.db`);
+
+  // Capture consent is EXPLICIT here (no checkbox screen): the caller — typically an
+  // agent that just asked its user — names the hosts. Default: none (read-only setup).
+  const capture = (flagValue("--capture") || "none").toLowerCase();
+  const hosts = new Set(capture === "none" ? [] : capture.split(",").map((s) => s.trim()).filter(Boolean));
+  patch.hermesCapture = { enabled: hosts.has("hermes") };
+  patch.claudeCapture = { enabled: hosts.has("claude-code") || hosts.has("claude") };
+
+  const configPath = join(homedir(), ".nodedex", "config.json");
+  let existing = {};
+  try { existing = JSON.parse(readFileSync(configPath, "utf8")); } catch { /* fresh install */ }
+  const merged = { ...existing, ...patch };
+
+  if (dryRun) {
+    const masked = { ...merged, openrouter_key: merged.openrouter_key ? merged.openrouter_key.slice(0, 8) + "…" : undefined };
+    console.log("[nodedex setup] DRY-RUN — would write to " + configPath + ":");
+    console.log(JSON.stringify(masked, null, 2));
+    return;
+  }
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  mkdirSync(join(homedir(), ".nodedex"), { recursive: true });
+  writeFileSync(configPath, JSON.stringify(merged, null, 2));
+  console.log(`[nodedex setup] config written → ${configPath}`);
+  console.log(`  provider=${provider}  model=${merged.model}  port=${merged.port}`);
+  console.log(`  db=${merged.dbPath}`);
+  console.log(`  capture: hermes=${patch.hermesCapture.enabled} claude-code=${patch.claudeCapture.enabled}`);
+  console.log(`Next: \`nodedex run\` starts the server (+ enabled watchers).`);
+  console.log(`Connect your agent to http://127.0.0.1:${merged.port}/mcp — snippets: ~/.nodedex/connect-snippets.md (written by the TUI) or the README.`);
 }
 
 // Launch the TUI (operator console + first-run onboarding wizard). The TUI is a
@@ -111,7 +215,9 @@ switch (cmd) {
     break;
   case "onboard":
   case "setup":
-    launchTui(["--onboard"]);
+    // Flags present → headless (agent/script-driven); bare → the interactive wizard.
+    if (args.some((a) => a.startsWith("--"))) void headlessSetup();
+    else launchTui(["--onboard"]);
     break;
   case "help":
   case "-h":
