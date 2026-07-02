@@ -1244,17 +1244,37 @@ export class WorkspaceDB {
       }
     }
 
-    // When a supersedes relation is created, archive the target only if it's a replaceable type.
-    // Dead_ends, facts, constraints, and questions are permanent historical records — never archive them.
-    // Only blueprints and decisions are replaced when superseded.
-    if (params.type === 'supersedes') {
-      const targetBlock = this.getBlock(params.target_id);
-      if (targetBlock && (targetBlock.type === 'blueprint' || targetBlock.type === 'decision')) {
-        this.archiveBlock(params.target_id, `Superseded by ${params.source_id}`);
-      }
-    }
+    // SEMANTIC (2026-07-02): a supersedes relation does NOT archive the target.
+    // The EDGE itself is the source of truth for currency — old block stays visible
+    // history (like a dead_end), with its superseded_by edge telling any reader what
+    // replaced it. Archiving here made superseded decisions INVISIBLE to search/list
+    // (archived is filtered everywhere), so the "we already tried X" signal vanished —
+    // and it was type-inconsistent (only decision/blueprint archived; preferences etc.
+    // stayed active). `archived` is reserved for actual removal-from-view: confirmed
+    // duplicates (executeMerge archives explicitly), TTL expiry, and workspace_forget.
 
     return relation;
+  }
+
+  /**
+   * Batch currency lookup: which of these blocks have been superseded, and by what.
+   * Returns target_id → label of the ACTIVE superseding block. Read paths that list
+   * blocks WITHOUT relations (search, filters) use this so a superseded-but-visible
+   * block can never leak as current — the annotation says what replaced it.
+   */
+  getSupersededByLabels(blockIds: string[]): Map<string, string> {
+    if (!this.db) throw new Error("Database not initialized");
+    const out = new Map<string, string>();
+    if (!blockIds.length) return out;
+    const rows = this.db.prepare(
+      `SELECT r.target_id AS tid, b.label AS lbl
+       FROM relations r JOIN blocks b ON b.id = r.source_id
+       WHERE r.type = 'supersedes' AND r.valid_to IS NULL
+         AND b.status != 'archived'
+         AND r.target_id IN (${blockIds.map(() => "?").join(",")})`
+    ).all(...blockIds) as Array<{ tid: string; lbl: string }>;
+    for (const row of rows) out.set(row.tid, row.lbl);
+    return out;
   }
 
   getRelations(blockId: string): Array<{ type: string; target_id: string; target_label: string; direction: string }> {

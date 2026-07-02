@@ -43,7 +43,13 @@ export function createRecallRouter(db: WorkspaceDB, embeddings?: EmbeddingEngine
       const limit = Number(req.query.limit) || 5;
       if (!q) return res.json([]);
       const results = db.keywordSearch(q, limit);
-      const slim = results.map(({ embedding: _e, content: _c, ...b }) => b);
+      // Currency annotation — superseded blocks stay active (edge = currency, not status);
+      // a bare search hit must carry what replaced it so stale can't read as current.
+      const supersededBy = db.getSupersededByLabels(results.map((b) => b.id));
+      const slim = results.map(({ embedding: _e, content: _c, ...b }) => ({
+        ...b,
+        ...(supersededBy.has(b.id) ? { superseded_by: supersededBy.get(b.id) } : {}),
+      }));
       res.json(slim);
     } catch (e) { res.status(500).json({ error: String(e) }); }
   });

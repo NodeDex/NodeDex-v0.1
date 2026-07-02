@@ -353,6 +353,43 @@ describe("getAllIncomingRelations — inverse type translation (B1 fix)", () => 
   });
 });
 
+// ─── Supersede currency semantics (2026-07-02) ───────────────────────────────
+// The supersedes EDGE is the source of truth for old-vs-current; it must NOT
+// archive the target. Superseded blocks stay visible history (searchable, like
+// dead_ends); read paths annotate them via getSupersededByLabels instead.
+// `archived` is reserved for actual removal: merge dedup, TTL expiry, forget.
+
+describe("supersede does NOT archive — edge carries currency", () => {
+  test("superseding a decision leaves the old decision ACTIVE (visible history)", () => {
+    const oldB = db.createBlock({ label: "cur_old_decision", type: "decision", essence: "use localStorage", content: {}, ttl: "permanent" });
+    const newB = db.createBlock({ label: "cur_new_decision", type: "decision", essence: "use httpOnly cookies", content: {}, ttl: "permanent" });
+    db.createRelation({ source_id: newB.id, target_id: oldB.id, type: "supersedes", created_by: "test" });
+
+    const row = (db as any)["db"].prepare(`SELECT status FROM blocks WHERE id = ?`).get(oldB.id);
+    assert.notEqual(row.status, "archived", "superseded decision must STAY visible — the edge marks currency, not status");
+    assert.ok(db.getAllBlocks().some((b) => b.id === oldB.id), "superseded block still surfaces in active reads");
+  });
+
+  test("getSupersededByLabels maps superseded ids to the ACTIVE superseding label", () => {
+    const oldB = db.createBlock({ label: "cur_map_old", type: "blueprint", essence: "v1 plan", content: {}, ttl: "permanent" });
+    const newB = db.createBlock({ label: "cur_map_new", type: "decision", essence: "v2 shipped", content: {}, ttl: "permanent" });
+    const lone = db.createBlock({ label: "cur_map_lone", type: "fact", essence: "unrelated", content: {}, ttl: "permanent" });
+    db.createRelation({ source_id: newB.id, target_id: oldB.id, type: "supersedes", created_by: "test" });
+
+    const map = db.getSupersededByLabels([oldB.id, lone.id]);
+    assert.equal(map.get(oldB.id), "cur_map_new", "superseded id maps to the superseding block's label");
+    assert.equal(map.has(lone.id), false, "non-superseded id is not annotated");
+    assert.equal(db.getSupersededByLabels([]).size, 0, "empty input → empty map, no throw");
+  });
+
+  test("explicit archive still works and is independent of supersede", () => {
+    const dupe = db.createBlock({ label: "cur_dupe", type: "fact", essence: "duplicate", content: {}, ttl: "permanent" });
+    db.archiveBlock(dupe.id, "merged duplicate");
+    const row = (db as any)["db"].prepare(`SELECT status FROM blocks WHERE id = ?`).get(dupe.id);
+    assert.equal(row.status, "archived", "explicit archive (merge/forget/TTL path) unchanged");
+  });
+});
+
 // ─── DEBT 5 Phase 1 schema additions ──────────────────────────────────────────
 // Verifies the persistence layer: conversation_turns + conversation_turn_ranges
 // tables exist with correct columns, source_excerpt column added to blocks,

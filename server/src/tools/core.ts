@@ -594,6 +594,11 @@ Three signals: semantic similarity, keyword match, and concept overlap. Concept 
           .sort((a, b) => b.score - a.score)
           .slice(0, limit);
 
+        // Currency annotation: superseded blocks stay ACTIVE (the supersedes edge is the
+        // currency marker, not status) — so a bare search hit must say what replaced it,
+        // or stale would leak as current. Batched single query over the result ids.
+        const supersededBy = db.getSupersededByLabels(ranked.map(({ block }) => block.id));
+
         const results = ranked.map(({ block, score, matchTypes }) => ({
           id:          block.id,
           label:       block.label,
@@ -604,6 +609,9 @@ Three signals: semantic similarity, keyword match, and concept overlap. Concept 
           match_types: [...matchTypes],
           is_sensitive: block.is_sensitive,
           locked:      block.locked || false,
+          ...(supersededBy.has(block.id)
+            ? { superseded_by: supersededBy.get(block.id), note: "SUPERSEDED — read the superseding block for current truth" }
+            : {}),
         }));
 
         return ok({
@@ -743,8 +751,13 @@ Results are HEADLINES (label, type, essence) — and most blocks mean little alo
           if (!chainName.has(cid)) chainName.set(cid, db.getBlock(cid)?.label ?? cid);
           return chainName.get(cid) ?? null;
         };
+        // Currency annotation: superseded blocks stay ACTIVE (the edge is the currency
+        // marker, not status) — a typed list must say what replaced them or a stale
+        // decision reads as current. Batched single query over the page.
+        const supersededBy = db.getSupersededByLabels(sliced.map((b) => b.id));
         const results = sliced.map((b) => {
           const row: Record<string, any> = { label: b.label, type: b.type, essence: b.essence, on_chain: onChain((b as any).chain_id) };
+          if (supersededBy.has(b.id)) row.superseded_by = supersededBy.get(b.id);
           // For tasks, status is the headline ("what's still open?") — surface it (+ priority)
           // so the list is usable as a task view without opening each one.
           if (b.type === "task") {
