@@ -16,9 +16,9 @@ const CONFIG = resolve(HOME, "config.json");
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 const DEFAULT_LOCAL_BASE = "http://localhost:11434/v1"; // Ollama; LM Studio = :1234/v1, vLLM = your host
 const OR_MODELS = [
-  "google/gemini-2.5-flash   (recommended — cheap + capable)",
-  "openai/gpt-4o-mini        (cheap, reliable)",
-  "openrouter/owl-alpha      (FREE — but trains on your prompts)",
+  "google/gemini-2.5-flash-lite (recommended — cheapest, 1M ctx)",
+  "google/gemini-2.5-flash      (cheap + capable)",
+  "openai/gpt-4o-mini           (cheap, reliable)",
 ];
 
 const load = () => { try { return JSON.parse(readFileSync(CONFIG, "utf8")); } catch { return {}; } };

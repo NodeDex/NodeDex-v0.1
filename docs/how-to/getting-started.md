@@ -123,7 +123,7 @@ Send your agent a message that gets a reply **>50 chars** (shorter is ignored), 
 turn arriving — **which log depends on your capture path:**
 - **Hermes / Owl (watcher):** `~/.nodedex/tui-logs/hermes-watcher.log` shows `captured stop_id=… → captured`.
 - **Proxy:** the server log (`~/.nodedex/tui-logs/server-<port>.log`) shows `[chat-proxy] inbound turn … → relaying to …` then `[chat-proxy] capture queued`.
-- Either way, the server log then shows `Auto-Reflect COMPREHEND: … blocks` → `PIPELINE v2: … block(s)`, and in the TUI **`blocks`** climbs within ~30–90s (owl-alpha is slow through all passes).
+- Either way, the server log then shows `Auto-Reflect COMPREHEND: … blocks` → `PIPELINE v2: … block(s)`, and in the TUI **`blocks`** climbs within ~30–90s (slower models can take a few minutes).
 
 If the turn never arrives: watcher not running / no server in `tui-session.json` (watcher), or wrong
 host/port / config not loaded (proxy). If it arrives but **`blocks`** stays flat → reply <50 chars,

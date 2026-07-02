@@ -25,18 +25,21 @@ export const OPENROUTER_DEFAULT_MODEL = "google/gemini-2.5-flash";
 export const DEFAULT_LOCAL_BASE_URL = "http://localhost:11434/v1";
 
 // Models offered in the OpenRouter model step. The first is the recommended default
-// (cheap + capable, paid). owl-alpha is FREE but trains on prompts (flagged below).
+// (cheapest capable, 1M context). No free row: free OpenRouter models rate-limit (429)
+// under the pipeline's multi-call bursts, and stealth models (owl-alpha) get delisted.
+// Truly free = the Local provider path (Ollama / LM Studio), no key needed.
 export interface ModelChoice { id: string; label: string; note: string; free?: boolean }
 export const RECOMMENDED_MODELS: ModelChoice[] = [
-  { id: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "recommended — cheap + capable" },
-  { id: "openai/gpt-4o-mini",      label: "GPT-4o mini",      note: "cheap, reliable" },
-  { id: "openrouter/owl-alpha",    label: "Owl Alpha",        note: "FREE — trains on your prompts", free: true },
+  { id: "google/gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", note: "recommended — cheapest, 1M ctx" },
+  { id: "google/gemini-2.5-flash",      label: "Gemini 2.5 Flash",      note: "cheap + capable" },
+  { id: "openai/gpt-4o-mini",           label: "GPT-4o mini",           note: "cheap, reliable" },
 ];
 
-// Known free models that train on submitted prompts — used to warn the user that their
-// inputs may be used to improve the model. Matched case-insensitively as a substring so
-// provider-prefixed ids (openrouter/owl-alpha) and bare ids both hit.
-const TRAINS_ON_PROMPTS = ["owl-alpha"];
+// Models that train on submitted prompts — used to warn the user that their inputs may
+// be used to improve the model. Matched case-insensitively as a substring so
+// provider-prefixed and bare ids both hit. ":free" catches OpenRouter free variants,
+// whose provider data policies generally allow prompt training.
+const TRAINS_ON_PROMPTS = ["owl-alpha", ":free"];
 export function isTrainsOnPrompts(model: string): boolean {
   const m = (model || "").toLowerCase();
   return TRAINS_ON_PROMPTS.some((needle) => m.includes(needle));

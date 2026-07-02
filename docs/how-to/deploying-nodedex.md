@@ -113,7 +113,7 @@ key). Reflection can be paused globally with `~/.nodedex/reflect-pause`.
 AI_PROVIDER=openai-compatible           # or gemini / anthropic
 OPENAI_BASE_URL=https://openrouter.ai/api/v1
 OPENAI_API_KEY=sk-or-...                # the LLM key
-AI_MODEL=openrouter/owl-alpha
+AI_MODEL=google/gemini-2.5-flash-lite
 EMBEDDING_PROVIDER=gemini               # embeddings (OpenRouter doesn't serve them)
 GEMINI_API_KEY=...                      # for embeddings / semantic search
 WORKSPACE_DB_PATH=<abs>/Nodedex/data/workspace.db

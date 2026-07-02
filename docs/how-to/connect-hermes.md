@@ -108,7 +108,7 @@ npm run reconfigure -- --key sk-or-v1-<your-FULL-key>
    `captured stop_id=… → captured`, and the NodeDex **server log**
    (`~/.nodedex/tui-logs/server-<port>.log`) shows
    `Auto-Reflect COMPREHEND: … blocks` → `PIPELINE v2: … block(s)`.
-3. The TUI **`blocks`** count climbs (give it ~30–90s — owl-alpha is slow through all passes).
+3. The TUI **`blocks`** count climbs (give it ~30–90s — slower models can take a few minutes).
 
 Reading the signal:
 - **No `captured` line in the watcher log** → the watcher isn't running (Settings → `hermes capture`
