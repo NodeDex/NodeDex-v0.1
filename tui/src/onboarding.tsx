@@ -22,6 +22,7 @@ import {
 } from "./config.js";
 import { launchServer, genToken } from "./servers.js";
 import { probeServer, setBase } from "./api.js";
+import { writeConnectSnippets } from "./connect-snippets.js";
 
 const README_URL = "https://github.com/NodeDex/NodeDex-v0.1#connect-your-agent";
 
@@ -196,7 +197,18 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
       const probe = await probeServer(url);
-      if (probe.up) { setBase(url); setBusy(false); setServerUrl(url); setStep("connect"); return; }
+      if (probe.up) {
+        setBase(url); setBusy(false); setServerUrl(url);
+        // Ready-to-paste per-host connect config → ~/.nodedex/connect-snippets.md.
+        // Regenerated on every launch so the port/token in it always match this server.
+        const network = bindHost === "0.0.0.0";
+        writeConnectSnippets({
+          mcpUrl: network ? `http://host.docker.internal:${port}/mcp` : `http://127.0.0.1:${port}/mcp`,
+          token,
+          readmeUrl: README_URL,
+        });
+        setStep("connect"); return;
+      }
       await new Promise((r) => setTimeout(r, 500));
     }
     setBusy(false); setStatus(""); setError("Server didn't come up in time — see ~/.nodedex/tui-logs/."); setStep("db");
@@ -542,7 +554,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   }
 
   if (step === "connect") {
-    const mcpUrl = launchNetwork ? `http://host.docker.internal:${chosenPort}/mcp` : `${serverUrl}/mcp`;
+    const mcpUrl = launchNetwork
+      ? `http://host.docker.internal:${chosenPort}/mcp`
+      : `${serverUrl.replace("localhost", "127.0.0.1")}/mcp`;
     return (
       <Frame>
         <Text color={theme.title} bold>✓ Server running</Text>
@@ -555,11 +569,17 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             </Box>
           ) : null}
           <Box marginTop={1} flexDirection="column">
-            <Text color={theme.value}>Point your agent (e.g. Hermes) at that URL, then turn on</Text>
-            <Text color={theme.value}>capture so your turns flow into the graph — for Hermes,</Text>
-            <Text color={theme.value}>Settings → hermes capture.</Text>
+            <Text color={theme.value}>1 · Connect your agent (READ):</Text>
+            <Text color={theme.dim}>{`   Claude Code   claude mcp add --transport http nodedex ${mcpUrl}`}</Text>
+            <Text color={theme.dim}>{`   Hermes        MCP server url → ${mcpUrl}`}</Text>
+            <Text color={theme.dim}>{`   Other hosts   any MCP client → that URL (Streamable HTTP)`}</Text>
           </Box>
-          <Box marginTop={1}><Text color={theme.dim}>Exact connect + capture steps in the README:</Text></Box>
+          <Box marginTop={1} flexDirection="column">
+            <Text color={theme.value}>2 · Wire CAPTURE — without it the graph stays empty:</Text>
+            <Text color={theme.dim}>{`   Hermes → automatic (watcher) · other hosts → README "capture"`}</Text>
+          </Box>
+          <Box marginTop={1}><Text color={theme.dim}>Copy-paste snippets for every host (incl. auth) saved to:</Text></Box>
+          <Text color={theme.accent}>~/.nodedex/connect-snippets.md</Text>
           <Text color={theme.accent}>{README_URL}</Text>
         </Box>
         <Hint keys={[["Enter", "open dashboard"]]} />
