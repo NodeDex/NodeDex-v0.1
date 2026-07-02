@@ -60,6 +60,18 @@ export interface HermesCaptureConfig {
 }
 export const DEFAULT_HERMES_SOURCES = ["tui"];
 
+// Claude Code capture (the JSONL transcript watcher). Same shim-over-core architecture as
+// the Hermes watcher: reads ~/.claude/projects/<project>/<session>.jsonl read-only, assembles
+// turns, posts to the live server. `projects` is the privacy filter: only project-dir slugs
+// in the list are read (["*"] = all). Read live by server/adapters/claude-code-watcher.mjs.
+export interface ClaudeCaptureConfig {
+  enabled?: boolean;       // is the watcher meant to run (the TUI starts/stops it on this)
+  projects?: string[];     // allow-list of ~/.claude/projects dir names; ["*"] = all
+  pollMs?: number;         // poll interval (default 5000)
+  idleFlushMs?: number;    // emit a buffered final turn after this much file silence (default 120000)
+  projectsDir?: string;    // override the transcripts dir (default ~/.claude/projects)
+}
+
 export interface NodedexConfig {
   provider?: Provider;
   openrouter_key?: string;       // openrouter path only
@@ -71,6 +83,7 @@ export interface NodedexConfig {
   dbPath?: string;
   onboarded?: boolean;
   hermesCapture?: HermesCaptureConfig;
+  claudeCapture?: ClaudeCaptureConfig;
 }
 
 export interface DbChoice { name: string; path: string }
@@ -127,6 +140,65 @@ export function loadHermesCapture(): Required<HermesCaptureConfig> {
 export function setHermesCapture(patch: Partial<HermesCaptureConfig>): void {
   const current = loadConfig().hermesCapture ?? {};
   saveConfig({ hermesCapture: { ...current, ...patch } });
+}
+
+/** The current Claude Code-capture config, with defaults filled in. */
+export function loadClaudeCapture(): Required<ClaudeCaptureConfig> {
+  const c = loadConfig().claudeCapture ?? {};
+  const projects = Array.isArray(c.projects) && c.projects.length ? c.projects.map(String) : ["*"];
+  return {
+    // Default ON, same rationale as Hermes: the watcher idles harmlessly when no
+    // ~/.claude/projects exists; the onboarding capture step + Settings are the off switch.
+    enabled: c.enabled !== false,
+    projects,
+    pollMs: Number.isFinite(c.pollMs) && (c.pollMs as number) >= 1000 ? (c.pollMs as number) : 5000,
+    idleFlushMs: Number.isFinite(c.idleFlushMs) && (c.idleFlushMs as number) >= 15000 ? (c.idleFlushMs as number) : 120000,
+    projectsDir: c.projectsDir ?? "",
+  };
+}
+
+/** Patch the Claude Code-capture block (nested merge). */
+export function setClaudeCapture(patch: Partial<ClaudeCaptureConfig>): void {
+  const current = loadConfig().claudeCapture ?? {};
+  saveConfig({ claudeCapture: { ...current, ...patch } });
+}
+
+// ─── Capture-host discovery (the "found on this machine" scan) ──────────────
+// Probes each known host's turn store the same way scanLocalModels probes model
+// servers: cheap existence checks, no host cooperation. The onboarding capture
+// step shows what's found; Settings toggles map to the same watchers.
+export interface CaptureHostInfo {
+  host: "hermes" | "claude-code";
+  label: string;
+  found: boolean;
+  detail: string;        // e.g. "12 sessions across 3 projects" / "state.db present"
+}
+
+export function scanCaptureHosts(): CaptureHostInfo[] {
+  const out: CaptureHostInfo[] = [];
+  // Hermes: the state.db the watcher reads.
+  const hermesDb = process.platform === "win32" && process.env.LOCALAPPDATA
+    ? resolve(process.env.LOCALAPPDATA, "hermes", "state.db")
+    : resolve(homedir(), ".local", "share", "hermes", "state.db");
+  let hermesFound = false;
+  try { hermesFound = readdirSync(resolve(hermesDb, "..")).includes("state.db"); } catch { /* absent */ }
+  out.push({ host: "hermes", label: "Hermes / Owl", found: hermesFound, detail: hermesFound ? "state.db present" : "not installed" });
+  // Claude Code: the transcripts dir.
+  const ccDir = resolve(homedir(), ".claude", "projects");
+  let projects = 0, sessions = 0;
+  try {
+    for (const d of readdirSync(ccDir, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue;
+      let n = 0;
+      try { n = readdirSync(resolve(ccDir, d.name)).filter((f) => f.endsWith(".jsonl")).length; } catch { /* skip */ }
+      if (n > 0) { projects++; sessions += n; }
+    }
+  } catch { /* absent */ }
+  out.push({
+    host: "claude-code", label: "Claude Code", found: projects > 0,
+    detail: projects > 0 ? `${sessions} session${sessions === 1 ? "" : "s"} across ${projects} project${projects === 1 ? "" : "s"}` : "not installed",
+  });
+  return out;
 }
 
 /** Parse a user-typed source list ("tui, telegram" or "*") into a clean array. */

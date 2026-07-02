@@ -14,7 +14,7 @@ import { SettingsTab } from "./settings.js";
 import { ChatTab } from "./chat.js";
 import { fetchDashboard, fetchBalance, getBase, setBase, type Dashboard, type Balance } from "./api.js";
 import { killAllManaged, restoreSession, launchWatcher } from "./servers.js";
-import { loadHermesCapture } from "./config.js";
+import { loadHermesCapture, loadClaudeCapture } from "./config.js";
 import { theme } from "./theme.js";
 import { useTermSize } from "./hooks.js";
 
@@ -100,9 +100,10 @@ export function App() {
     let alive = true;
     (async () => {
       try { const url = await restoreSession(); if (alive && url) setBase(url); } catch { /* fall back to default base */ }
-      // Reconcile Hermes capture: if the user left it enabled, bring the watcher back up with the
-      // servers (the watcher self-locates the live server, so order doesn't matter).
+      // Reconcile capture watchers: whatever the user left enabled comes back up with the
+      // servers (each watcher self-locates the live server, so order doesn't matter).
       try { if (loadHermesCapture().enabled) launchWatcher(); } catch { /* best-effort */ }
+      try { if (loadClaudeCapture().enabled) launchWatcher("claude-code"); } catch { /* best-effort */ }
       if (alive) setBooting(false);
     })();
     return () => { alive = false; };

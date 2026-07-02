@@ -506,28 +506,37 @@ function killChild(m: Managed): void {
   }
 }
 
-// ─── Hermes capture watcher (singleton) ─────────────────────────────────────
-// The state.db watcher is the ONLY working Hermes capture path. It's a plain .mjs adapter that
-// reads Hermes's state.db read-only + posts turns; the TUI owns its lifecycle so the user controls
-// it from Settings (toggle = start/stop) instead of a separate terminal. Its config (source filter,
-// poll) lives in ~/.nodedex/config.json and is re-read by the watcher each poll — so editing the
-// filter in the TUI applies WITHOUT a restart here.
-const WATCHER_SCRIPT = resolve(SERVER_DIR, "adapters", "hermes-statedb-watcher.mjs");
-let watcher: ChildProcess | null = null;
+// ─── Capture watchers (one per host — thin shims over nodedex-capture-core) ─
+// Each watcher reads its host's own turn store read-only (Hermes: state.db; Claude Code:
+// ~/.claude/projects/*.jsonl) and posts turns to the live server. The TUI owns their
+// lifecycle so the user controls them from Settings (toggle = start/stop). Each watcher's
+// config lives in ~/.nodedex/config.json and is re-read by the watcher each poll — so
+// editing a filter in the TUI applies WITHOUT a restart here. Default host stays "hermes"
+// for backward-compatible call sites.
+const WATCHER_DEFS = {
+  hermes:        { script: "hermes-statedb-watcher.mjs", log: "hermes-watcher.log" },
+  "claude-code": { script: "claude-code-watcher.mjs",    log: "claude-code-watcher.log" },
+} as const;
+export type WatcherHost = keyof typeof WATCHER_DEFS;
+export const WATCHER_HOSTS = Object.keys(WATCHER_DEFS) as WatcherHost[];
+const watchers = new Map<WatcherHost, ChildProcess>();
 
-export function isWatcherRunning(): boolean {
-  return !!watcher && watcher.exitCode === null && !watcher.killed;
+export function isWatcherRunning(host: WatcherHost = "hermes"): boolean {
+  const w = watchers.get(host);
+  return !!w && w.exitCode === null && !w.killed;
 }
 
-export function launchWatcher(): { ok: boolean; error?: string } {
-  if (isWatcherRunning()) return { ok: true };
-  if (!existsSync(WATCHER_SCRIPT)) return { ok: false, error: `watcher not found: ${WATCHER_SCRIPT}` };
+export function launchWatcher(host: WatcherHost = "hermes"): { ok: boolean; error?: string } {
+  if (isWatcherRunning(host)) return { ok: true };
+  const def = WATCHER_DEFS[host];
+  const script = resolve(SERVER_DIR, "adapters", def.script);
+  if (!existsSync(script)) return { ok: false, error: `watcher not found: ${script}` };
   try {
     mkdirSync(LOG_DIR, { recursive: true });
-    const out = createWriteStream(resolve(LOG_DIR, "hermes-watcher.log"), { flags: "a" });
+    const out = createWriteStream(resolve(LOG_DIR, def.log), { flags: "a" });
     out.write(`\n=== watcher launch ${new Date().toISOString()} ===\n`);
-    // cwd=SERVER_DIR so the watcher's createRequire resolves better-sqlite3 from server/node_modules.
-    const child = spawn(process.execPath, [WATCHER_SCRIPT], {
+    // cwd=SERVER_DIR so a watcher's createRequire resolves better-sqlite3 from server/node_modules.
+    const child = spawn(process.execPath, [script], {
       cwd: SERVER_DIR,
       env: { ...process.env },
       stdio: ["ignore", "pipe", "pipe"],
@@ -535,21 +544,25 @@ export function launchWatcher(): { ok: boolean; error?: string } {
     });
     child.stdout?.pipe(out);
     child.stderr?.pipe(out);
-    child.on("exit", () => { if (watcher === child) watcher = null; });
-    watcher = child;
+    child.on("exit", () => { if (watchers.get(host) === child) watchers.delete(host); });
+    watchers.set(host, child);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e) };
   }
 }
 
-export function stopWatcher(): void {
-  if (!watcher) return;
-  try {
-    if (process.platform === "win32") spawn("taskkill", ["/PID", String(watcher.pid), "/T", "/F"], { windowsHide: true });
-    else watcher.kill("SIGTERM");
-  } catch { /* already gone */ }
-  watcher = null;
+export function stopWatcher(host?: WatcherHost): void {
+  const hosts = host ? [host] : [...watchers.keys()];
+  for (const h of hosts) {
+    const w = watchers.get(h);
+    if (!w) continue;
+    try {
+      if (process.platform === "win32") spawn("taskkill", ["/PID", String(w.pid), "/T", "/F"], { windowsHide: true });
+      else w.kill("SIGTERM");
+    } catch { /* already gone */ }
+    watchers.delete(h);
+  }
 }
 
 // kill everything the TUI launched (call on app exit)

@@ -20,12 +20,12 @@ import { Box, Text, useInput } from "ink";
 import { Panel } from "./components.js";
 import { theme, glyph, fmtMoney } from "./theme.js";
 import { fetchConfig, postConfig, setReflectPausedRemote, type AdminConfig, type Dashboard, type Balance } from "./api.js";
-import { loadHermesCapture, setHermesCapture, parseSources, loadConfig } from "./config.js";
+import { loadHermesCapture, setHermesCapture, loadClaudeCapture, setClaudeCapture, parseSources, loadConfig } from "./config.js";
 import { launchWatcher, stopWatcher, isWatcherRunning } from "./servers.js";
 
 // The selectable rows, in navigation order (read-only rows are NOT in this list).
-type FieldId = "reflect" | "model" | "fallback" | "autoturns" | "floor" | "cap" | "hermes" | "sources";
-const FIELDS: FieldId[] = ["reflect", "model", "fallback", "autoturns", "floor", "cap", "hermes", "sources"];
+type FieldId = "reflect" | "model" | "fallback" | "autoturns" | "floor" | "cap" | "hermes" | "sources" | "claude" | "ccprojects";
+const FIELDS: FieldId[] = ["reflect", "model", "fallback", "autoturns", "floor", "cap", "hermes", "sources", "claude", "ccprojects"];
 
 // A row inside a panel. `selected` draws the ▸ cursor + highlight; read-only rows
 // pass selected=undefined (never highlighted, skipped by navigation).
@@ -63,6 +63,8 @@ export function SettingsTab({
   // runtime config above; the watcher reads it live, so a source-filter edit needs no restart.
   const [hc, setHc] = useState(loadHermesCapture());
   const [watching, setWatching] = useState(isWatcherRunning());
+  const [cc, setCc] = useState(loadClaudeCapture());
+  const [ccWatching, setCcWatching] = useState(isWatcherRunning("claude-code"));
   // The user's CHOSEN provider (config.json: "local" | "openrouter") — both run over the
   // openai-compatible API, so the server's runtime AI_PROVIDER can't tell them apart; show the
   // choice the user actually made instead.
@@ -105,9 +107,20 @@ export function SettingsTab({
       setHermesCapture({ enabled: next });
       let msg: string;
       if (next) { const r = launchWatcher(); msg = r.ok ? "hermes capture started" : `start failed: ${r.error}`; }
-      else { stopWatcher(); msg = "hermes capture stopped"; }
+      else { stopWatcher("hermes"); msg = "hermes capture stopped"; }
       setHc(loadHermesCapture());
       setWatching(isWatcherRunning());
+      setNotice(msg);
+      return;
+    }
+    if (id === "claude") {
+      const next = !cc.enabled;
+      setClaudeCapture({ enabled: next });
+      let msg: string;
+      if (next) { const r = launchWatcher("claude-code"); msg = r.ok ? "claude code capture started" : `start failed: ${r.error}`; }
+      else { stopWatcher("claude-code"); msg = "claude code capture stopped"; }
+      setCc(loadClaudeCapture());
+      setCcWatching(isWatcherRunning("claude-code"));
       setNotice(msg);
       return;
     }
@@ -116,11 +129,12 @@ export function SettingsTab({
       id === "fallback" ? (cfg?.fallback_model ?? "") :
       id === "autoturns" ? (cfg?.arc_auto_turns ?? "") :
       id === "sources" ? hc.sources.join(", ") :
+      id === "ccprojects" ? cc.projects.join(", ") :
       id === "floor" ? (floor != null ? String(floor) : "") :
       cap != null ? String(cap) : "",
     );
     setEditing(id);
-  }, [paused, cfg, floor, cap, hc]);
+  }, [paused, cfg, floor, cap, hc, cc]);
 
   const submit = useCallback(async () => {
     const v = buf.trim();
@@ -130,6 +144,7 @@ export function SettingsTab({
     if (id === "fallback") return save({ fallback_model: v }, v ? `fallback → ${v}` : "fallback cleared (none)");
     if (id === "autoturns") { if (v && (!Number.isInteger(Number(v)) || Number(v) < 0)) { setNotice("auto-turns must be a whole number ≥ 0 (0 or blank = off)"); return; } return save({ arc_auto_turns: v }, v && Number(v) > 0 ? `auto-extract every ${v} turns` : "auto-extract off"); }
     if (id === "sources")  { const arr = parseSources(v); setHermesCapture({ sources: arr }); setHc(loadHermesCapture()); setNotice(`capture sources → ${arr.join(", ")}`); return; }
+    if (id === "ccprojects") { const arr = parseSources(v); setClaudeCapture({ projects: arr }); setCc(loadClaudeCapture()); setNotice(`claude projects → ${arr.join(", ")}`); return; }
     if (id === "floor")    { if (v && !Number.isFinite(Number(v))) { setNotice("floor must be a number (or blank to disable)"); return; } return save({ min_credit_usd: v }, v ? `credit floor → $${v}` : "credit floor disabled"); }
     if (id === "cap")      { if (v && !Number.isFinite(Number(v))) { setNotice("cap must be a number (or blank to disable)"); return; } return save({ daily_budget_usd: v }, v ? `daily cap → $${v}` : "daily cap disabled"); }
   }, [buf, editing, save]);
@@ -145,7 +160,7 @@ export function SettingsTab({
     if (key.downArrow || input === "j") { setSel((i) => Math.min(i + 1, FIELDS.length - 1)); return; }
     if (key.upArrow || input === "k")   { setSel((i) => Math.max(i - 1, 0)); return; }
     if (key.return)                     { act(FIELDS[Math.min(sel, FIELDS.length - 1)]); return; }
-    if (input.toLowerCase() === "r")    { load(); setHc(loadHermesCapture()); setWatching(isWatcherRunning()); setNotice("refreshed"); return; }
+    if (input.toLowerCase() === "r")    { load(); setHc(loadHermesCapture()); setWatching(isWatcherRunning()); setCc(loadClaudeCapture()); setCcWatching(isWatcherRunning("claude-code")); setNotice("refreshed"); return; }
   }, { isActive });
 
   const selId = FIELDS[Math.min(sel, FIELDS.length - 1)];
@@ -154,6 +169,7 @@ export function SettingsTab({
     editing === "fallback" ? "fallback model id (blank = none):" :
     editing === "autoturns" ? "auto-extract every N turns (0/blank = off):" :
     editing === "sources" ? "capture sources (comma-sep, * = all):" :
+    editing === "ccprojects" ? "claude project dirs (comma-sep, * = all):" :
     editing === "floor" ? "credit floor USD (blank = off):" :
     editing === "cap" ? "daily cap USD (blank = off):" : "";
 
@@ -190,6 +206,15 @@ export function SettingsTab({
           hint="enter = start/stop · reads Hermes state.db" />
         <Row selected={selId === "sources"} label="sources" value={hc.sources.join(", ")}
           valueColor={theme.value} hint="enter = edit · which Hermes sessions to capture (* = all)" />
+      </Panel>
+
+      <Panel title="claude code capture" minHeight={5}>
+        <Row selected={selId === "claude"} label="watcher"
+          value={ccWatching ? `${glyph.up} running` : cc.enabled ? `${glyph.paused} enabled (stopped)` : "off"}
+          valueColor={ccWatching ? theme.ok : cc.enabled ? theme.warn : theme.dim}
+          hint="enter = start/stop · reads ~/.claude/projects transcripts" />
+        <Row selected={selId === "ccprojects"} label="projects" value={cc.projects.join(", ")}
+          valueColor={theme.value} hint="enter = edit · which Claude Code projects to capture (* = all)" />
       </Panel>
 
       {editing ? (

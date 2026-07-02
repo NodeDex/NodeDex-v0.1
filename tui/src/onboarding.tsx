@@ -1,7 +1,7 @@
 // onboarding.tsx — first-run setup wizard (static, no animation).
 //
 // Flow: welcome → consent → provider → {OpenRouter: key → model | Local: endpoint → model}
-//   → port → db → bind → starting → connect.
+//   → port → db → capture (host discovery + per-host consent) → bind → starting → connect.
 // Two model paths: OpenRouter (cloud, BYO key) or Local / self-hosted (Ollama/LM Studio/vLLM —
 // offline, no key, $0). After the DB, a bind-mode step asks WHERE the agent runs: this machine
 // (localhost, no token) or Docker/remote (0.0.0.0 + a generated token) — the connect screen then
@@ -18,9 +18,10 @@ import {
   saveConfig, DEFAULT_PORT, DEFAULT_LOCAL_BASE_URL,
   OPENROUTER_BASE_URL,
   RECOMMENDED_MODELS, isTrainsOnPrompts, listDbs, dbPathForName, scanLocalModels,
-  type DbChoice, type LocalModel,
+  scanCaptureHosts, setHermesCapture, setClaudeCapture,
+  type DbChoice, type LocalModel, type CaptureHostInfo,
 } from "./config.js";
-import { launchServer, genToken } from "./servers.js";
+import { launchServer, genToken, launchWatcher, stopWatcher } from "./servers.js";
 import { probeServer, setBase } from "./api.js";
 import { writeConnectSnippets } from "./connect-snippets.js";
 
@@ -29,7 +30,7 @@ const README_URL = "https://github.com/NodeDex/NodeDex-v0.1#connect-your-agent";
 type Step =
   | "welcome" | "consent" | "provider" | "openrouter" | "model"
   | "localscan" | "localendpoint" | "localmodel"
-  | "port" | "db" | "bind" | "starting" | "connect";
+  | "port" | "db" | "capture" | "bind" | "starting" | "connect";
 
 /** Verify the OpenRouter key before saving — a typo fails here, not at first
  *  extraction. GET /key returns the key's usage/limit for a valid key. */
@@ -142,6 +143,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [dbs] = useState<DbChoice[]>(() => listDbs());
   const [dbSel, setDbSel] = useState(0);          // 0..dbs.length-1 existing; === dbs.length → new
   const [newDbName, setNewDbName] = useState("");
+  // capture step: discovered hosts + per-host consent checkbox
+  const [captureHosts, setCaptureHosts] = useState<CaptureHostInfo[]>([]);
+  const [captureSel, setCaptureSel] = useState(0);
+  const [captureChecked, setCaptureChecked] = useState<Record<string, boolean>>({});
   // connect step
   const [serverUrl, setServerUrl] = useState("");
   // bind step (where will the agent run) + launch details for the connect screen
@@ -279,8 +284,23 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     }
     saveConfig({ dbPath, onboarded: true });
     setChosenDbPath(dbPath);
-    setError(""); setBindSel(0); setStep("bind");
+    // Discover capture hosts for the consent step (cheap existence probes, no cooperation needed).
+    const hosts = scanCaptureHosts();
+    setCaptureHosts(hosts);
+    setCaptureChecked(Object.fromEntries(hosts.map((h) => [h.host, h.found]))); // found → pre-checked
+    setCaptureSel(0);
+    setError(""); setStep("capture");
   }, [dbSel, dbs, newDbName]);
+
+  // Persist per-host capture consent + converge the watchers to it, then on to bind.
+  const submitCapture = useCallback(() => {
+    const on = (h: string) => captureHosts.some((x) => x.host === h && x.found) && !!captureChecked[h];
+    setHermesCapture({ enabled: on("hermes") });
+    setClaudeCapture({ enabled: on("claude-code") });
+    if (on("hermes")) launchWatcher("hermes"); else stopWatcher("hermes");
+    if (on("claude-code")) launchWatcher("claude-code"); else stopWatcher("claude-code");
+    setError(""); setBindSel(0); setStep("bind");
+  }, [captureHosts, captureChecked]);
 
   // After the db, ask WHERE the agent runs → localhost (no token) or 0.0.0.0 + generated token.
   const submitBind = useCallback(() => {
@@ -348,9 +368,18 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       else if (k.escape) setStep("port");
       else if (k.return) submitDb();
       else if (dbSel >= dbs.length) typeInto(setNewDbName, input, k);
+    } else if (step === "capture") {
+      if (k.upArrow) setCaptureSel((s) => Math.max(0, s - 1));
+      else if (k.downArrow) setCaptureSel((s) => Math.min(captureHosts.length - 1, s + 1));
+      else if (input === " ") {
+        const h = captureHosts[captureSel];
+        if (h?.found) setCaptureChecked((c) => ({ ...c, [h.host]: !c[h.host] }));
+      }
+      else if (k.return) submitCapture();
+      else if (k.escape) setStep("db");
     } else if (step === "bind") {
       if (k.upArrow || k.downArrow) setBindSel((s) => (s === 0 ? 1 : 0));
-      else if (k.escape) setStep("db");
+      else if (k.escape) setStep("capture");
       else if (k.return) submitBind();
     } else if (step === "connect") {
       if (k.return) onDone();
@@ -533,6 +562,26 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         </Box>
         {error ? <Text color={theme.danger}>{`⚠ ${error}`}</Text> : null}
         <Hint keys={[["↑↓", "move"], ["Enter", "select"], ["Esc", "back"]]} />
+      </Frame>
+    );
+  }
+
+  if (step === "capture") {
+    return (
+      <Frame>
+        <Text color={theme.title} bold>Capture — which agents feed this memory?</Text>
+        <Text color={theme.dim}>NodeDex reads each host's own conversation log (read-only, on this machine).</Text>
+        <Text color={theme.dim}>Only new turns are captured — never past history. Change anytime in Settings.</Text>
+        <Box marginTop={1} flexDirection="column">
+          {captureHosts.map((h, i) => (
+            <Row key={h.host} selected={i === captureSel}
+              label={`${h.found && captureChecked[h.host] ? "[✓]" : "[ ]"} ${h.label}`} width={22}
+              aside={h.found ? h.detail : `${h.detail} — will idle until it appears`}
+              asideColor={h.found ? theme.value : theme.dim} />
+          ))}
+        </Box>
+        {error ? <Text color={theme.danger}>{`⚠ ${error}`}</Text> : null}
+        <Hint keys={[["↑↓", "move"], ["space", "toggle"], ["Enter", "continue"], ["Esc", "back"]]} />
       </Frame>
     );
   }
