@@ -157,6 +157,23 @@ export class OpenAIProvider implements LLMProvider {
           let text = mechanism === "tool_use"
             ? (_msg.tool_calls?.[0]?.function?.arguments ?? "")
             : (_msg.content ?? "");
+          // Reasoning-field recovery (Ollama gemma-4, ollama#15288): the /v1 compat
+          // endpoint returns EMPTY content with ALL generated text in message.reasoning
+          // (no think:false passthrough). The answer exists — wrong field. Recover it
+          // instead of failing the pass. Only fires when content is blank, so models
+          // that legitimately fill both fields are untouched. The recovered payload may
+          // prepend thinking prose before the JSON → carve from the first "{" when the
+          // call expects a structured object.
+          if (!String(text).trim()) {
+            const r = String(_msg.reasoning ?? _msg.reasoning_content ?? "");
+            if (r.trim()) {
+              console.warn(`[openai] ${modelName} empty content but reasoning payload present — recovering answer from reasoning field (ollama gemma-4 /v1 quirk)`);
+              let recovered = stripJsonFences(r).trim();
+              const brace = recovered.indexOf("{");
+              if (brace > 0) recovered = recovered.slice(brace, recovered.lastIndexOf("}") + 1);
+              text = recovered;
+            }
+          }
           if (mechanism === "prompt_json") text = stripJsonFences(text);
           text = text.trim();
           const usage = completion.usage as any;
@@ -298,7 +315,12 @@ export class OpenAIProvider implements LLMProvider {
         model: this.model,
         messages: [{ role: "user", content: prompt }],
       });
-      return completion.choices[0].message.content ?? null;
+      const msg = completion.choices[0].message as any;
+      const content = msg.content ?? "";
+      if (String(content).trim()) return content;
+      // Same reasoning-field recovery as generateStructured (ollama gemma-4 /v1 quirk).
+      const r = String(msg.reasoning ?? msg.reasoning_content ?? "");
+      return r.trim() ? r : null;
     } catch {
       return null;
     }
