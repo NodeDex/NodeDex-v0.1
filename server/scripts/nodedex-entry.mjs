@@ -12,8 +12,8 @@
  * In the repo, build first with `npm run build` in server/ (this loads ../dist/server.js);
  * the published npm package ships dist/ + the compiled TUI (tui-dist/) ready to run.
  */
-import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { spawn, execSync } from "node:child_process";
+import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve, join } from "node:path";
 import { homedir } from "node:os";
@@ -43,6 +43,10 @@ Usage:
     --provider openrouter --key sk-or-...   [--model google/gemini-2.5-flash-lite]
     --provider local --base-url http://localhost:11434/v1 --model <id>
     [--port 3001] [--db <name>] [--capture hermes,claude-code | none] [--dry-run]
+  nodedex stop      Stop running NodeDex servers: \`stop\` = the ones it knows
+                    (pidfiles + config port), \`stop 3002\` = that port,
+                    \`stop --all\` = sweep the whole discovery range. Only kills
+                    a process after confirming a NodeDex answers on the port.
   nodedex uninstall Remove ALL local data + config (~/.nodedex) — asks first;
                     --yes skips the prompt (scripts). Does not remove the package.
   nodedex help      Show this message
@@ -103,10 +107,101 @@ function startServer() {
     );
     process.exit(1);
   }
+  writePidFile();
   // On Windows a bare absolute path ("C:\\...") is rejected by the ESM loader;
   // it must be a file:// URL.
   import(pathToFileURL(distServer).href);
   startEnabledWatchers();
+}
+
+// ─── pidfiles + `nodedex stop` ─────────────────────────────────────────────────
+// The server runs IN-PROCESS of this entry (import above), so this pid IS the
+// server pid. `nodedex stop [port…|--all]` reads these first; for servers it
+// didn't start (TUI-launched, bare node) it falls back to a port→PID lookup.
+function runDir() { return join(homedir(), ".nodedex", "run"); }
+function pidFileFor(port) { return join(runDir(), `server-${port}.pid`); }
+
+function writePidFile() {
+  try {
+    const port = Number(process.env.PORT) || 3001;
+    mkdirSync(runDir(), { recursive: true });
+    writeFileSync(pidFileFor(port), String(process.pid));
+    process.on("exit", () => { try { unlinkSync(pidFileFor(port)); } catch { /* */ } });
+  } catch { /* best-effort — stop falls back to port lookup */ }
+}
+
+/** PID listening on a local port — Windows netstat / unix lsof. Null if none. */
+function pidOnPort(port) {
+  try {
+    if (process.platform === "win32") {
+      const out = execSync("netstat -ano -p tcp", { encoding: "utf8" });
+      for (const line of out.split(/\r?\n/)) {
+        const m = line.trim().match(/^TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)$/i);
+        if (m && Number(m[1]) === port) return Number(m[2]);
+      }
+      return null;
+    }
+    const out = execSync(`lsof -ti tcp:${port} -sTCP:LISTEN`, { encoding: "utf8" });
+    const pid = Number(out.trim().split(/\s+/)[0]);
+    return Number.isInteger(pid) ? pid : null;
+  } catch { return null; }
+}
+
+function killPid(pid) {
+  try {
+    if (process.platform === "win32") execSync(`taskkill /PID ${pid} /T /F`, { stdio: "ignore" });
+    else process.kill(pid, "SIGTERM");
+    return true;
+  } catch { return false; }
+}
+
+/** `nodedex stop [port…] | --all` — stop NodeDex servers by port. Only kills a
+ *  process after confirming a NodeDex answers on that port (never blind-kills). */
+async function stopServers() {
+  const wantAll = args.includes("--all");
+  const explicit = args.slice(1).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+
+  // Candidate ports: explicit args, or (for --all / bare stop) pidfiles + config
+  // port + the discovery range.
+  let ports = explicit;
+  if (ports.length === 0) {
+    const set = new Set();
+    try {
+      for (const f of readdirSync(runDir())) {
+        const m = f.match(/^server-(\d+)\.pid$/);
+        if (m) set.add(Number(m[1]));
+      }
+    } catch { /* no run dir */ }
+    try {
+      const c = JSON.parse(readFileSync(join(homedir(), ".nodedex", "config.json"), "utf8"));
+      if (Number.isInteger(c.port)) set.add(c.port);
+    } catch { /* */ }
+    if (wantAll) for (const p of [3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3099]) set.add(p);
+    ports = [...set];
+  }
+  if (ports.length === 0) { console.log("[nodedex stop] no known servers (no pidfiles, no config port). Pass a port: nodedex stop 3001"); return; }
+
+  let stopped = 0;
+  for (const port of ports.sort((a, b) => a - b)) {
+    // Confirm it's a NodeDex before killing anything on the port.
+    let isNodedex = false;
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1200) });
+      isNodedex = r.ok;
+    } catch { /* not up */ }
+    if (!isNodedex) {
+      if (explicit.length) console.log(`  :${port} — no NodeDex answering, skipped`);
+      continue;
+    }
+    let pid = null;
+    try { pid = Number(readFileSync(pidFileFor(port), "utf8").trim()) || null; } catch { /* no pidfile */ }
+    if (!pid) pid = pidOnPort(port);
+    if (!pid) { console.log(`  :${port} — NodeDex is up but its PID couldn't be resolved (kill it by hand)`); continue; }
+    const ok = killPid(pid);
+    console.log(`  :${port} — ${ok ? `stopped (pid ${pid})` : `failed to kill pid ${pid}`}`);
+    if (ok) { stopped++; try { unlinkSync(pidFileFor(port)); } catch { /* */ } }
+  }
+  console.log(`[nodedex stop] ${stopped} server(s) stopped.`);
 }
 
 // Headless path parity with the TUI: `nodedex run` also brings up whichever capture
@@ -378,6 +473,9 @@ switch (cmd) {
   case "connect":
   case "doctor":
     void connectCard();
+    break;
+  case "stop":
+    void stopServers();
     break;
   case "uninstall":
     void uninstall();

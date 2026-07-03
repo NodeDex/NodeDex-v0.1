@@ -329,6 +329,7 @@ ops are `npm run reconfigure` / `npm run uninstall` in `tui/`.)*
 | `nodedex onboard` | re-run the setup wizard (switch provider / model / port / db) |
 | `nodedex setup --key … --model …` | headless setup / reconfigure — flags merge into the existing config |
 | `nodedex connect` | the connection card: the right URL per client location + token rule + test commands |
+| `nodedex stop [port \| --all]` | stop running NodeDex servers (confirms a NodeDex answers before killing anything) |
 | `nodedex uninstall` | remove all local data + config (`~/.nodedex`) — asks first; `--yes` for scripts |
 | `nodedex help` | usage |
 

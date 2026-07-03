@@ -11,9 +11,15 @@ export function prefer127(url: string): string {
   return url.replace(/\/\/localhost(?=[:/]|$)/i, "//127.0.0.1");
 }
 
+import { loadConfig } from "./config.js";
+
 // The active server. Mutable so the Servers pane can switch which graph the
 // TUI reads at runtime (was a const — multi-server switching needs it live).
-let currentBase = prefer127((process.env.NODEDEX_TUI_API || "http://localhost:3001").replace(/\/$/, ""));
+// Default base honors the CONFIG port — `nodedex run` starts the server on
+// config.json's port, so the TUI must aim there by default, not a hardcoded 3001
+// (the "ran nodedex, then nodedex tui, can't connect" bug).
+const configPort = (() => { try { const p = loadConfig().port; return Number.isInteger(p) && (p as number) > 0 ? p : null; } catch { return null; } })();
+let currentBase = prefer127((process.env.NODEDEX_TUI_API || `http://localhost:${configPort || 3001}`).replace(/\/$/, ""));
 // Per-server API tokens. A server launched with NODEDEX_API_TOKEN gates its WHOLE REST API,
 // so the TUI must send the token to read it. Keyed by normalized base url; setBase picks the
 // active one up automatically, so every connect path authenticates without extra plumbing.

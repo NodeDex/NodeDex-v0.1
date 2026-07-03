@@ -23,7 +23,7 @@ import { dirname, resolve, basename } from "path";
 import { homedir } from "os";
 import { mkdirSync, createWriteStream, readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, rmSync } from "fs";
 import { probeServer, prefer127, registerToken } from "./api.js";
-import { providerEnv } from "./config.js";
+import { providerEnv, loadConfig } from "./config.js";
 import { randomBytes } from "node:crypto";
 
 // Server dir — two layouts:
@@ -63,7 +63,10 @@ const LOG_DIR = resolve(NODEDEX_HOME, "tui-logs");
 
 // ports probed during discovery (plus any pinned urls). 127.0.0.1, not localhost —
 // the IPv4 host skips Windows's ::1-first penalty (see prefer127 in api.ts).
-const CANDIDATE_PORTS = [3001, 3002, 3003, 3004, 3005, 3099];
+// The CONFIG port comes first: it's where `nodedex run` puts the server, and the
+// wizard's picker offers up to 3009 — both must be discoverable.
+const CONFIG_PORT = (() => { try { const p = loadConfig().port; return Number.isInteger(p) && (p as number) > 0 ? (p as number) : null; } catch { return null; } })();
+const CANDIDATE_PORTS = [...new Set([...(CONFIG_PORT ? [CONFIG_PORT] : []), 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3099])];
 const candidateUrl = (p: number) => `http://127.0.0.1:${p}`;
 
 export interface Pin {
@@ -275,7 +278,13 @@ export async function restoreSession(): Promise<string | null> {
   // must NOT strand the TUI on a dead url, so fall back to a live MANAGED server and adopt it
   // as the focus so the next restart is clean.
   const connected = s.connected?.url ?? null;
-  if (!connected && s.managed.length === 0) return null;
+  // No TUI session at all — but `nodedex run` (headless) starts the server on the
+  // CONFIG port and never writes tui-session.json. The config is the shared source
+  // of truth, so probe it before concluding there's nothing to connect to.
+  if (!connected && s.managed.length === 0) {
+    if (CONFIG_PORT && (await probeServer(candidateUrl(CONFIG_PORT))).up) return candidateUrl(CONFIG_PORT);
+    return null;
+  }
   const deadline = Date.now() + 12000;
   while (Date.now() < deadline) {
     if (connected && (await probeServer(connected)).up) return connected;
@@ -286,6 +295,9 @@ export async function restoreSession(): Promise<string | null> {
         return url;
       }
     }
+    // Session servers all down — a CLI-launched server on the config port still wins
+    // over waiting out the deadline on dead entries.
+    if (CONFIG_PORT && (await probeServer(candidateUrl(CONFIG_PORT))).up) return candidateUrl(CONFIG_PORT);
     await new Promise((res) => setTimeout(res, 300));
   }
   return connected ?? (s.managed[0] ? candidateUrl(s.managed[0].port) : null); // hand back; poll shows state
