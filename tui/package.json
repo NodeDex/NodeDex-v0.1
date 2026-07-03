@@ -10,7 +10,8 @@
     "onboard": "tsx src/cli.tsx --onboard",
     "reconfigure": "node scripts/reconfigure.mjs",
     "uninstall": "node scripts/uninstall.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "ink": "^5.0.1",

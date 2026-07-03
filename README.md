@@ -336,7 +336,9 @@ from anywhere instead of the `npm` scripts above:
 | `nodedex onboard` | run the setup wizard (provider / model / port / db) |
 | `nodedex help` | usage |
 
-*(A clone-free `npx nodedex` is on the roadmap; today the `nodedex` command comes from `npm link`.)*
+*(The server package builds as **`nodedex`** with the console bundled in — verified working
+from the packed tarball — so a clone-free `npx nodedex` lands with the first npm publish,
+imminently. Until then, `npm link` gives you the same command from the clone.)*
 
 **Console / setup** (`cd tui`):
 

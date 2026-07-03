@@ -2,13 +2,15 @@
 /**
  * NodeDex CLI entry point.
  *
- *   nodedex run     Start the MCP + API server (also the no-arg default)
+ *   nodedex         First run → the setup wizard; configured → the server
+ *   nodedex run     Start the MCP + API server (never the wizard)
  *   nodedex tui     Launch the console / onboarding wizard
- *   nodedex setup   First-run setup (alias for `nodedex tui`)
+ *   nodedex setup   Wizard, or headless with flags (see help)
  *   nodedex help    Show usage
  *
- * Back-compat: `nodedex-server` (no args) still starts the server.
- * Build first with `npm run build` in server/ (this loads ../dist/server.js).
+ * Back-compat: `nodedex-server` (no args) ALWAYS starts the server (never interactive).
+ * In the repo, build first with `npm run build` in server/ (this loads ../dist/server.js);
+ * the published npm package ships dist/ + the compiled TUI (tui-dist/) ready to run.
  */
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -35,7 +37,8 @@ Usage:
     [--port 3001] [--db <name>] [--capture hermes,claude-code | none] [--dry-run]
   nodedex help      Show this message
 
-With no command, nodedex starts the server (same as \`nodedex run\`).
+With no command: first run launches the setup wizard; once configured it starts
+the server (same as \`nodedex run\`). \`nodedex-server\` always starts the server.
 Headless example (what an agent runs after asking its user):
   nodedex setup --provider openrouter --key sk-or-... --db memory --capture claude-code
   nodedex run`;
@@ -189,26 +192,43 @@ async function headlessSetup() {
   console.log(`Connect your agent to http://127.0.0.1:${merged.port}/mcp — snippets: ~/.nodedex/connect-snippets.md (written by the TUI) or the README.`);
 }
 
-// Launch the TUI (operator console + first-run onboarding wizard). The TUI is a
-// sibling package run with tsx; it lives next to server/ in the repo, not in the
-// published server bundle — so this is a clone-only convenience.
+// Launch the TUI (operator console + first-run onboarding wizard). Two layouts:
+//   packaged (npx / npm install): the compiled TUI ships INSIDE this package at
+//     tui-dist/ and runs on plain node (its deps — ink/react — are package deps);
+//   repo/dev: the sibling tui/ package, run from source via tsx.
 function launchTui(extraArgs = []) {
-  const tuiDir = resolve(here, "../../tui");
-  if (!existsSync(resolve(tuiDir, "src/cli.tsx"))) {
-    console.error(
-      "[nodedex] tui/ not found next to the server — `nodedex tui` needs the full repo (clone), not a standalone server install."
-    );
+  const packagedCli = resolve(here, "../tui-dist/cli.js");
+  const repoTuiDir = resolve(here, "../../tui");
+  let spawnArgs, cwd;
+  if (existsSync(packagedCli)) {
+    spawnArgs = [packagedCli, ...extraArgs];
+    cwd = resolve(here, "..");
+  } else if (existsSync(resolve(repoTuiDir, "src/cli.tsx"))) {
+    spawnArgs = ["--import", "tsx/esm", "src/cli.tsx", ...extraArgs];
+    cwd = repoTuiDir;
+  } else {
+    console.error("[nodedex] no TUI found (neither packaged tui-dist/ nor a repo tui/). Reinstall the package.");
     process.exit(1);
   }
-  const child = spawn(process.execPath, ["--import", "tsx/esm", "src/cli.tsx", ...extraArgs], {
-    cwd: tuiDir,
-    stdio: "inherit",
-  });
+  const child = spawn(process.execPath, spawnArgs, { cwd, stdio: "inherit" });
   child.on("error", (err) => {
     console.error(`[nodedex] failed to launch the TUI: ${err.message}`);
     process.exit(1);
   });
   child.on("exit", (code) => process.exit(code ?? 0));
+}
+
+// First run? (mirrors tui/src/config.ts needsOnboarding, without importing it)
+function isOnboarded() {
+  try {
+    const c = JSON.parse(readFileSync(join(homedir(), ".nodedex", "config.json"), "utf8"));
+    if (!c.onboarded) return false;
+    if (c.provider === "openrouter") return !!c.openrouter_key;
+    if (c.provider === "local") return !!(c.base_url && c.model);
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 // ─── `nodedex connect` — the connection card ───────────────────────────────────
@@ -282,8 +302,20 @@ async function connectCard() {
 token header; (3) NEVER use "localhost" from a container (that's the container itself).`);
 }
 
+// Bare `npx nodedex` on a fresh machine = the setup wizard, not a keyless server.
+// `nodedex run`/`start` (and the `nodedex-server` bin name) always mean the server —
+// scripts and process managers must never be surprised by an interactive wizard.
+const invokedAsServer = String(process.argv[1] || "").toLowerCase().includes("nodedex-server");
+
 switch (cmd) {
   case "":
+    if (!invokedAsServer && !isOnboarded()) {
+      console.error("[nodedex] first run — launching the setup wizard (use `nodedex run` to skip straight to the server).");
+      launchTui(["--onboard"]);
+      break;
+    }
+    startServer();
+    break;
   case "run":
   case "start":
     startServer();

@@ -26,8 +26,14 @@ import { probeServer, prefer127, registerToken } from "./api.js";
 import { providerEnv } from "./config.js";
 import { randomBytes } from "node:crypto";
 
-// server dir resolved from this file (.../Nodedex/tui/src/servers.ts → ../../server)
-const SERVER_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "server");
+// Server dir — two layouts:
+//   repo/dev:  <repo>/tui/src/servers.ts  → ../../server   (runs src via tsx)
+//   packaged:  <pkg>/tui-dist/servers.js  → ..             (the npm package root; runs dist)
+// Probe for the server's entry instead of assuming the repo shape.
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SERVER_DIR = [resolve(HERE, "..", "..", "server"), resolve(HERE, "..")]
+  .find((d) => existsSync(resolve(d, "src", "server.ts")) || existsSync(resolve(d, "dist", "server.js")))
+  ?? resolve(HERE, "..", "..", "server");
 const NODEDEX_HOME = resolve(homedir(), ".nodedex");
 
 /** Read the persisted ~/.nodedex/.env (the file POST /api/admin/config writes) so a user's
@@ -404,7 +410,10 @@ export function launchServer(opts: { port: number; dbPath: string; name?: string
     // NO repo .env — config comes from ~/.nodedex/.env (loaded by boot-env) + the env
     // passed below. `node --env-file` HARD-FAILS if the file is missing, so only add it
     // when it actually exists; otherwise a clean install can't launch at all.
-    const nodeArgs = ["--import=tsx/esm", "src/server.ts"];
+    // Dev repo (src present) runs source via tsx; the npm package ships dist only.
+    const nodeArgs = existsSync(resolve(SERVER_DIR, "src", "server.ts"))
+      ? ["--import=tsx/esm", "src/server.ts"]
+      : ["dist/server.js"];
     if (existsSync(resolve(SERVER_DIR, ".env"))) nodeArgs.unshift("--env-file=.env");
     const homeEnv = readHomeEnv(); // persisted user settings (Settings → ~/.nodedex/.env)
     const child = spawn(

@@ -1,7 +1,7 @@
 {
-  "name": "nodedex-server",
+  "name": "nodedex",
   "version": "0.1.0",
-  "description": "NodeDex — persistent knowledge-graph memory (MCP server) for AI agents",
+  "description": "NodeDex — persistent knowledge-graph memory (MCP server) for AI agents: decisions with their why, dead-ends, and causal chains, built automatically from your agent's conversations",
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
@@ -12,21 +12,28 @@
     "knowledge-graph",
     "ai-memory",
     "agent",
-    "sqlite"
+    "sqlite",
+    "claude-code"
   ],
   "type": "module",
   "main": "dist/server.js",
+  "engines": {
+    "node": ">=18"
+  },
   "bin": {
     "nodedex": "scripts/nodedex-entry.mjs",
     "nodedex-server": "scripts/nodedex-entry.mjs"
   },
   "files": [
     "dist/",
-    "adapters/nodedex-capture.mjs",
+    "adapters/",
+    "tui-dist/",
     "scripts/nodedex-entry.mjs"
   ],
   "scripts": {
     "build": "tsc",
+    "build:tui": "npm --prefix ../tui run build",
+    "prepack": "npm run build && npm run build:tui",
     "start": "node dist/server.js",
     "dev": "node --import=tsx/esm src/server.ts",
     "restart": "node scripts/restart.mjs",
@@ -43,7 +50,10 @@
     "cors": "^2.8.6",
     "crypto-js": "^4.2.0",
     "express": "^5.2.1",
+    "ink": "^5.0.1",
+    "ink-gradient": "^3.0.0",
     "openai": "^6.34.0",
+    "react": "^18.3.1",
     "sql.js": "^1.12.0",
     "uuid": "^11.1.0"
   },
