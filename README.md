@@ -8,6 +8,7 @@ Most agent memory remembers what your agent *said*. **NodeDex remembers what it 
 
 [Quick start](#setup) · [How it works](#how-it-works--three-actors) · [Connect your agent](#connect-your-agent) · [Why NodeDex](#why-nodedex) · [Docs](docs/README.md)
 
+[![npm: nodedex](https://img.shields.io/npm/v/nodedex.svg?label=npm&color=cb3837)](https://www.npmjs.com/package/nodedex)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![tests: 1192 passing](https://img.shields.io/badge/tests-1192%20passing-brightgreen.svg)](#evidence-it-works)
 [![status: early & solo-built](https://img.shields.io/badge/status-early%20%26%20solo--built-orange.svg)](#)
@@ -29,7 +30,7 @@ Without NodeDex, every session starts blank. Decisions made last week, dead ends
 > when you hit one.** Feedback at this stage is hugely valuable.
 >
 > **On the roadmap:** a web UI (backend built, frontend in progress) · first-class agent
-> integrations · packaging (`npx`) · broader agent-host support.
+> integrations · broader agent-host support.
 
 ---
 
@@ -94,42 +95,38 @@ The agent is stateless by default. NodeDex makes it stateful. The graph is the i
 
 ## Setup
 
-> **Shortcut — let your agent install it.** If you already run an agent with shell access
+**One command (Node ≥ 18):**
+
+```bash
+npx nodedex
+```
+
+First run launches the setup wizard; once configured, the same command just starts the
+server. Prefer a real install? `npm i -g nodedex` puts `nodedex` on your PATH. Everything —
+config, key, databases, logs — lives in `~/.nodedex/`, and `npx nodedex uninstall` removes
+it all.
+
+> **Or let your agent install it.** If you already run an agent with shell access
 > (Claude Code, OpenClaw, Hermes…), paste **[AGENT-INSTALL.md](AGENT-INSTALL.md)** into it:
-> the agent clones, builds, runs a headless setup (asking you the three consent questions),
-> starts the server, and connects itself. The steps below are the same thing done by hand.
+> the agent asks you three consent questions, runs one headless setup command, starts the
+> server, and connects itself.
 
-**Prerequisites — install these first.** The project's own commands below (`git clone`,
-`npm install`, `npm run build`, `npm run dev`) are **identical on macOS, Linux, and Windows**.
-What differs per OS is getting the two underlying tools installed:
+> **Native driver note:** the SQLite driver ships prebuilt for common platforms. Only if
+> npm has to compile it from source do you need a C/C++ toolchain (macOS:
+> `xcode-select --install` · Debian: `build-essential python3` · Windows:
+> [VS Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) → C++).
 
-| OS | Node.js ≥ 18 | C/C++ build toolchain (the native SQLite driver compiles on install) |
-|---|---|---|
-| **macOS** | [nodejs.org](https://nodejs.org) · or `brew install node` | `xcode-select --install` |
-| **Debian/Ubuntu** | [nvm](https://github.com/nvm-sh/nvm) · or `sudo apt-get install -y nodejs npm` | `sudo apt-get install -y build-essential python3` |
-| **Fedora/RHEL** | `sudo dnf install -y nodejs` | `sudo dnf install -y gcc-c++ make python3` |
-| **Windows** | [nodejs.org](https://nodejs.org) · or `winget install OpenJS.NodeJS` | [VS Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) → "Desktop development with C++" |
+<details>
+<summary><b>Install from source instead (development / contributing)</b></summary>
 
-**1. Download**
 ```bash
 git clone https://github.com/NodeDex/NodeDex-v0.1.git
-cd NodeDex-v0.1
+cd NodeDex-v0.1/server && npm install          # compiles/fetches the SQLite driver
+cd ../tui && npm install
+npm run dev                                    # first run launches the setup wizard
 ```
 
-**2. Install the server**
-```bash
-cd server
-npm install        # also compiles the native SQLite driver (one-time)
-```
-*(No separate build step in this flow — the wizard runs the server from source. `npm run
-build` is only for the direct-run / stdio paths; see [Commands](#commands).)*
-
-**3. Run the onboarding wizard**
-```bash
-cd ../tui
-npm install
-npm run dev          # first run launches the setup wizard
-```
+</details>
 
 The wizard walks you through it: **choose your model** — **OpenRouter** (cloud, bring your key,
 with a free-but-trains-on-prompts warning where it applies) or **Local / self-hosted** (Ollama /
@@ -208,15 +205,13 @@ started it there. Point your host at the `/mcp` URL (most MCP hosts take a small
 > **Use `127.0.0.1`, not `localhost`** — the server binds IPv4, and on Windows `localhost`
 > resolves to IPv6 `::1` first, so `localhost` silently fails to connect while `127.0.0.1` works.
 
-Or let the host **spawn it over stdio** (run `npm run build` in `server/` first):
+Or let the host **spawn it over stdio** (`npm i -g nodedex` first, so the command exists
+on PATH; from a clone use `node /path/to/server/scripts/nodedex-entry.mjs` instead):
 
 ```json
 {
   "mcpServers": {
-    "nodedex": {
-      "command": "node",
-      "args": ["/absolute/path/to/nodedex/server/scripts/nodedex-entry.mjs"]
-    }
+    "nodedex": { "command": "nodedex-server" }
   }
 }
 ```
@@ -291,24 +286,22 @@ and [docs/how-to/deploying-nodedex.md](docs/how-to/deploying-nodedex.md).
 
 ## Reconfigure / uninstall
 
-From `tui`:
-
 ```bash
-# change your API key or model (edits ~/.nodedex/config.json)
-npm run reconfigure                                  # interactive
-npm run reconfigure -- --model openai/gpt-4o-mini    # or pass flags
-npm run reconfigure -- --key sk-or-...               # validated before saving
+# change your key / model / provider (merges into ~/.nodedex/config.json)
+npx nodedex setup --provider openrouter --key sk-or-...   # validated before saving
+npx nodedex onboard                                       # or re-run the full wizard
+
+# remove all local data + config (~/.nodedex: config, API key, databases, logs)
+npx nodedex uninstall      # asks for confirmation — this is destructive
 ```
+
 Or do it inside the TUI: **health view → `provider` row** switches cloud/local and picks a
 model (local models are auto-scanned). A model change within the same provider applies live;
 a provider/endpoint switch applies when the server relaunches (switch db, or restart the TUI).
 
-```bash
-# remove all local data + config (~/.nodedex: config, API key, databases, logs)
-npm run uninstall          # asks for confirmation — this is destructive
-```
-Uninstall does **not** remove the code (delete the repo folder for that) or the NodeDex
-entry in your agent host's MCP config (remove that on the host).
+Uninstall does **not** remove the package (`npm rm -g nodedex` for that) or the NodeDex
+entry in your agent host's MCP config (remove that on the host). *(From a clone, the same
+ops are `npm run reconfigure` / `npm run uninstall` in `tui/`.)*
 
 ---
 
@@ -325,20 +318,19 @@ entry in your agent host's MCP config (remove that on the host).
 | `npm run restart` | stop any running servers, then start fresh |
 | `npm test` | run the test suite |
 
-**Optional — a `nodedex` command on your PATH.** The server package ships a `nodedex`
-binary (alongside `nodedex-server`). Link it once — `cd server && npm link` — then run it
-from anywhere instead of the `npm` scripts above:
+**The `nodedex` command** (from `npx nodedex` / `npm i -g nodedex`; from a clone,
+`cd server && npm link` gives you the same command):
 
 | Command | What it does |
 |---|---|
-| `nodedex run` | start the compiled server (same as `npm start`; run `npm run build` first) |
+| `nodedex` | first run → the setup wizard; configured → starts the server |
+| `nodedex run` | start the server + enabled capture watchers (never interactive) |
 | `nodedex tui` | launch the operator console |
-| `nodedex onboard` | run the setup wizard (provider / model / port / db) |
+| `nodedex onboard` | re-run the setup wizard (switch provider / model / port / db) |
+| `nodedex setup --key … --model …` | headless setup / reconfigure — flags merge into the existing config |
+| `nodedex connect` | the connection card: the right URL per client location + token rule + test commands |
+| `nodedex uninstall` | remove all local data + config (`~/.nodedex`) — asks first; `--yes` for scripts |
 | `nodedex help` | usage |
-
-*(The server package builds as **`nodedex`** with the console bundled in — verified working
-from the packed tarball — so a clone-free `npx nodedex` lands with the first npm publish,
-imminently. Until then, `npm link` gives you the same command from the clone.)*
 
 **Console / setup** (`cd tui`):
 
