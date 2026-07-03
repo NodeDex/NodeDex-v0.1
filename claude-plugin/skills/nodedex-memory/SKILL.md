@@ -14,21 +14,25 @@ never invent remembered content.
 Filter by TYPE, never label prefix. If a dead-end matches your idea: cite it, tell the
 user ("tried, abandoned because …"), propose differently — or say what changed.
 
-**New session on an existing project:**
-`workspace_tree` — the project roots with one-line descriptions (lean by design).
-Pick the relevant root, then run the dead-end + constraint check above on it;
-open specific items with `workspace_get(label, "relations")`.
+**Orient — traversal first, search last:**
+1. `workspace_tree` — the project roots with one-line descriptions. Read the
+   descriptions to pick the relevant root, then run the dead-end + constraint
+   check above on it.
+2. Have concepts but no labels? `workspace_filter(concepts)` — ranked root
+   suggestions, each with its description and the blocks that matched (your
+   entry points). Pick by description, then anchor on an entry block.
 
-**"Why did we decide X?":**
-`workspace_get(label, "relations")` → walk its chain: evidence → alternatives that
-lost → decision → consequences. Quote the blocks, not a paraphrase.
+**Read — the chain is the story:**
+`workspace_get(label, "relations")` returns the block WITH its causal chain(s).
+A block alone is a headline; walk the chain for the story: evidence → alternatives
+that lost → decision → consequences. Quote the blocks, not a paraphrase.
 
 **Stale check:** any block carrying `superseded_by` is stale — read the superseding
 block for current truth; never present the old one as current.
 
-**No label known:** `workspace_search(query)` — hits show their root + match reasons.
-A weak-results note on the response means the graph has nothing on this; say that
-plainly instead of treating the nearest blocks as an answer.
+**Last resort — no root or concepts match:** `workspace_search(query)` — hits show
+their root + match reasons. A weak-results note on the response means the graph has
+nothing on this; say that plainly instead of treating the nearest blocks as an answer.
 
 **Trust rule:** blocks carry `source_excerpt` (verbatim transcript evidence) — check it
 for load-bearing claims. If the graph conflicts with code you can verify directly,
