@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.nodedex/nodedex",
+  "name": "io.github.NodeDex/nodedex",
   "description": "Local graph memory for AI agents: decisions, dead-ends, and causal chains, built from your chats.",
   "repository": {
     "url": "https://github.com/NodeDex/NodeDex-v0.1",
     "source": "github"
   },
-  "version": "0.1.1",
+  "version": "0.1.2",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "nodedex",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "transport": {
         "type": "stdio"
       }
