@@ -35,7 +35,12 @@ Usage:
     --provider openrouter --key sk-or-...   [--model google/gemini-2.5-flash-lite]
     --provider local --base-url http://localhost:11434/v1 --model <id>
     [--port 3001] [--db <name>] [--capture hermes,claude-code | none] [--dry-run]
+  nodedex uninstall Remove ALL local data + config (~/.nodedex) — asks first;
+                    --yes skips the prompt (scripts). Does not remove the package.
   nodedex help      Show this message
+
+Reconfigure = re-run \`nodedex onboard\` (wizard) or \`nodedex setup\` with flags
+(headless — merges into the existing config, e.g. just --key or --model).
 
 With no command: first run launches the setup wizard; once configured it starts
 the server (same as \`nodedex run\`). \`nodedex-server\` always starts the server.
@@ -218,6 +223,48 @@ function launchTui(extraArgs = []) {
   child.on("exit", (code) => process.exit(code ?? 0));
 }
 
+// ─── `nodedex uninstall` — remove ~/.nodedex (data + config). DESTRUCTIVE. ─────
+// Mirrors tui/scripts/uninstall.mjs so packaged (npx) installs have a way out too.
+// Does NOT remove the package itself or the NodeDex entry in the agent host's MCP
+// config. `--yes` skips the prompt (agent/script-driven).
+async function uninstall() {
+  const { rmSync, readdirSync } = await import("node:fs");
+  const home = join(homedir(), ".nodedex");
+  if (!existsSync(home)) {
+    console.log(`Nothing to remove — ${home} doesn't exist.`);
+    return;
+  }
+  let dbs = [];
+  try { dbs = readdirSync(home).filter((f) => f.endsWith(".db")); } catch { /* unreadable */ }
+  console.log(`\nThis will permanently DELETE:\n  ${home}\n`);
+  console.log("Including:");
+  console.log("  • your config + OpenRouter API key");
+  console.log(`  • ${dbs.length} knowledge-graph database(s): ${dbs.join(", ") || "(none)"}`);
+  console.log("  • server logs + reflect-pause state");
+  console.log("\nThis cannot be undone. It does NOT remove the nodedex package, or the NodeDex");
+  console.log("entry in your agent host's MCP config — remove those yourself.\n");
+
+  if (!args.includes("--yes")) {
+    const readline = await import("node:readline/promises");
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const ans = (await rl.question('Type "delete" to confirm: ')).trim().toLowerCase();
+    rl.close();
+    if (ans !== "delete") {
+      console.log("Aborted — nothing removed.");
+      return;
+    }
+  }
+  try {
+    rmSync(home, { recursive: true, force: true });
+  } catch (e) {
+    console.log(`\nFailed to remove ${home}: ${e?.message ?? e}`);
+    console.log("A server may still be holding a database file. Stop all NodeDex servers, then re-run.");
+    process.exit(1);
+  }
+  console.log(`\nRemoved ${home}.`);
+  console.log("Also remove the NodeDex MCP entry from your agent host's config.");
+}
+
 // First run? (mirrors tui/src/config.ts needsOnboarding, without importing it)
 function isOnboarded() {
   try {
@@ -323,6 +370,9 @@ switch (cmd) {
   case "connect":
   case "doctor":
     void connectCard();
+    break;
+  case "uninstall":
+    void uninstall();
     break;
   case "tui":
   case "dashboard":
