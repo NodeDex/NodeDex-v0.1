@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.nodedex/nodedex",
+  "description": "Local knowledge-graph memory for AI agents: decisions with their why, dead-ends never repeated, causal chains to walk — built automatically from your agent's conversations, stored in SQLite on your machine.",
+  "repository": {
+    "url": "https://github.com/NodeDex/NodeDex-v0.1",
+    "source": "github"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "nodedex",
+      "version": "0.1.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

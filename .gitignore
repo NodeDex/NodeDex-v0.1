@@ -28,3 +28,4 @@ test-output.txt
 .DS_Store
 Thumbs.db
 tui-dist/
+mcp-publisher.exe
