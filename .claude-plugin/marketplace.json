@@ -1,0 +1,14 @@
+{
+  "name": "nodedex",
+  "owner": {
+    "name": "NodeDex",
+    "email": "nodedex.dev@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "nodedex",
+      "source": "./claude-plugin",
+      "description": "Memory that survives compaction: decisions with their why, permanent dead-ends, causal chains — built automatically from the Claude Code transcripts you already have."
+    }
+  ]
+}

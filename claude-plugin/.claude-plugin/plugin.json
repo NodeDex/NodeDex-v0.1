@@ -1,0 +1,13 @@
+{
+  "name": "nodedex",
+  "description": "Memory that survives compaction: your agent's decisions with their why, permanent dead-ends, and causal chains — built automatically from the Claude Code transcripts you already have. Bundles the NodeDex MCP connection + the memory-discipline skill.",
+  "version": "0.1.0",
+  "author": {
+    "name": "NodeDex",
+    "email": "nodedex.dev@gmail.com"
+  },
+  "homepage": "https://github.com/NodeDex/NodeDex-v0.1",
+  "repository": "https://github.com/NodeDex/NodeDex-v0.1",
+  "license": "AGPL-3.0-or-later",
+  "keywords": ["memory", "knowledge-graph", "mcp", "dead-ends", "context"]
+}
