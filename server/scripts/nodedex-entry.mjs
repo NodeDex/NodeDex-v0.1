@@ -18,6 +18,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve, join } from "node:path";
 import { homedir } from "node:os";
 
+// Fail CLEARLY on old Node — the entry + server use global fetch / AbortSignal.timeout
+// (Node ≥ 18); without this guard an old runtime dies with a cryptic ReferenceError.
+const nodeMajor = Number(process.versions.node.split(".")[0]);
+if (nodeMajor < 18) {
+  console.error(`[nodedex] Node ${process.versions.node} is too old — NodeDex needs Node >= 18. Upgrade at https://nodejs.org`);
+  process.exit(1);
+}
+
 const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const cmd = (args[0] || "").toLowerCase();

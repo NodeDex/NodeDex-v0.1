@@ -20,7 +20,7 @@ import {
   scanCaptureHosts, setHermesCapture, setClaudeCapture,
   type DbChoice, type LocalModel, type CaptureHostInfo,
 } from "./config.js";
-import { launchServer, genToken, launchWatcher, stopWatcher } from "./servers.js";
+import { launchServer, genToken, launchWatcher, stopWatcher, scanFreePorts } from "./servers.js";
 import { probeServer, setBase } from "./api.js";
 import { writeConnectSnippets } from "./connect-snippets.js";
 
@@ -153,19 +153,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     return () => { cancelled = true; };
   }, [step, localScanNonce]);
 
-  // Detect free ports when entering the port step (reuse probeServer: a port with no
-  // Nodedex responding is free enough to claim; launch fails loudly otherwise).
+  // Detect free ports when entering the port step. scanFreePorts checks actual
+  // BINDABILITY (momentary bind + close), not just "no NodeDex answering" — a port
+  // held by any other app must never be offered, or the launch hangs and fails.
   useEffect(() => {
     if (step !== "port" || freePorts.length > 0) return;
     let cancelled = false;
     (async () => {
       setStatus("Scanning for free ports…");
-      const found: number[] = [];
-      for (const p of [3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008]) {
-        const probe = await probeServer(`http://localhost:${p}`);
-        if (!probe.up) found.push(p);
-        if (found.length >= 5) break;
-      }
+      const found = await scanFreePorts(undefined, 5);
       if (cancelled) return;
       setStatus("");
       setFreePorts(found.length ? found : [DEFAULT_PORT]);
@@ -182,7 +178,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     const res = launchServer({ port, dbPath, bindHost, token });
     if (!res.ok) { setBusy(false); setStatus(""); setError(`Server failed to start: ${res.error}`); setStep("db"); return; }
     const url = `http://localhost:${port}`;
-    const deadline = Date.now() + 30000;
+    // 60s: a first boot on a slow disk / AV-scanned Windows can take a while to
+    // import 400+ files; the embedder download is background and doesn't block listen.
+    const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
       const probe = await probeServer(url);
       if (probe.up) {
