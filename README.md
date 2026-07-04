@@ -135,8 +135,17 @@ just pick one) → pick a free port → create or name a database → it starts 
 **`localhost`** and, on the final screen, shows you your **server URL** (and an **auth token**
 if you chose a network/Docker bind) — **save these; they're exactly what you hand your agent**
 in the next step. On first run it also downloads the bundled
-local *embedding* model (one-time) so semantic search works offline with no extra key. *(The
-extraction model needs to be reasonably capable — a ~30B+ local model gives the best quality.)*
+local *embedding* model (one-time) so semantic search works offline with no extra key.
+
+> **The extraction model must be smart AND have a large context window** — the pipeline asks it
+> to comprehend whole conversation arcs and emit strict, complete structured output, which is
+> harder than chat. From real testing: a 12B local model *comprehends* fine but reliably fails
+> the strict structured passes (drops mandatory items, runaway output) — the pipeline refuses
+> to save the incomplete result, so you get safety but no memory. Working floor: a cheap cloud
+> model (the recommended `gemini-2.5-flash-lite`, ~½¢ per extraction, 1M context) or a capable
+> **~27–30B+** local model served with a **≥16k real context window** (watch Ollama's default
+> `num_ctx` — imports often run at 8k regardless of what the model supports). For local runs,
+> also set `NODEDEX_THINKING_BUDGET=off` and a `NODEDEX_MODEL_CAPS` entry for your model.
 
 > The wizard sets up a **same-machine** server (localhost) — the default. Running your agent in
 > **Docker or on another machine** is a later, advanced setup (bind `0.0.0.0` + a token); see
