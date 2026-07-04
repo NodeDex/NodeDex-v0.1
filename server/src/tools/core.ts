@@ -640,7 +640,7 @@ Results are HEADLINES (label, type, essence) — and most blocks mean little alo
     {
       project:      z.string().optional().describe("Scope to a project (root label or id). Pulls the root + sub-projects + its label-prefix namespace."),
       type:         z.string().optional().describe("Block type filter, e.g. 'dead_end', 'constraint', 'decision', 'fact'."),
-      label_prefix: z.string().optional().describe("Exact label-prefix filter (zero false positives), e.g. 'checkout-incident_dead_end'."),
+      label_prefix: z.string().optional().describe("Exact label-prefix filter (zero false positives), e.g. 'checkout-incident_dead-end'. TRAP: multi-word types HYPHENATE inside labels (type dead_end → label segment dead-end) — an underscored prefix like 'x_dead_end' silently matches NOTHING. For dead-end checks prefer the type filter, which needs no spelling."),
       concept:      z.string().optional().describe("Filter to blocks tagged with this concept."),
       limit:        z.number().optional().describe("Max results. Default 50."),
     },
