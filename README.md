@@ -93,6 +93,30 @@ The agent is stateless by default. NodeDex makes it stateful. The graph is the i
 
 ---
 
+## Try it in 60 seconds — no key, no setup
+
+A fresh graph is empty (the value accumulates from your real work), so NodeDex ships a
+sample project history you can explore immediately:
+
+```bash
+npx nodedex demo
+```
+
+That serves a small finished project — its decisions (with the why and the rejected
+alternatives), its dead-ends, its constraints, and one decision that got *superseded* —
+at `http://127.0.0.1:3009/mcp`. Point any MCP agent at it and ask:
+
+1. *"What did we try and abandon in the ratelimiter project, and why?"*
+2. *"Why was token bucket chosen — what else was considered?"*
+3. *"Is 'keep the counters in Redis' still the current decision?"* — it isn't; watch the
+   agent follow the supersede edge to current truth instead of quoting the stale one.
+4. *"What's still open or unverified?"*
+
+If those answers are useful from a 15-block toy, imagine them from six weeks of your own
+work. `nodedex stop 3009` ends the demo; your real graph is never touched.
+
+---
+
 ## Setup
 
 **One command (Node ≥ 18):**
@@ -333,6 +357,7 @@ ops are `npm run reconfigure` / `npm run uninstall` in `tui/`.)*
 | Command | What it does |
 |---|---|
 | `nodedex` | first run → the setup wizard; configured → starts the server |
+| `nodedex demo` | serve the bundled sample graph on :3009 — explore a finished project's memory, no key needed |
 | `nodedex run` | start the server + enabled capture watchers (never interactive) |
 | `nodedex tui` | launch the operator console |
 | `nodedex onboard` | re-run the setup wizard (switch provider / model / port / db) |

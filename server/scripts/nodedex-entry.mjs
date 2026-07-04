@@ -43,6 +43,9 @@ Usage:
     --provider openrouter --key sk-or-...   [--model google/gemini-2.5-flash-lite]
     --provider local --base-url http://localhost:11434/v1 --model <id>
     [--port 3001] [--db <name>] [--capture hermes,claude-code | none] [--dry-run]
+  nodedex demo      Serve a bundled sample graph (a finished project's decisions,
+                    dead-ends, and chains) on :3009 — see what your agent's memory
+                    looks like BEFORE accumulating your own. No LLM key needed.
   nodedex stop      Stop running NodeDex servers: \`stop\` = the ones it knows
                     (pidfiles + config port), \`stop 3002\` = that port,
                     \`stop --all\` = sweep the whole discovery range. Only kills
@@ -96,6 +99,45 @@ function applyConfigEnv() {
   // whole capture story silently dead on a headless install. Found the hard way in the
   // 2026-07-02 dogfood run: a bare `node dist/server.js` captured nothing.
   set("NODEDEX_ARC_EXTRACTION", "1");
+}
+
+// `nodedex demo` — serve a bundled synthetic graph so minute ONE shows what weeks
+// of accumulated memory look like (a fresh install's real graph is empty — the
+// value compounds, which is honest but demos terribly). Read-only in spirit: no
+// watchers are started, so nothing captures into the demo db.
+async function demoRun() {
+  const dbPath = join(homedir(), ".nodedex", "NodeDexDemo.db");
+  const distServer = resolve(here, "../dist/server.js");
+  if (!existsSync(distServer)) {
+    console.error("[nodedex] dist/server.js not found — build the server first: `npm run build` (in server/).");
+    process.exit(1);
+  }
+  if (!existsSync(dbPath)) {
+    console.log("[nodedex demo] building the demo graph (one-time, ~1s, no LLM)…");
+    const { buildDemoGraph } = await import(pathToFileURL(resolve(here, "demo-graph.mjs")).href);
+    const n = await buildDemoGraph(dbPath);
+    console.log(`[nodedex demo] demo graph ready — ${n.blocks} blocks, ${n.relations} causal links.`);
+  }
+  const port = Number(flagValue("--port")) || 3009;
+  process.env.WORKSPACE_DB_PATH = dbPath; // explicit env wins over config
+  process.env.PORT = String(port);
+  applyConfigEnv();
+  writePidFile();
+  console.log(`
+[nodedex demo] a synthetic project history (payments-API rate limiter) is live:
+
+  MCP:  http://127.0.0.1:${port}/mcp        (point any MCP agent here)
+  TUI:  \`nodedex tui\` → enter on "connected" → switch to :${port}
+
+Ask your agent, with only this server connected:
+  1. "What did we try and abandon in the ratelimiter project, and why?"
+  2. "Why was token bucket chosen — what else was considered?"
+  3. "Is 'keep the counters in Redis' still the current decision?"   ← superseded; the agent should follow the edge
+  4. "What's still open or unverified?"
+
+Stop with \`nodedex stop ${port}\`. Your real graph is untouched — this serves ${"NodeDexDemo.db"} only.
+`);
+  import(pathToFileURL(distServer).href);
 }
 
 function startServer() {
@@ -476,6 +518,9 @@ switch (cmd) {
     break;
   case "stop":
     void stopServers();
+    break;
+  case "demo":
+    void demoRun();
     break;
   case "uninstall":
     void uninstall();

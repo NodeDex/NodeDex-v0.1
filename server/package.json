@@ -1,6 +1,6 @@
 {
   "name": "nodedex",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "mcpName": "io.github.NodeDex/nodedex",
   "description": "NodeDex — persistent knowledge-graph memory (MCP server) for AI agents: decisions with their why, dead-ends, and causal chains, built automatically from your agent's conversations",
   "license": "AGPL-3.0-or-later",
@@ -29,7 +29,8 @@
     "dist/",
     "adapters/",
     "tui-dist/",
-    "scripts/nodedex-entry.mjs"
+    "scripts/nodedex-entry.mjs",
+    "scripts/demo-graph.mjs"
   ],
   "scripts": {
     "build": "tsc",
