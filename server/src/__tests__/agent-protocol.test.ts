@@ -13,11 +13,17 @@ describe("agent-protocol", () => {
     assert.match(AGENT_PROTOCOL, /constraint/i);
     assert.match(AGENT_PROTOCOL, /TRAVERSE/);
     // the loop names the actual tools
-    for (const t of ["workspace_filter", "workspace_search", "workspace_get"]) {
+    for (const t of ["workspace_tree", "workspace_filter", "workspace_search", "workspace_get"]) {
       assert.ok(AGENT_PROTOCOL.includes(t), `protocol must name ${t}`);
     }
     // "pipeline writes, you read" — don't-save framing
     assert.match(AGENT_PROTOCOL, /pipeline/i);
+    // currency: supersede = the answer changed — the universal tier must teach it
+    assert.match(AGENT_PROTOCOL, /superseded_by/);
+    // meaning lives in content, not labels (name-drift is real — proven in the dogfood graph)
+    assert.match(AGENT_PROTOCOL, /never.*label|label.*drift|names drift/i);
+    // trust polarity: verifiable reality outranks memory
+    assert.match(AGENT_PROTOCOL, /reality wins/i);
   });
 
   test("protocolBlock wraps the protocol in exactly one removable, replace-in-place marker pair", () => {

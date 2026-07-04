@@ -17,12 +17,15 @@ TWO REFLEXES — do these unprompted:
 2. When you need context, TRAVERSE — don't keyword-search. A block is a headline; the causal CHAIN it sits on is the story. Anchor on a block, then walk.
 
 THE LOOP (traversal-first):
+- Cold start? → workspace_tree — every project root with a one-line description. Pick your root by DESCRIPTION, not by name.
 - New task, no anchor? → workspace_filter(concepts) — first-principle terms of your task (technologies, mechanisms, failure-modes; NOT "fix"/"issue"). Returns relevant project ROOTS + entry blocks.
-- Know it exists but not the label? → workspace_search (fuzzy — the FALLBACK; isolated matches).
+- Know it exists but not the label? → workspace_search (fuzzy — the LAST resort; isolated matches). A weak-results note means the graph has NOTHING on this — say so plainly instead of stretching the nearest hits.
 - Know exactly what you want? → CONSTRUCT the label and get it directly: {project}_{entity}_{type}_{concept} ('_' between dimensions, '-' within a concept, entity optional).
 - Have a block? → workspace_get(label, detail="relations") — returns the block PLUS the chain(s) it sits on AND the chains they lead to / rest on (the connected story). That is the unit of meaning; read it, open the next block, keep walking.
 
-detail: surface (scan) → relations (block + its chain — the traversal default) → full. Graph knowledge is established; your own conclusions are hypotheses until the graph agrees.`;
+CURRENT TRUTH: a block carrying superseded_by is STALE — read the superseding block and use THAT; never present the old one as current. And judge every block by its CONTENT (essence, unique fields, source_excerpt — the verbatim transcript evidence), never by its label: names drift.
+
+detail: surface (scan) → relations (block + its chain — the traversal default) → full. The graph is established MEMORY, not ground truth: your own untested conclusions are hypotheses until the graph or reality agrees — and when the graph conflicts with code or output you can verify RIGHT NOW, reality wins; flag the discrepancy so the graph can heal.`;
 
 // Markers wrap the persisted block so a re-run can REPLACE it in place (never
 // duplicate) and the user can remove it in one move.
