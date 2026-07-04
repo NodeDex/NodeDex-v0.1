@@ -1,6 +1,6 @@
 {
   "name": "nodedex",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "mcpName": "io.github.NodeDex/nodedex",
   "description": "NodeDex — persistent knowledge-graph memory (MCP server) for AI agents: decisions with their why, dead-ends, and causal chains, built automatically from your agent's conversations",
   "license": "AGPL-3.0-or-later",
