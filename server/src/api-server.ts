@@ -125,13 +125,14 @@ export function startApiServer(
   // mode being on (NODEDEX_ARC_EXTRACTION=1), off-switch NODEDEX_ARC_BOOT_SWEEP=off.
   startBootArcSweep(db);
 
-  // DEBT 5 Slice 2: enrichment-cycle workers (both default OFF, opt-in).
-  //   Flag reviewer — consumes pipeline_flags, decides merge/leave/split.
-  //     NODEDEX_FLAG_REVIEWER_ENABLED=on (+ NODEDEX_FLAG_AUTO_MERGE=on for
-  //     Level 2 auto-archive). Default OFF = flags accumulate for manual
-  //     inspection via GET /api/flags.
-  //   Stage AUDIT — periodic graph-health scan writing flags.
-  //     NODEDEX_AUDIT_ENABLED=on. Default OFF.
+  // DEBT 5 Slice 2: enrichment-cycle workers. BOTH DEFAULT ON since the
+  // 2026-06-20 self-maintenance locked-on decision (set =off to disable):
+  //   Flag reviewer — consumes pipeline_flags, decides merge/leave/split;
+  //     auto-merge (Level 2) also default ON. NODEDEX_FLAG_REVIEWER_ENABLED /
+  //     NODEDEX_FLAG_AUTO_MERGE. No provider configured → ticks no-op and
+  //     flags accumulate for inspection via GET /api/flags.
+  //   Stage AUDIT — periodic graph-health scan writing flags ($0, no LLM).
+  //     NODEDEX_AUDIT_ENABLED. Round-robin offset persists in the DB.
   // Both idempotent — safe to call on each server start.
   startFlagReviewer(db);
   startStageAuditTimer(db);

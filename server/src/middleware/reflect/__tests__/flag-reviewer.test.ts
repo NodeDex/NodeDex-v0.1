@@ -253,13 +253,13 @@ describe("runFlagReviewerTick — verdicts", () => {
 
 describe("runFlagReviewerTick — merge action gating", () => {
   test("Level 1 (auto-merge OFF): merge verdict written but NO archive", async () => {
+    process.env.NODEDEX_FLAG_AUTO_MERGE = "off"; // Level 1 is now the opt-DOWN (default = Level 2)
     const winner = mkBlock("L1_winner", { concepts: ["a", "b", "c"] });
     const loser = mkBlock("L1_loser", { concepts: ["a"] });
     const flagId = writeDupFlag(winner.id, loser.id);
     const provider = makeMockProvider([
       { result: { verdict: "merge", reason: "same", confidence: "high", winning_block_id: winner.id } },
     ]);
-    // forceAutoMerge defaults to env (unset = off)
     const res = await runFlagReviewerTick({ db, provider });
     assert.equal(res.verdicts.merge, 1);
     assert.equal(res.actions_executed, 0, "Level 1 must NOT execute merge");
@@ -290,6 +290,21 @@ describe("runFlagReviewerTick — merge action gating", () => {
       `SELECT * FROM relations WHERE source_id = ? AND target_id = ? AND type = 'supersedes'`
     ).get(winner.id, loser.id);
     assert.ok(rel, "supersedes relation should exist winner→loser");
+  });
+
+  test("DEFAULT (env unset) is Level 2: merge + high conf auto-merges without forceAutoMerge", async () => {
+    // Pins the 2026-06-20 locked-on decision: NODEDEX_FLAG_AUTO_MERGE unset = ON.
+    // Regression guard for the startup-log/tick default mismatch (found 2026-07-04:
+    // boot log claimed Level 2 while the tick's gate read the opposite default).
+    const winner = mkBlock("def_winner", { concepts: ["a", "b"] });
+    const loser = mkBlock("def_loser", { concepts: ["a"] });
+    writeDupFlag(winner.id, loser.id);
+    const provider = makeMockProvider([
+      { result: { verdict: "merge", reason: "same", confidence: "high", winning_block_id: winner.id } },
+    ]);
+    const res = await runFlagReviewerTick({ db, provider }); // no forceAutoMerge — env default decides
+    assert.equal(res.actions_executed, 1, "default must be Level 2 (auto-merge ON)");
+    assert.equal(db.getBlock(loser.id)!.status, "archived");
   });
 
   test("Level 2 but MEDIUM confidence → verdict written, NO merge (confidence gate)", async () => {
@@ -518,7 +533,7 @@ describe("runFlagReviewerTick — merge-confidence routing to the agent", () => 
   });
 
   test("merge + medium with auto-merge OFF (Level 1) is verdict-only — NOT routed (manual REST review)", async () => {
-    delete process.env.NODEDEX_FLAG_AUTO_MERGE;
+    process.env.NODEDEX_FLAG_AUTO_MERGE = "off"; // Level 1 is the opt-DOWN (default = Level 2)
     const a = mkBlock("mc_l1_a");
     const b = mkBlock("mc_l1_b");
     const flagId = writeDupFlag(a.id, b.id, "block_dup_candidate");

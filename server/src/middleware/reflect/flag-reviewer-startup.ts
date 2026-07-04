@@ -7,8 +7,10 @@
 // in-flight guard, unref so tests/shutdown aren't blocked, idempotent start/
 // stop, test inspector).
 //
-// Worker runs ONLY when NODEDEX_FLAG_REVIEWER_ENABLED=on. Default off so
-// upgrading does not silently start LLM spend.
+// Default ON (self-maintenance locked-on per release decision 2026-06-20);
+// set NODEDEX_FLAG_REVIEWER_ENABLED=off to disable. Spend is contained by the
+// cost breaker (budgetTripped), the per-tick batch cap, and provider
+// availability — a box with no provider configured ticks as a no-op.
 //
 // Per-tick policy:
 //   - One tick at a time (in-flight guard) — if a tick is still running
@@ -18,7 +20,7 @@
 
 import type { WorkspaceDB } from "../../store/database.js";
 import { getLLMProvider } from "../../engine/providers/index.js";
-import { runFlagReviewerTick } from "./flag-reviewer.js";
+import { runFlagReviewerTick, autoMergeEnabled } from "./flag-reviewer.js";
 import { budgetTripped } from "./cost-guard.js";
 import { intFromEnv } from "./config.js";
 
@@ -84,9 +86,10 @@ export function startFlagReviewer(db: WorkspaceDB): boolean {
   if (_intervalHandle !== null) return false;
 
   const intervalMs = getIntervalMs();
-  // Default ON (validated: clear-case auto-merge is correct + recoverable; weak evidence is routed, not merged); set =off for dev/test.
-  const autoMerge = (process.env.NODEDEX_FLAG_AUTO_MERGE ?? "on").toLowerCase() !== "off";
-  console.log(`[flag-reviewer] starting: interval=${intervalMs}ms auto_merge=${autoMerge ? "ON (Level 2)" : "OFF (Level 1 verdict-only)"}`);
+  // Log the SAME gate the tick honors (flag-reviewer.ts autoMergeEnabled) — a
+  // local re-read of the env var here once carried the opposite default, so the
+  // boot log claimed Level 2 while ticks ran verdict-only.
+  console.log(`[flag-reviewer] starting: interval=${intervalMs}ms auto_merge=${autoMergeEnabled() ? "ON (Level 2)" : "OFF (Level 1 verdict-only)"}`);
 
   _intervalHandle = setInterval(() => {
     tick(db).catch((e) => {

@@ -71,9 +71,8 @@ function essenceOverlapMin(): number {
   return intFromEnv("NODEDEX_AUDIT_ESSENCE_MIN", 2);
 }
 
-/** Block-dup detector: ON only when opted in. AUDIT itself may be on (live) while
- *  this newer block-level detection stays silent — so it never adds block_dup
- *  flags to an existing AUDIT user without an explicit opt-in. Default OFF. */
+/** Block-dup detector gate. Default ON — set NODEDEX_BLOCK_DUP_DETECT=off to
+ *  silence block-level dup flags while keeping the rest of the AUDIT live. */
 function blockDupDetectEnabled(): boolean {
   // Default ON (locked-on dup detection — validated 2026-06-20); set =off for dev/test.
   return (process.env.NODEDEX_BLOCK_DUP_DETECT ?? "").toLowerCase() !== "off";
@@ -89,16 +88,18 @@ function blockDupClaimMin(): number {
   return intFromEnv("NODEDEX_BLOCK_DUP_CLAIM_MIN", 3);
 }
 
-/** DRIFT recall (default OFF). Also flag a block_dup candidate when two SAME-TYPE
+/** DRIFT recall (default ON). Also flag a block_dup candidate when two SAME-TYPE
  *  blocks under the same scope are SEMANTICALLY near-identical (cosine on the stored
  *  label+essence+concepts embedding). This catches reworded IDENTITY the exact/token
  *  match misses — e.g. approach "Sliding Window Log" vs "Sliding Window Logging".
  *  The SAME-TYPE gate + a high threshold limit the topic-similarity false flags that
  *  essence-meaning over-flags on (e.g. a Redis fact vs a Redis constraint); the
- *  reviewer remains the precision judge, so this stays recall-tuned. Opt-in so it
- *  never widens flags for existing block-dup users without an explicit choice. */
+ *  reviewer remains the precision judge, so this stays recall-tuned. Default ON
+ *  (2026-07-04): the signal is $0 (local embedder, no LLM), it only writes FLAGS
+ *  (never mutates), and rewording is the dominant real-dup shape the token signal
+ *  misses. Set NODEDEX_BLOCK_DUP_EMBED=off to narrow detection back to exact+token. */
 function blockDupEmbedEnabled(): boolean {
-  return (process.env.NODEDEX_BLOCK_DUP_EMBED ?? "").toLowerCase() === "on";
+  return (process.env.NODEDEX_BLOCK_DUP_EMBED ?? "").toLowerCase() !== "off";
 }
 function blockDupEmbedMin(): number {
   const v = parseFloat(process.env.NODEDEX_BLOCK_DUP_EMBED_MIN ?? "");
@@ -375,6 +376,7 @@ export function runStageAuditTick(opts: RunStageAuditOpts): StageAuditTickResult
     flags_skipped_already_pending: 0,
     errors: 0,
     wall_ms: 0,
+    next_offset: 0,
   };
 
   let blocks: AuditBlock[];
@@ -402,7 +404,12 @@ export function runStageAuditTick(opts: RunStageAuditOpts): StageAuditTickResult
   for (let i = start; i < n; i++) {
     const a = blocks[i]!;
     for (let j = i + 1; j < n; j++) {
-      if (result.scanned_pairs >= pairCap) break outer;
+      // Pair cap hit: the next tick RESUMES at this outer index (i's remaining
+      // pairs are re-checked — cheap, flagAlreadyExists makes them no-ops). A
+      // completed sweep leaves next_offset at 0 (wrap and start over). This must
+      // advance by actual coverage: the old `offset+1`-per-tick crawl left the
+      // graph's tail unscanned for days (the un-flagged twin-dup pair, 2026-07-04).
+      if (result.scanned_pairs >= pairCap) { result.next_offset = i; break outer; }
       const b = blocks[j]!;
       result.scanned_pairs += 1;
 
@@ -487,8 +494,8 @@ export function runStageAuditTick(opts: RunStageAuditOpts): StageAuditTickResult
         //    only same-scope pairs are merge candidates. The reviewer is the precision
         //    judge (merge/leave). Skips pairs already in a SUPERSEDES chain (the
         //    supersede mechanism already collapsed them) — but NOT pairs merely linked
-        //    by supports/contradicts (those ARE the un-merged dups). Opt-in
-        //    (NODEDEX_BLOCK_DUP_DETECT=on) so it stays silent for existing AUDIT users.
+        //    by supports/contradicts (those ARE the un-merged dups). Default ON
+        //    (NODEDEX_BLOCK_DUP_DETECT=off to silence).
         if (blockDupOn) {
           // The pair-decision (same-scope gate + claim/embedding recall) is the ONE
           // shared judge — reused verbatim by the inline recognize-before-write path
@@ -560,13 +567,50 @@ export function runStageAuditTick(opts: RunStageAuditOpts): StageAuditTickResult
 
 // ─── Timer wrapper (env-gated, mirror arc-inactivity-timer) ────────────────────
 //
-// Default OFF. Opt-in via NODEDEX_AUDIT_ENABLED=on. Longer interval than the
-// reviewer (graph-wide scan; no need to be fast) — default 30 min. Round-robins
-// the startOffset across ticks so large graphs eventually get full coverage.
+// Default ON (self-maintenance locked-on per release decision 2026-06-20); set
+// NODEDEX_AUDIT_ENABLED=off for dev/test. Longer interval than the reviewer
+// (graph-wide scan; no need to be fast) — default 30 min. The round-robin
+// startOffset is PERSISTED in the DB so coverage accumulates across ticks AND
+// restarts — an in-memory offset reset to 0 on every restart, which on
+// restart-heavy servers meant the tail of the block list was never scanned.
 
 let _auditHandle: ReturnType<typeof setInterval> | null = null;
 let _auditInFlight = false;
-let _auditOffset = 0;
+
+/** Tiny per-DB kv for maintenance workers' cross-restart state. Lazy + idempotent. */
+function ensureMaintenanceStateTable(raw: Database.Database): void {
+  raw.prepare(
+    `CREATE TABLE IF NOT EXISTS maintenance_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+  ).run();
+}
+
+/** Exported for tests. Falls back to 0 on any read problem — worst case is re-coverage. */
+export function loadAuditOffset(db: WorkspaceDB): number {
+  try {
+    const raw = (db as any).db as Database.Database;
+    ensureMaintenanceStateTable(raw);
+    const row = raw.prepare(`SELECT value FROM maintenance_state WHERE key = 'stage_audit_offset'`)
+      .get() as { value?: string } | undefined;
+    const v = Number(row?.value);
+    return Number.isInteger(v) && v >= 0 ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Exported for tests. Best-effort — a failed save only costs re-coverage next tick. */
+export function saveAuditOffset(db: WorkspaceDB, offset: number): void {
+  try {
+    const raw = (db as any).db as Database.Database;
+    ensureMaintenanceStateTable(raw);
+    raw.prepare(
+      `INSERT INTO maintenance_state (key, value) VALUES ('stage_audit_offset', @v)
+       ON CONFLICT(key) DO UPDATE SET value = @v`,
+    ).run({ v: String(offset) });
+  } catch {
+    /* best-effort */
+  }
+}
 
 function auditEnabled(): boolean {
   // Default ON (self-maintenance locked-on per release decision 2026-06-20); set =off for dev/test.
@@ -591,16 +635,16 @@ async function auditTick(db: WorkspaceDB): Promise<void> {
       console.warn(`[stage-audit] tick skipped — cost breaker: ${budget.reason}`);
       return;
     }
-    const res = runStageAuditTick({ db, startOffset: _auditOffset });
-    // Advance the round-robin offset; wrap when we've covered the graph.
-    const total = db.getAllBlocks().length;
-    _auditOffset = res.scanned_pairs > 0 && total > 0 ? (_auditOffset + 1) % Math.max(1, total) : 0;
+    const res = runStageAuditTick({ db, startOffset: loadAuditOffset(db) });
+    // Persist where the scan stopped so the next tick — or the next PROCESS —
+    // resumes coverage instead of re-walking the head of the block list.
+    saveAuditOffset(db, res.next_offset);
     const w = res.flags_written;
-    if (w.project_dup_candidate + w.scope_disagreement + w.island_candidate > 0 || res.errors > 0) {
+    if (w.project_dup_candidate + w.scope_disagreement + w.island_candidate + w.block_dup_candidate > 0 || res.errors > 0) {
       console.log(
         `[stage-audit] tick: pairs=${res.scanned_pairs} ` +
-        `flags={project_dup:${w.project_dup_candidate}, scope:${w.scope_disagreement}, island:${w.island_candidate}} ` +
-        `skipped=${res.flags_skipped_already_pending} errors=${res.errors} wall_ms=${res.wall_ms}`
+        `flags={project_dup:${w.project_dup_candidate}, scope:${w.scope_disagreement}, island:${w.island_candidate}, block_dup:${w.block_dup_candidate}} ` +
+        `skipped=${res.flags_skipped_already_pending} errors=${res.errors} next_offset=${res.next_offset} wall_ms=${res.wall_ms}`
       );
     }
   } catch (e: any) {

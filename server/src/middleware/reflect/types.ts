@@ -390,6 +390,10 @@ export interface StageAuditTickResult {
   flags_skipped_already_pending: number; // idempotency dedup hits
   errors: number;
   wall_ms: number;
+  /** Outer-loop block index the NEXT tick should start from: the index where the
+   *  pair-cap cut the scan short, or 0 when the sweep reached the end (wrap).
+   *  The timer persists this — coverage must accumulate across ticks AND restarts. */
+  next_offset: number;
 }
 
 // ─── Flag REST endpoint shapes (routes/flags.ts will implement these) ───────

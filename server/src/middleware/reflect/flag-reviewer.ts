@@ -25,15 +25,14 @@
 //     deferred to optional Sub-step 2.6 per design doc §8; this reviewer
 //     SKIPS them with verdict='leave' + reason explaining the deferral)
 //
-// Safety levels per design §2.5 (env-controlled):
-//   Level 0 (default): NODEDEX_FLAG_REVIEWER_ENABLED unset/off — worker
-//                      never starts. This module's runFlagReviewerTick can
-//                      still be called manually (e.g., REST sync path).
-//   Level 1: NODEDEX_FLAG_REVIEWER_ENABLED=on, NODEDEX_FLAG_AUTO_MERGE unset
-//            — verdicts written, NO auto-merge fires.
-//   Level 2: + NODEDEX_FLAG_AUTO_MERGE=on — verdict='merge' AND
-//            confidence='high' triggers executeMerge (charter Rule 2: archive
-//            not delete, recoverable via /api/blocks).
+// Safety levels per design §2.5 (env-controlled). Since the 2026-06-20
+// "self-maintenance locked-on" release decision the DEFAULT is Level 2:
+//   Level 0: NODEDEX_FLAG_REVIEWER_ENABLED=off — worker never starts.
+//            runFlagReviewerTick can still be called manually (REST sync path).
+//   Level 1: NODEDEX_FLAG_AUTO_MERGE=off — verdicts written, NO auto-merge.
+//   Level 2 (default): both unset — verdict='merge' AND confidence='high'
+//            triggers executeMerge (charter Rule 2: archive not delete,
+//            recoverable via /api/blocks).
 
 import type Database from "better-sqlite3";
 import type { WorkspaceDB } from "../../store/database.js";
@@ -67,9 +66,14 @@ function reviewerModel(): string | undefined {
   return modelOverride("NODEDEX_FLAG_REVIEWER_MODEL");
 }
 
-/** Auto-merge gate. Default OFF — Level 1 behavior. Set to "on" for Level 2. */
-function autoMergeEnabled(): boolean {
-  return (process.env.NODEDEX_FLAG_AUTO_MERGE ?? "").toLowerCase() === "on";
+/** Auto-merge gate. Default ON — Level 2 (self-maintenance locked-on per the
+ *  2026-06-20 release decision: clear-case auto-merge is correct + recoverable,
+ *  weak evidence is ROUTED to the agent, not merged). Set =off for Level 1
+ *  verdict-only. Exported so the startup wrapper logs the SAME gate the tick
+ *  honors — the two previously read OPPOSITE defaults, so the boot log claimed
+ *  "Level 2" while ticks silently ran verdict-only (found 2026-07-04). */
+export function autoMergeEnabled(): boolean {
+  return (process.env.NODEDEX_FLAG_AUTO_MERGE ?? "").toLowerCase() !== "off";
 }
 
 // ─── Prompt + schema ──────────────────────────────────────────────────────────

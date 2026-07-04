@@ -23,7 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import { WorkspaceDB } from "../../../store/database.js";
-import { runStageAuditTick, jaccard, sharedConceptCount, sharedEssenceTokens, cosineSim, judgeBlockDupPair, type AuditBlock, type BlockDupJudgeOpts } from "../stage-audit-graph.js";
+import { runStageAuditTick, jaccard, sharedConceptCount, sharedEssenceTokens, cosineSim, judgeBlockDupPair, loadAuditOffset, saveAuditOffset, type AuditBlock, type BlockDupJudgeOpts } from "../stage-audit-graph.js";
 import { summarizePipelineFlags, getPendingFlags } from "../pipeline-flags.js";
 
 const TEST_DB = path.resolve("/tmp/stage_audit_test.db");
@@ -369,6 +369,54 @@ describe("precedence, idempotency, cap", () => {
     assert.equal(res.scanned_pairs, 0);
     assert.equal(res.errors, 0);
     assert.equal(res.flags_written.island_candidate, 0);
+  });
+});
+
+// ─── Round-robin coverage: next_offset + persisted offset (2026-07-04 fix) ──────
+// The old timer advanced the offset +1 per tick (not by pairs covered) AND kept it
+// in process memory (reset on restart) — the tail of the block list was never
+// scanned on restart-heavy servers, which is how a proven twin-dup pair went
+// un-flagged in a 223-block graph. These pin the resume-where-you-stopped contract.
+
+describe("round-robin coverage (next_offset + persisted offset)", () => {
+  test("next_offset resumes at the index the cap stopped at; wraps to 0 on a completed sweep", () => {
+    for (let i = 0; i < 6; i++) mkBlock(`roB${i}`, { concepts: [`c${i}`] });
+    process.env.NODEDEX_AUDIT_MAX_PAIRS = "5";
+    const offsets: number[] = [];
+    let start = 0;
+    for (let t = 0; t < 4; t++) {
+      const res = runStageAuditTick({ db, startOffset: start });
+      offsets.push(res.next_offset);
+      start = res.next_offset;
+    }
+    // 6 blocks = 15 pairs at cap 5: ticks stop at outer index 1, 2, 4, then the
+    // sweep completes and wraps to 0.
+    assert.deepEqual(offsets, [1, 2, 4, 0]);
+  });
+
+  test("a same-claim pair at the TAIL of insertion order is reached within one full sweep", () => {
+    // 8 unscoped fillers first, the twins LAST — the exact shape of the missed dup.
+    for (let i = 0; i < 8; i++) mkBlock(`fill${i}`, { value: `unrelated filler claim number ${i} entirely` });
+    mkBlock("twinA", { value: "nodedex trades round trips for retrieval precision", project_id: "proj_x" });
+    mkBlock("twinB", { value: "nodedex trades round trips for retrieval precision while memory risks errors", project_id: "proj_x" });
+    process.env.NODEDEX_AUDIT_MAX_PAIRS = "10"; // 10 blocks = 45 pairs → several ticks
+    let start = 0;
+    let flagged = 0;
+    for (let t = 0; t < 8; t++) {
+      const res = runStageAuditTick({ db, startOffset: start });
+      flagged += res.flags_written.block_dup_candidate;
+      start = res.next_offset;
+      if (start === 0) break; // sweep complete
+    }
+    assert.equal(flagged, 1, "resumed coverage must reach the tail pair (the +1-per-tick crawl never did)");
+  });
+
+  test("loadAuditOffset / saveAuditOffset persist in the DB (restart-safe)", () => {
+    assert.equal(loadAuditOffset(db), 0, "fresh db → offset 0");
+    saveAuditOffset(db, 7);
+    assert.equal(loadAuditOffset(db), 7, "saved offset survives (lives in maintenance_state, not module memory)");
+    saveAuditOffset(db, 0);
+    assert.equal(loadAuditOffset(db), 0);
   });
 });
 
