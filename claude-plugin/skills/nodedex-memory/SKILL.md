@@ -26,6 +26,10 @@ user ("tried, abandoned because …"), propose differently — or say what chang
 `workspace_get(label, "relations")` returns the block WITH its causal chain(s).
 A block alone is a headline; walk the chain for the story: evidence → alternatives
 that lost → decision → consequences. Quote the blocks, not a paraphrase.
+Judge every block by its CONTENT — essence, unique{} fields, source_excerpt —
+never by its label. Labels are paths, not meanings: spellings drift, and two
+differently-named blocks can carry the same claim (or one same-looking label a
+different one). Conclusions come from what a block says, not what it's called.
 
 **Stale check:** any block carrying `superseded_by` is stale — read the superseding
 block for current truth; never present the old one as current.
