@@ -1,4 +1,4 @@
-// App.tsx — shell v3: three views (memory · feed · health), one quiet chrome.
+// App.tsx — shell v3: three views (memory · feed · settings), one quiet chrome.
 // Top line = brand + view bar; bottom line = the StatusLine (single home for
 // connection/graph/pipeline/spend numbers). Two poll cadences: fast 2s over
 // LOCAL endpoints, slow 30s for the OpenRouter balance. Input is guarded by
@@ -15,7 +15,9 @@ import { loadHermesCapture, loadClaudeCapture } from "./config.js";
 import { theme } from "./theme.js";
 import { useTermSize } from "./hooks.js";
 
-const VIEWS = ["memory", "feed", "health"];
+// Display label is "settings" (the view is mostly editable config + the review
+// queue); the module keeps its health.tsx name — internal only, not worth churn.
+const VIEWS = ["memory", "feed", "settings"];
 const MEMORY = 0;
 const FEED = 1;
 const HEALTH = 2;
@@ -137,7 +139,7 @@ export function App() {
 
   let body: React.ReactNode;
   if (active === HEALTH) {
-    // Health stays usable when the connection is down — that's where you fix it.
+    // Settings stays usable when the connection is down — that's where you fix it.
     body = <HealthTab dash={dash} balance={balance} isActive={isRawModeSupported === true} onCapture={onCapture} onConnect={() => void refresh()} />;
   } else if (!dash) {
     body = (
@@ -149,7 +151,7 @@ export function App() {
     body = (
       <Box flexDirection="column" paddingY={1}>
         <Text color={theme.danger}>{`● server unreachable at ${getBase()}`}</Text>
-        <Text color={theme.dim}>fix it in health [3] — switch server / db, or `nodedex run`</Text>
+        <Text color={theme.dim}>fix it in settings [3] — switch server / db, or `nodedex run`</Text>
       </Box>
     );
   } else if (active === MEMORY) {

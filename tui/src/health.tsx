@@ -328,7 +328,7 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
         ) : (
           <Text color={theme.dim}>no server connected — nothing to review</Text>
         )}
-        <Keys items={[["esc", "back to health"]]} />
+        <Keys items={[["esc", "back to settings"]]} />
       </Box>
     );
   }
