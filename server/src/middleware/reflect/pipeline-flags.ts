@@ -407,10 +407,16 @@ export function summarizePipelineFlags(db: Database.Database): {
   unreviewed: number;
   by_type: Array<{ flag_type: string; count: number }>;
   by_writer: Array<{ origin_writer: string; count: number }>;
+  unreviewed_by_type: Array<{ flag_type: string; count: number }>;
 } {
   const total = (db.prepare(`SELECT COUNT(*) as n FROM pipeline_flags`).get() as { n: number }).n;
   const unreviewed = (db.prepare(`SELECT COUNT(*) as n FROM pipeline_flags WHERE reviewed_at IS NULL`).get() as { n: number }).n;
   const by_type = db.prepare(`SELECT flag_type, COUNT(*) as count FROM pipeline_flags GROUP BY flag_type ORDER BY count DESC`).all() as Array<{ flag_type: string; count: number }>;
   const by_writer = db.prepare(`SELECT origin_writer, COUNT(*) as count FROM pipeline_flags GROUP BY origin_writer ORDER BY count DESC`).all() as Array<{ origin_writer: string; count: number }>;
-  return { total, unreviewed, by_type, by_writer };
+  // Pending-work breakdown (what the TUI Health row shows): counts only what
+  // still NEEDS a decision, unlike by_type which is the all-time ledger.
+  const unreviewed_by_type = db.prepare(
+    `SELECT flag_type, COUNT(*) as count FROM pipeline_flags WHERE reviewed_at IS NULL GROUP BY flag_type ORDER BY count DESC`,
+  ).all() as Array<{ flag_type: string; count: number }>;
+  return { total, unreviewed, by_type, by_writer, unreviewed_by_type };
 }

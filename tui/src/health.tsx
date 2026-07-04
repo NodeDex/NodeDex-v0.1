@@ -98,6 +98,20 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
   const floor = budgetCfg?.minCreditUsd;
   const cap = budgetCfg?.dailyBudgetUsd;
   const unreviewed = dash?.flagSummary?.unreviewed ?? 0;
+  // Glanceable pending-work breakdown: "12 dup · 2 island" (short names; older
+  // servers without unreviewed_by_type just render the bare count).
+  const FLAG_SHORT: Record<string, string> = {
+    block_dup_candidate: "dup", atomic_dup_candidate: "dup",
+    project_dup_candidate: "root-dup", island_candidate: "island",
+    scope_disagreement: "scope", provenance_mismatch: "provenance",
+    entity_unresolved: "entity",
+  };
+  const pendingByShort = new Map<string, number>();
+  for (const r of dash?.flagSummary?.unreviewed_by_type ?? []) {
+    const k = FLAG_SHORT[r.flag_type] ?? r.flag_type.replace(/_candidate$/, "").replace(/_/g, " ");
+    pendingByShort.set(k, (pendingByShort.get(k) ?? 0) + r.count);
+  }
+  const queueBreakdown = [...pendingByShort].map(([k, n]) => `${n} ${k}`).join(" · ");
 
   const save = useCallback(async (patch: Record<string, string | number>, msg: string) => {
     setNotice("saving…");
@@ -366,7 +380,7 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
       </Section>
 
       <Section title="review">
-        <R id="review" label="queue" value={unreviewed > 0 ? `${glyph.flag} ${unreviewed} unreviewed` : "clear"} color={unreviewed > 0 ? theme.warn : theme.dim} hint="enter = open review" />
+        <R id="review" label="queue" value={unreviewed > 0 ? `${glyph.flag} ${unreviewed} unreviewed${queueBreakdown ? ` — ${queueBreakdown}` : ""}` : "clear"} color={unreviewed > 0 ? theme.warn : theme.dim} hint="enter = open review" />
       </Section>
 
       {overlay === "provider" ? (

@@ -189,7 +189,12 @@ export interface Dashboard {
   reflect: ReflectStatus | null;
   reads: RecallEvent[];
   agentFlags: AgentFlag[];
-  flagSummary: { total?: number; unreviewed?: number; by_type?: Record<string, number> } | null;
+  flagSummary: {
+    total?: number;
+    unreviewed?: number;
+    by_type?: Record<string, number>;
+    unreviewed_by_type?: Array<{ flag_type: string; count: number }>;
+  } | null;
   reviewQueue: ReviewBlock[];
   related: RootRelatedness | null;
   budget: BudgetVerdict | null;

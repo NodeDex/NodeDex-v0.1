@@ -243,6 +243,12 @@ describe("summarizePipelineFlags", () => {
     const auditRow = summary.by_writer.find(r => r.origin_writer === 'stage_audit_islands');
     assert.equal(dedupRow?.count, 3);
     assert.equal(auditRow?.count, 1);
+
+    // unreviewed_by_type — the reviewed project_dup drops out (2→1); the ledger
+    // by_type above keeps it (the pending-work vs all-time distinction).
+    const pendingProject = summary.unreviewed_by_type.find(r => r.flag_type === 'project_dup_candidate');
+    assert.equal(pendingProject?.count, 1);
+    assert.equal(summary.unreviewed_by_type.reduce((n, r) => n + r.count, 0), summary.unreviewed);
   });
 
   test("empty table — total + unreviewed both 0", () => {
@@ -251,5 +257,6 @@ describe("summarizePipelineFlags", () => {
     assert.equal(summary.unreviewed, 0);
     assert.deepEqual(summary.by_type, []);
     assert.deepEqual(summary.by_writer, []);
+    assert.deepEqual(summary.unreviewed_by_type, []);
   });
 });
