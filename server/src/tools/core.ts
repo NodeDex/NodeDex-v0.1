@@ -437,7 +437,15 @@ Tip: use "surface" first. If the essence tells you what you need, stop there.`,
           type:       block.type,
           status:     block.status,
           essence:    block.essence,
-          concepts:   (content.concepts as string[]) || [],
+          // Concepts live canonically in the blocks.concepts COLUMN (what filter/
+          // search/enrichment match on); content.concepts is a remember-time copy
+          // some writers embed. Read column-first — reading ONLY the content copy
+          // returned [] for column-tagged blocks, so an agent couldn't see WHY a
+          // concept filter had matched (cold-agent field report, 2026-07-05).
+          concepts:   (() => {
+            try { const col = JSON.parse(block.concepts || "[]"); if (Array.isArray(col) && col.length > 0) return col; } catch { /* fall through */ }
+            return (Array.isArray(content.concepts) ? content.concepts as string[] : []);
+          })(),
           created_by: block.created_by || null,
           locked:     block.locked || false,
           flow_role:  block.flow_role || null,
@@ -474,8 +482,18 @@ Tip: use "surface" first. If the essence tells you what you need, stop there.`,
         if (detail === "relations" || detail === "full") {
           const outgoing = db.getRelations(block.id).filter((r) => r.direction === "outgoing");
           const incoming = db.getAllIncomingRelations(block.id);
-          base.outgoing = outgoing.map((r) => ({ type: r.type, to: r.target_label, id: r.target_id }));
-          base.incoming = incoming.map((r) => ({ type: r.type, from: r.source_label, id: r.source_id }));
+          // Each link carries the neighbor's one-line essence inline: a label
+          // names the neighbor, the essence says what it CLAIMS — without it the
+          // agent needs one extra get per neighbor just to decide whether to walk
+          // there (cold-agent field report 2026-07-05: "would cut my calls
+          // roughly in half"). Truncated — it's a signpost, not the block.
+          const gist = (id: string): string | undefined => {
+            const b = db.getBlock(id);
+            if (!b?.essence) return undefined;
+            return b.essence.length > 140 ? b.essence.slice(0, 137) + "…" : b.essence;
+          };
+          base.outgoing = outgoing.map((r) => ({ type: r.type, to: r.target_label, id: r.target_id, essence: gist(r.target_id) }));
+          base.incoming = incoming.map((r) => ({ type: r.type, from: r.source_label, id: r.source_id, essence: gist(r.source_id) }));
           // Surface the causal arc(s) this block sits on (chains) PLUS every chain
           // reachable by a causal path from them (linked_chains = the connected
           // component, distance-ranked) — the whole linked story, not the bare node
