@@ -53,7 +53,7 @@ start a new session. The agent now has the read tools + the usage protocol (deli
 The watcher reads Hermes's `state.db`, assembles each finished turn, and POSTs it to NodeDex. The
 **easiest way is the TUI** — it owns the watcher's lifecycle:
 
-> **TUI → health view (`3`) → capture watchers:**
+> **TUI → settings view (`3`) → capture watchers:**
 > - **`hermes`** — press **Enter** to start it (the row shows `running`). Enter again stops it.
 > - **`sources`** — press **Enter** to edit the **privacy filter**: a comma-separated list of which
 >   Hermes session sources to capture. Default **`tui`** (your terminal sessions only). Add others
@@ -112,7 +112,7 @@ npm run reconfigure -- --key sk-or-v1-<your-FULL-key>
 3. The TUI **`blocks`** count climbs (give it ~30–90s — slower models can take a few minutes).
 
 Reading the signal:
-- **No `captured` line in the watcher log** → the watcher isn't running (health view → `hermes` row
+- **No `captured` line in the watcher log** → the watcher isn't running (settings view → `hermes` row
   → start) or there's no NodeDex server in `~/.nodedex/tui-session.json`. Try a manual `--dry-run` to
   see assembled turns without posting.
 - **`captured` but `blocks` stays 0** → the turn was **<50 chars**, **reflect is paused**, or the
@@ -135,7 +135,7 @@ Reading the signal:
 - **wrong MCP host** — use `127.0.0.1`, not `localhost` (Windows `::1` trap) and not
   `host.docker.internal` (the gateway is on the host, not in a container).
 - **reflect paused** — the graph won't grow. Delete `~/.nodedex/reflect-pause` and resume
-  (TUI health view → `capture` row → Enter, or restart the server).
+  (TUI settings view → `capture` row → Enter, or restart the server).
 - **truncated key** — a long key pasted into a terminal field can drop chars; use the
   `reconfigure --key` flag, which is shape-checked.
 - **privacy** — by default only `tui` sessions are captured. If you use Hermes over telegram/discord

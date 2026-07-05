@@ -15,9 +15,8 @@ GET  /api/tree?depth=1                                   # project tree with con
 GET  /api/blocks?project=X&type=dead_end&q=Y             # exact structural filter — zero false positives
 GET  /api/blocks?project=X&type=constraint               # constraint check
 
-# Recall
-GET  /api/recall-fast?q=...&limit=5&min_quality=3        # hybrid search (semantic + keyword + concept)
-GET  /api/recall-fast?q=...&project=X&strict=1           # project-scoped search
+# Search (canonical — the same 3-signal scorer the MCP workspace_search uses)
+GET  /api/search?q=...&limit=8                           # match-ranked; per-hit score, match_types, root context, weak_match
 
 # Navigation
 GET  /api/blocks/:id/nav                                 # navigable view with causal relations
@@ -108,30 +107,23 @@ BFS traversal on `prompted_by`, `derived_from`, `based_on` — up 6 levels (ance
 
 ---
 
-## Recall
+## Search
 
-### `GET /api/recall-fast`
+### `GET /api/search` (canonical)
 
-Three-signal search: semantic similarity (embedding cosine) + keyword match + concept overlap. Applies freshness multiplier (recently accessed blocks score higher).
+The ONE scorer — the same engine behind the MCP `workspace_search` tool. Three signals ranked by MATCH ONLY (no freshness decay — currency is the supersede edge, never a clock): semantic similarity (embedding cosine) + keyword match + concept overlap.
 
 | Parameter | Description |
 |---|---|
 | `q` | Query string |
-| `limit` | Max results (default 5) |
-| `min_quality` | Minimum quality score filter |
-| `project` | Restrict to project prefix |
-| `strict=1` | Project-scoped only (no cross-project) |
+| `type` | Optional block-type filter |
+| `limit` | Max results (default 8) |
 
-Returns `match_types` on each result explaining why it surfaced.
+Each hit carries `score`, `match_types` (why it surfaced), `root_label` + `root_essence` (where it lives in the tree), `superseded_by` (staleness), and `weak_match: true` when the hit is semantic-only and low-scored — a page of weak matches means the graph has nothing on this; say so rather than stretching them.
 
-### `GET /api/recall-smart`
+### Legacy: `recall-fast` / `recall-smart` / `recall-chain`
 
-Full semantic + keyword + per-field match breakdown. Slower — requires embeddings. Shows exact match reasoning:
-```
-match_reason: "label[jwt→concept:...] | essence[jwt, auth] | concept[auth_token→jwt]"
-```
-
-Use `recall-fast` first. Only escalate to `recall-smart` when you need to understand why something surfaced or didn't.
+Older search endpoints, still served for compatibility but **dormant** — nothing internal uses them, and they pre-date the unified scorer (recall-fast still applies a freshness multiplier the canonical search deliberately dropped). Prefer `/api/search`.
 
 ---
 

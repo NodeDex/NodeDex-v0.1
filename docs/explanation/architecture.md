@@ -103,24 +103,21 @@ This is how Rule 3 dead-end checks work. Fully deterministic.
 Label structure: `_` separates dimensions. `-` separates words within a concept.
 Server rejects labels with 5+ `_`-separated segments.
 
-### Mode 2 — Fuzzy recall (scored)
+### Mode 2 — Search (scored, the fallback)
 
 When exploring without a known label:
 
 ```bash
-# Keyword + concept + 2-hop expansion, quality_score multiplied in
-GET /api/recall-fast?q=jwt+authentication&limit=5
-
-# Full semantic + keyword + per-field match breakdown (slower, needs embeddings)
-GET /api/recall-smart?q=why+was+aws+api+gateway+rejected&limit=3
+# The canonical 3-signal search (semantic + keyword + concept), match-ranked
+GET /api/search?q=why+was+aws+api+gateway+rejected&limit=8
 ```
 
-`recall-smart` shows exactly why each result matched:
-```
-match_reason: "label[aws→concept:...] | essence[aws, gateway, rejected] | concept[aws→aws-api-gateway]"
-```
+Each hit explains itself: `score`, `match_types` (which signals fired), `root_label`/`root_essence`
+(where it lives), `superseded_by` (staleness), and `weak_match: true` on low-confidence
+semantic-only hits — all weak means the graph has nothing on this.
 
-Use label navigation first. Fuzzy recall for exploration only.
+Use label navigation first. Search for exploration only. (The older `recall-fast`/`recall-smart`
+endpoints still exist for compatibility but are dormant — prefer `/api/search`.)
 
 ---
 

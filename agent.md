@@ -227,7 +227,7 @@ If your framework uses the REST API directly:
 | `GET /api/blocks/{id-or-label}?detail=...` | One block at `surface\|content\|relations\|full` (id or label resolves the same) |
 | `GET /api/blocks/{id}/chain` | BFS causal chain ±6 levels |
 | `GET /api/blocks/{id}/nav` | Containment path + causal neighbors |
-| `GET /api/recall-fast?q=...&limit=5` | Fuzzy recall **fallback** (keyword + concept scoring) — for when you don't know the label. Navigate by label first. |
+| `GET /api/search?q=...&limit=8` | Search **fallback** (3-signal: semantic + keyword + concept, match-ranked; hits carry match_types + root context + weak_match) — for when you don't know the label. Navigate by label first. |
 
 ### Write
 | Endpoint | Purpose |

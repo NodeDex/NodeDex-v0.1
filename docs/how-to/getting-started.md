@@ -142,7 +142,7 @@ toggles, review queue).
   no token; the TUI also authenticates automatically for servers it launched itself (*managed*).
   For a server elsewhere, start the TUI with `NODEDEX_TUI_API=http://127.0.0.1:<port>` and
   `NODEDEX_TUI_TOKEN=<token>` set.
-- **DB switch (with relaunch)** works on a *managed* (TUI-launched) server — health view →
+- **DB switch (with relaunch)** works on a *managed* (TUI-launched) server — settings view →
   `database` row.
 
 ---

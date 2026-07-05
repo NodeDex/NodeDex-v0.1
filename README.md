@@ -270,7 +270,7 @@ each finished turn to it. Pick the path that fits your agent:
 The lowest-friction path: NodeDex reads the host's **own conversation log** (read-only, on your
 machine, forward-only — never past history) and needs nothing from the host itself. The
 onboarding wizard detects installed hosts and asks which to capture; toggles live in the
-**TUI's health view**.
+**TUI's settings view**.
 
 - **Claude Code** — tails your session transcripts (`~/.claude/projects/…jsonl`). Every session
   becomes its own arc in the graph; the `projects` row scopes which projects are captured
@@ -328,7 +328,7 @@ npx nodedex onboard                                       # or re-run the full w
 npx nodedex uninstall      # asks for confirmation — this is destructive
 ```
 
-Or do it inside the TUI: **health view → `provider` row** switches cloud/local and picks a
+Or do it inside the TUI: **settings view → `provider` row** switches cloud/local and picks a
 model (local models are auto-scanned). A model change within the same provider applies live;
 a provider/endpoint switch applies when the server relaunches (switch db, or restart the TUI).
 
