@@ -2,7 +2,7 @@
   "name": "nodedex",
   "version": "0.1.8",
   "mcpName": "io.github.NodeDex/nodedex",
-  "description": "NodeDex — persistent knowledge-graph memory (MCP server) for AI agents: decisions with their why, dead-ends, and causal chains, built automatically from your agent's conversations",
+  "description": "NodeDex — your project's decision history, for AI agents (MCP server): decisions with their why, dead-ends with their why-not, constraints and causal chains — extracted automatically from agent conversations into a local graph the agent checks before proposing. A different job than fact/preference memory; run both.",
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",

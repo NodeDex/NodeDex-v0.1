@@ -2,15 +2,15 @@
 
 # NodeDex
 
-**the memory your agent lives in**
+**your project's decision history, for agents**
 
-Most agent memory remembers what your agent *said*. **NodeDex remembers what it _figured out_** — the approaches it tried, why it abandoned them, and the path it took to a decision. A local knowledge graph your agent **traverses**, session after session.
+Agent memory remembers *notes, facts, preferences* — what was said. NodeDex keeps a different record: the project's **reasoning** — what was tried and abandoned (and why), what was chosen (and over what alternatives), what's imposed and can't move. A local causal graph your agent **checks before proposing**, session after session. Different job than your fact store; run both.
 
 [Quick start](#setup) · [How it works](#how-it-works--three-actors) · [Connect your agent](#connect-your-agent) · [Why NodeDex](#why-nodedex) · [Docs](docs/README.md)
 
 [![npm: nodedex](https://img.shields.io/npm/v/nodedex.svg?label=npm&color=cb3837)](https://www.npmjs.com/package/nodedex)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![tests: 1192 passing](https://img.shields.io/badge/tests-1192%20passing-brightgreen.svg)](#evidence-it-works)
+[![tests: 1196 passing](https://img.shields.io/badge/tests-1196%20passing-brightgreen.svg)](#evidence-it-works)
 [![status: early & solo-built](https://img.shields.io/badge/status-early%20%26%20solo--built-orange.svg)](#)
 [![MCP: stdio + HTTP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7b5cff.svg)](#connect-your-agent)
 
@@ -25,12 +25,13 @@ Most agent memory remembers what your agent *said*. **NodeDex remembers what it 
 Without NodeDex, every session starts blank. Decisions made last week, dead ends hit last month, reasoning chains built over hours — all gone on context reset. NodeDex stores them in a local SQLite graph the agent navigates deliberately, session after session.
 
 > **Status — early & solo-built.** NodeDex is developed by one person and is at an early stage.
-> The engine is tested end-to-end (1192 passing tests), but it hasn't been battle-tested across
+> The engine is tested end-to-end (1196 passing tests), but it hasn't been battle-tested across
 > many machines and agents yet — **expect rough edges, and please [open an issue](https://github.com/NodeDex/NodeDex-v0.1/issues)
 > when you hit one.** Feedback at this stage is hugely valuable.
 >
-> **On the roadmap:** a web UI (backend built, frontend in progress) · first-class agent
-> integrations · broader agent-host support.
+> **On the roadmap:** a pre-generation dead-end gate (hook-enforced check, not just a nudge) ·
+> interop with Claude Code's native memory · a "what's new since last session" surface for
+> hookless hosts · broader agent-host support.
 
 ---
 
@@ -45,7 +46,7 @@ NodeDex stores the **reasoning residue** instead, as a graph the agent *walks*:
 | Stores | facts, preferences | decisions + *why*, **dead-ends**, constraints, insights |
 | Links | shared-entity association | **causal** (`prompted_by → based_on → supersedes`) |
 | Recall | one-shot top-k retrieval | **traverse** root → decision → why → chain |
-| Failed approaches | — | **permanent dead-ends**, never repeated |
+| Failed approaches | — | **permanent dead-ends** — an enumerable closed-door list the agent is taught to check first (a strong nudge, not a hard block) |
 
 A new agent inheriting a project doesn't get a ranked pile of facts — it **walks the investigation**, and learns what *not* to repeat.
 
@@ -452,7 +453,7 @@ decontextualized fragment.
 > skill, not the memory. Full write-up:
 > [docs/NODEDEX-MEMORY-MODEL.md](docs/NODEDEX-MEMORY-MODEL.md).
 
-Engine health: **1192/1192 server tests pass**, with extraction → graph → retrieval validated
+Engine health: **1196/1196 server tests pass**, with extraction → graph → retrieval validated
 end-to-end.
 
 We also ran NodeDex on itself: the last ~50 turns of the Claude Code session that *built* it,
