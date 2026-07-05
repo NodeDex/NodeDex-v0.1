@@ -37,7 +37,9 @@ Without NodeDex, every session starts blank. Decisions made last week, dead ends
 
 ## Why NodeDex
 
-Most "agent memory" (mem0, vector RAG) stores **facts and preferences** and retrieves the top-k at query time. Perfect for *"the user prefers TypeScript."* But it loses the thing that actually costs you re-work: the agent **re-derives** — it re-proposes an approach it tried and abandoned three sessions ago, or re-investigates a cause it already ruled out.
+Most "agent memory" (mem0, vector RAG) stores **facts and preferences** and retrieves the top-k at query time. Perfect for *"the user prefers TypeScript."* But it loses the thing that actually costs you re-work: the agent **re-derives** — it re-proposes an approach it tried and abandoned three sessions ago, or plans against a decision that was replaced two weeks back.
+
+**Generic memory fixes *forgetting*. NodeDex fixes being *confidently wrong about the past*.** Forgetting announces itself — the agent asks again. Confident wrongness is silent: the stale decision looks exactly as authoritative as the current one, the ruled-out approach sounds fresh, and the hours get burned twice. That's a knowledge-*status* problem — ruled-out, superseded, still-open — and status is structure, not recall.
 
 NodeDex stores the **reasoning residue** instead, as a graph the agent *walks*:
 
