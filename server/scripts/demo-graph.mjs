@@ -113,7 +113,10 @@ export async function buildDemoGraph(dbPath) {
   });
   const redisD = mk({
     label: "ratelimiter_decision_redis-synced-counters", type: "decision", ttl: "permanent", project_id: root.id,
-    essence: "SUPERSEDED: keep bucket state in Redis, checked synchronously on each request — originally chosen for perfect cross-pod accuracy.",
+    // No "SUPERSEDED:" text prefix on purpose — the supersedes EDGE is the currency
+    // mechanism, and the demo must show the signal coming from structure, not from
+    // an essence convention the real pipeline doesn't use.
+    essence: "Keep bucket state in Redis, checked synchronously on each request — originally chosen for perfect cross-pod accuracy.",
     content: { unique: {
       choice: "bucket state in Redis, synchronous check per request",
       reason: "perfect cross-pod accuracy — every pod sees the same counter",

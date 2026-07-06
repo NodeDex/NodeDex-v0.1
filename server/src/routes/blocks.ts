@@ -5,6 +5,7 @@ import { WorkspaceDB } from "../store/database.js";
 import { computeQualityScore } from "../store/quality.js";
 import { CAUSAL_TRAVERSAL_RELS } from "../relation-sets.js";
 import { deriveRootRelatedness } from "../middleware/reflect/root-relatedness.js";
+import { assembleBlockChains } from "../tools/helpers.js";
 
 export function createBlocksRouter(db: WorkspaceDB): Router {
   const router = Router();
@@ -206,6 +207,14 @@ export function createBlocksRouter(db: WorkspaceDB): Router {
             staleNeighbors.has(id) ? { superseded_by: staleNeighbors.get(id) } : {};
           base.outgoing = outgoing.map((r: any) => ({ type: r.type, target_label: r.target_label, target_id: r.target_id, essence: gist(r.target_id), ...currency(r.target_id) }));
           base.incoming = incoming.map((r: any) => ({ type: r.type, source_label: r.source_label, source_id: r.source_id, essence: gist(r.source_id), ...currency(r.source_id) }));
+          // PARITY (chains): the MCP relations view surfaces the causal arc(s)
+          // the block sits on plus the linked story (assembleBlockChains,
+          // member_of-based) — the REST view returned bare edges, so a REST
+          // consumer got headlines without the arc (third read-path drift,
+          // found by walking the graph 2026-07-06). Same helper, both windows.
+          const { chains, linked_chains } = assembleBlockChains(db, block as any);
+          if (chains.length > 0) base.chains = chains;
+          if (linked_chains.length > 0) base.linked_chains = linked_chains;
         }
         return res.json(base);
       }
