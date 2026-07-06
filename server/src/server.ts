@@ -9,6 +9,7 @@ import os from "os";
 import { buildWorkspaceServer, agentToolAllowlist, writesExposed } from "./mcp-server.js";
 import { startApiServer } from "./api-server.js";
 import { getLLMProvider } from "./engine/providers/index.js";
+import { ensureModelCap } from "./engine/providers/model-caps-probe.js";
 
 // ─── Scheduler health state ───────────────────────────────────────
 // Exported so the API server can expose it via /api/health
@@ -51,6 +52,12 @@ async function main() {
   console.error(`Embeddings: ${embeddings.isAvailable() ? "enabled" : "disabled (no embedding API key)"}`);
   const provider = getLLMProvider();
   console.error(`AI provider: ${provider.getName()} — ${provider.isAvailable() ? "ready" : "NOT AVAILABLE (no API key set — check .env)"}`);
+
+  // ── Model output-cap probe (fire-and-forget, one free catalog call) ────────
+  // A model set headlessly (config.json / env) has no caps entry → conservative
+  // default → reasoning-heavy models truncate every structured pass (hy3 2026-07-06).
+  // Probe the provider catalog once at boot and remember the declared ceiling.
+  void ensureModelCap(process.env.AI_MODEL);
 
   // ── Agent identity env vars ───────────────────────────────────────
   // Set these when spawning sub-agents so they know who they are:

@@ -8,46 +8,16 @@ import { getLLMProvider, getEmbeddingProvider, resetProviders } from "../engine/
 import type { SchedulerJobStatus } from "../server.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
-import { resolveEnvWriteTarget } from "../home-env.js";
+import { resolveEnvWriteTarget, serializeEnvFile } from "../home-env.js";
+import { ensureModelCap } from "../engine/providers/model-caps-probe.js";
 import { performBackup } from "../store/backup.js";
 import { runProvenanceCheck } from "../middleware/reflect/provenance-check.js";
 import { healSchemaDemotes } from "../middleware/reflect/schema-heal.js";
 import { pruneCollapsedTypes } from "../middleware/reflect/prune-collapsed-types.js";
 
 // ─── .env helpers ─────────────────────────────────────────────────────────────
-// Env-file LOCATION + parsing live in ../home-env.ts (shared with boot-env.ts so a
-// fresh install's ~/.nodedex/.env is loaded at boot). serializeEnvFile (below) is the
-// write-side, used only by the config POST.
-
-function serializeEnvFile(original: string, updates: Record<string, string>): string {
-  const lines = original.split("\n");
-  const written = new Set<string>();
-
-  const result = lines.map(line => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) return line;
-    const eq = trimmed.indexOf("=");
-    if (eq < 0) return line;
-    const key = trimmed.slice(0, eq).trim();
-    if (key in updates) {
-      written.add(key);
-      const val = updates[key];
-      // preserve comment-style commented-out key if value is empty
-      if (val === "") return `# ${key}=`;
-      return `${key}=${val}`;
-    }
-    return line;
-  });
-
-  // Append keys not already present in the file
-  for (const [key, val] of Object.entries(updates)) {
-    if (!written.has(key) && val !== "") {
-      result.push(`${key}=${val}`);
-    }
-  }
-
-  return result.join("\n");
-}
+// Env-file LOCATION + parsing + the serializeEnvFile write-side all live in
+// ../home-env.ts (shared with boot-env.ts and the model-caps probe).
 
 function maskKey(key: string): string {
   if (!key || key.length < 8) return key ? "••••••" : "";
@@ -397,6 +367,17 @@ export function createAdminRouter(
     const providerChanged = ["AI_PROVIDER", "GEMINI_API_KEY", "OPENAI_API_KEY",
       "ANTHROPIC_API_KEY", "OPENAI_BASE_URL", "EMBEDDING_PROVIDER"].some(k => k in envUpdates);
     if (providerChanged) resetProviders();
+
+    // Any model set here may be one we've never seen — probe the provider catalog for
+    // its declared output ceiling and remember it (fire-and-forget; a failed probe
+    // just leaves the conservative default). Covers the per-pass overrides too — they
+    // hit the same truncation trap as the main model (hy3 2026-07-06).
+    const modelFields = [
+      body.model, body.fallback_model, body.pass4_model, body.comprehend_model,
+      body.judge_model, body.pass2b_model, body.pass3_model, body.pass5_model,
+      body.reasoning_model, body.structural_model,
+    ].filter((m): m is string => typeof m === "string" && m.length > 0);
+    for (const m of [...new Set(modelFields)]) void ensureModelCap(m);
 
     // Persist to the resolved .env target: an existing repo .env (dev), else
     // ~/.nodedex/.env (created on first write — the fresh-install home). NEVER null,

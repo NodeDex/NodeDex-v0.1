@@ -62,6 +62,40 @@ export function resolveEnvWriteTarget(): string {
   return findExistingRepoEnv() ?? HOME_ENV_PATH;
 }
 
+/** Merge `updates` into an existing .env file body: rewrite lines whose key is in
+ *  `updates` (empty value → commented-out `# KEY=`), append keys not yet present.
+ *  Write-side counterpart of parseEnvFile — used by the config POST (routes/admin.ts)
+ *  and the model-caps probe (engine/providers/model-caps-probe.ts). Pure / testable. */
+export function serializeEnvFile(original: string, updates: Record<string, string>): string {
+  const lines = original.split("\n");
+  const written = new Set<string>();
+
+  const result = lines.map(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return line;
+    const eq = trimmed.indexOf("=");
+    if (eq < 0) return line;
+    const key = trimmed.slice(0, eq).trim();
+    if (key in updates) {
+      written.add(key);
+      const val = updates[key];
+      // preserve comment-style commented-out key if value is empty
+      if (val === "") return `# ${key}=`;
+      return `${key}=${val}`;
+    }
+    return line;
+  });
+
+  // Append keys not already present in the file
+  for (const [key, val] of Object.entries(updates)) {
+    if (!written.has(key) && val !== "") {
+      result.push(`${key}=${val}`);
+    }
+  }
+
+  return result.join("\n");
+}
+
 /** Apply a key→value map to process.env, but ONLY keys not already set (so an explicit
  *  env / --env-file / repo .env wins). Returns how many were applied. Pure-ish (mutates
  *  process.env, which is the point); separated for testability. */

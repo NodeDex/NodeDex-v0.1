@@ -32,17 +32,26 @@ const KNOWN_CAPS: Record<string, number> = {
 // glitch on a smaller unknown model (the truncation bump then earns its room up to here).
 const DEFAULT_CEILING = 16384;
 
-function overrides(): Record<string, number> {
+/** Current NODEDEX_MODEL_CAPS override map (parsed fresh per call — hot-settable). */
+export function capOverrides(): Record<string, number> {
   try {
     const o = JSON.parse(process.env.NODEDEX_MODEL_CAPS ?? "{}");
     return o && typeof o === "object" ? o : {};
   } catch { return {}; }
 }
 
+/** Whether `model` resolves to a REAL entry (override or known map) — false means
+ *  modelOutputCeiling would fall back to the conservative default, i.e. the model is
+ *  a candidate for the catalog probe (model-caps-probe.ts). */
+export function hasCapEntry(model: string): boolean {
+  const cap = capOverrides()[model] ?? KNOWN_CAPS[model];
+  return typeof cap === "number" && cap > 0;
+}
+
 /** Hard output-token ceiling for `model`. Override → known map → conservative default. */
 export function modelOutputCeiling(model: string | undefined): number {
   if (!model) return DEFAULT_CEILING;
-  const cap = overrides()[model] ?? KNOWN_CAPS[model];
+  const cap = capOverrides()[model] ?? KNOWN_CAPS[model];
   return typeof cap === "number" && cap > 0 ? cap : DEFAULT_CEILING;
 }
 

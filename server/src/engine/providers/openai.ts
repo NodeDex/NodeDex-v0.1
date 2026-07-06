@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { LLMProvider, EmbeddingProvider, GenerateResult } from "../ai-provider.js";
 import { EmptyResponseError, classifyGenError, isEmptyResult, llmTimeoutMs, decideEmptyOrTimeoutAction, isInsufficientCreditError } from "./failure-policy.js";
 import { modelOutputCeiling } from "./model-caps.js";
+import { effectiveThinkBudget, recordObservedThinking } from "./thinking-spill.js";
 // Re-exported for back-compat (callers/tests that imported these from openai.js):
 export { EmptyResponseError, classifyGenError } from "./failure-policy.js";
 
@@ -103,20 +104,28 @@ export class OpenAIProvider implements LLMProvider {
     for (let i = 0; i < modelsToTry.length; i++) {
       const modelName = modelsToTry[i];
       const isFallback = i > 0;
-      // Per-model output ceiling — an escalation may switch models with very different
-      // caps (Gemini 2.5 Flash 65535 vs GPT-4o 16384), so recompute for THIS model.
-      const outBudgetCeiling = modelOutputCeiling(modelName) - (thinkBudget ?? 0);
-      const baseMaxOut = Math.min(requestedMaxOut, outBudgetCeiling);
-      const bumpedMaxOut = Math.min(Math.round(baseMaxOut * 1.5), outBudgetCeiling);
       let truncBumped = false;
       let emptyRetried = false;
       // Structured-output mechanism for this model: native by provider, switched
       // to the universal prompt-JSON floor on a hard provider error (below).
       let mechanism: SoMechanism = primaryMechanism(modelName);
+      // For the post-loop log lines — set per iteration below.
+      let baseMaxOut = 0;
+      let bumpedMaxOut = 0;
 
       // Inner loop: original + one truncation bump + (on hard error) a one-time
       // prompt-JSON fallback retry.
       while (true) {
+        // Thinking spill: some models IGNORE the reasoning budget (hy3 asked for 1024,
+        // spent 4-7K) and reasoning bills inside max_tokens — so budget the SUM with
+        // what the model was OBSERVED to spend (recorded below the moment usage is
+        // read, so a truncated attempt teaches this very retry). Recomputed per
+        // iteration, per model — an escalation may switch to a model with a very
+        // different ceiling (Gemini 2.5 Flash 65535 vs GPT-4o 16384).
+        const effThink = effectiveThinkBudget(modelName, thinkBudget);
+        const outBudgetCeiling = Math.max(1024, modelOutputCeiling(modelName) - effThink);
+        baseMaxOut = Math.min(requestedMaxOut, outBudgetCeiling);
+        bumpedMaxOut = Math.min(Math.round(baseMaxOut * 1.5), outBudgetCeiling);
         const maxOut = truncBumped ? bumpedMaxOut : baseMaxOut;
         const sysContent = mechanism === "prompt_json"
           ? `${systemPrompt}\n\nReturn ONLY a valid JSON object matching this schema (no markdown fences, no prose):\n${JSON.stringify(schema)}`
@@ -135,7 +144,10 @@ export class OpenAIProvider implements LLMProvider {
             ? { tools: [{ type: "function", function: { name: "structured_result", description: "Return the result as arguments matching the schema.", parameters: schema } }],
                 tool_choice: { type: "function", function: { name: "structured_result" } } }
             : {}),
-          max_tokens: maxOut + (thinkBudget ?? 0),
+          // effThink (not thinkBudget): protect the output space from observed spill.
+          // reasoning.max_tokens keeps the REQUESTED budget — the intent is unchanged;
+          // only the room the response gets to overflow into grows.
+          max_tokens: maxOut + effThink,
           ...(thinkBudget ? { reasoning: { max_tokens: thinkBudget } } as any : {}),
           ...(useTemp && Number.isFinite(temperature) ? { temperature } : {}),
         } as any, callTimeoutMs > 0 ? { timeout: callTimeoutMs } : undefined);
@@ -178,6 +190,9 @@ export class OpenAIProvider implements LLMProvider {
           text = text.trim();
           const usage = completion.usage as any;
           const thinkingTokens = usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+          // Record spill NOW — before any parse/empty throw below — so even a truncated
+          // response teaches the retry how much this model really thinks.
+          recordObservedThinking(modelName, thinkingTokens);
           // OpenAI/OpenRouter `completion_tokens` is INCLUSIVE of reasoning_tokens.
           // Split it so output + thinking sums back to completion_tokens exactly —
           // otherwise the reasoning portion is billed twice in computeCost (once
