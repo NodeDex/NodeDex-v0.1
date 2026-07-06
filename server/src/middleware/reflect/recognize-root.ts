@@ -196,7 +196,10 @@ export async function recognizeClusterRoot(
     newProjectName, clusterItems, candidateRoots, maxItemsInCluster(), maxCandidateRoots(),
   );
   const r = await provider.generateStructured<RecognizerVerdict>(
-    RECOGNIZE_ROOT_PROMPT, userInput, RECOGNIZE_ROOT_SCHEMA, { thinkingBudget: 1024, maxOutputTokens: 1024 },
+    // keepReasoning: this is the attach-vs-fork twin-prevention JUDGE — a graph-aware
+    // comparison. Keep reasoning even on a no-think model (no-think is for the mechanical
+    // passes; this one earns the thinking).
+    RECOGNIZE_ROOT_PROMPT, userInput, RECOGNIZE_ROOT_SCHEMA, { thinkingBudget: 1024, maxOutputTokens: 1024, keepReasoning: true },
   );
   return { verdict: r.result ?? null, rateLimited: r.rateLimited, usage: r.usage };
 }

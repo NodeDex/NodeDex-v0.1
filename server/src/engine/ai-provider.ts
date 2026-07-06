@@ -28,7 +28,10 @@ export interface LLMProvider {
     systemPrompt: string,
     userInput: string,
     schema: object,
-    options?: { thinkingBudget?: number; maxOutputTokens?: number; modelOverride?: string }
+    // keepReasoning: judgment passes (recognizer, dedup reviewer) set this so a
+    // no-think model (NODEDEX_NO_THINK_MODELS) STILL reasons for them — no-think
+    // is scoped to the mechanical passes (comprehend/classify/fill).
+    options?: { thinkingBudget?: number; maxOutputTokens?: number; modelOverride?: string; keepReasoning?: boolean }
   ): Promise<GenerateResult<T>>;
 
   /** Free-form text/JSON generation — route handlers, tools, scheduler jobs. */

@@ -273,6 +273,7 @@ export async function callReviewerLLM(
       thinkingBudget: getThinkingBudget(1024),  // judgment, not reasoning-heavy
       maxOutputTokens: 4096,                    // small JSON output expected
       modelOverride: reviewerModel(),
+      keepReasoning: true,                      // dedup merge/leave/split JUDGE — keep reasoning even on a no-think model
     },
   );
 

@@ -129,6 +129,13 @@ export function StatusLine({ dash, balance, captureDots }: {
   const s = dash?.session;
   const r = dash?.reflect;
   const spend24 = dash?.budget?.observed?.spend24h;
+  // Outstanding dedup/island flags waiting for the reviewer (or the user). Prefer the
+  // flat count; fall back to summing the per-type breakdown. Shown only when > 0 so a
+  // clean graph stays quiet — a rising number is the signal maintenance is falling behind.
+  const fs = dash?.flagSummary;
+  const toReview = typeof fs?.unreviewed === "number"
+    ? fs.unreviewed
+    : (fs?.unreviewed_by_type?.reduce((a, x) => a + (x.count || 0), 0) ?? 0);
   return (
     <Box justifyContent="space-between">
       <Box>
@@ -139,6 +146,9 @@ export function StatusLine({ dash, balance, captureDots }: {
           <Text color={r.paused || r.spend_paused ? theme.warn : theme.dim}>
             {r.paused ? "  ‖ capture paused" : r.spend_paused ? "  ‖ spend paused" : r.queue_depth > 0 ? `  ⟳ extracting (${r.queue_depth})` : ""}
           </Text>
+        ) : null}
+        {toReview > 0 ? (
+          <Text color={theme.dim}>{`  ⚑ ${fmtNum(toReview)} to review`}</Text>
         ) : null}
       </Box>
       <Box marginLeft={2}>

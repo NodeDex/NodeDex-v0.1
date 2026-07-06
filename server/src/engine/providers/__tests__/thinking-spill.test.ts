@@ -3,7 +3,7 @@
 
 import { describe, test, beforeEach } from "node:test";
 import assert from "node:assert";
-import { recordObservedThinking, effectiveThinkBudget, _resetThinkingSpillForTests } from "../thinking-spill.js";
+import { recordObservedThinking, effectiveThinkBudget, isReasoningDisabled, reasoningDisabledForCall, _resetThinkingSpillForTests } from "../thinking-spill.js";
 
 describe("thinking-spill", () => {
   beforeEach(() => _resetThinkingSpillForTests());
@@ -45,5 +45,69 @@ describe("thinking-spill", () => {
     recordObservedThinking("a/model", NaN);
     recordObservedThinking("", 5000);
     assert.equal(effectiveThinkBudget("a/model", 1024), 1024);
+  });
+});
+
+describe("isReasoningDisabled (no-think mode)", () => {
+  const saved = { list: process.env.NODEDEX_NO_THINK_MODELS, global: process.env.NODEDEX_DISABLE_REASONING };
+  beforeEach(() => {
+    delete process.env.NODEDEX_NO_THINK_MODELS;
+    delete process.env.NODEDEX_DISABLE_REASONING;
+  });
+  // restore after the suite so we don't leak env into other tests
+  const restore = () => {
+    if (saved.list === undefined) delete process.env.NODEDEX_NO_THINK_MODELS; else process.env.NODEDEX_NO_THINK_MODELS = saved.list;
+    if (saved.global === undefined) delete process.env.NODEDEX_DISABLE_REASONING; else process.env.NODEDEX_DISABLE_REASONING = saved.global;
+  };
+
+  test("default (no env) → reasoning ON for everyone", () => {
+    assert.equal(isReasoningDisabled("tencent/hy3:free"), false);
+    assert.equal(isReasoningDisabled(undefined), false);
+  });
+
+  test("per-model list disables only listed models", () => {
+    process.env.NODEDEX_NO_THINK_MODELS = "tencent/hy3:free, other/model";
+    assert.equal(isReasoningDisabled("tencent/hy3:free"), true);
+    assert.equal(isReasoningDisabled("other/model"), true);
+    assert.equal(isReasoningDisabled("google/gemini-2.5-flash"), false);
+  });
+
+  test("global switch disables all models", () => {
+    process.env.NODEDEX_DISABLE_REASONING = "on";
+    assert.equal(isReasoningDisabled("anything/at-all"), true);
+    restore();
+  });
+
+  test("the per-model list wins over the global switch", () => {
+    process.env.NODEDEX_DISABLE_REASONING = "on";
+    process.env.NODEDEX_NO_THINK_MODELS = "only/this";
+    assert.equal(isReasoningDisabled("only/this"), true);
+    assert.equal(isReasoningDisabled("something/else"), false);
+    restore();
+  });
+});
+
+describe("reasoningDisabledForCall (no-think scoped to mechanical passes)", () => {
+  const saved = process.env.NODEDEX_NO_THINK_MODELS;
+  beforeEach(() => { process.env.NODEDEX_NO_THINK_MODELS = "tencent/hy3:free"; });
+  const restore = () => {
+    if (saved === undefined) delete process.env.NODEDEX_NO_THINK_MODELS; else process.env.NODEDEX_NO_THINK_MODELS = saved;
+  };
+
+  test("no-think model, mechanical pass (no keepReasoning) → reasoning OFF", () => {
+    assert.equal(reasoningDisabledForCall("tencent/hy3:free"), true);
+    assert.equal(reasoningDisabledForCall("tencent/hy3:free", false), true);
+  });
+
+  test("no-think model, JUDGMENT pass (keepReasoning=true) → reasoning STAYS ON", () => {
+    // the recognizer + dedup reviewer opt-out: no-think must not disable their thinking
+    assert.equal(reasoningDisabledForCall("tencent/hy3:free", true), false);
+    restore();
+  });
+
+  test("reasoning model → always ON regardless of keepReasoning", () => {
+    assert.equal(reasoningDisabledForCall("google/gemini-2.5-flash"), false);
+    assert.equal(reasoningDisabledForCall("google/gemini-2.5-flash", false), false);
+    restore();
   });
 });

@@ -37,3 +37,32 @@ export function effectiveThinkBudget(model: string, requested: number | undefine
 export function _resetThinkingSpillForTests(): void {
   observedMax.clear();
 }
+
+// ── No-think mode ──────────────────────────────────────────────────────────────
+// Some reasoning models do structured extraction BETTER and 3× FASTER with reasoning
+// OFF. hy3 (2026-07-06 diagnostic): forced thinking mislabelled types AND one chunk
+// spent 6758 think / 64 output (thinking starving output) → the arc failed; its native
+// no-think mode produced cleaner classification in 2.7s vs 7.6s. Reasoning is a MODEL
+// TRAIT for this workload, not a universal good — so it's a per-model switch.
+//
+// NODEDEX_NO_THINK_MODELS = comma-separated model ids to run reasoning-off.
+// NODEDEX_DISABLE_REASONING = 1/on = global no-think (all models). The list wins when set.
+
+/** Whether `model` should run with reasoning DISABLED (no-think). Checks the per-model
+ *  list first, then the global switch. */
+export function isReasoningDisabled(model: string | undefined): boolean {
+  if (!model) return false;
+  const list = (process.env.NODEDEX_NO_THINK_MODELS ?? "")
+    .split(",").map(s => s.trim()).filter(Boolean);
+  if (list.length > 0) return list.includes(model);
+  const g = (process.env.NODEDEX_DISABLE_REASONING ?? "").toLowerCase();
+  return g === "1" || g === "on" || g === "true";
+}
+
+/** Whether THIS specific call should run reasoning-off: the model is a no-think model
+ *  AND the call site did not opt to keep reasoning. Judgment passes (recognizer, dedup
+ *  reviewer) pass keepReasoning=true so no-think stays scoped to the mechanical passes
+ *  (comprehend/classify/fill) even when the whole model is on the no-think list. */
+export function reasoningDisabledForCall(model: string | undefined, keepReasoning?: boolean): boolean {
+  return isReasoningDisabled(model) && !keepReasoning;
+}

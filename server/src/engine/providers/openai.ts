@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import type { LLMProvider, EmbeddingProvider, GenerateResult } from "../ai-provider.js";
 import { EmptyResponseError, classifyGenError, isEmptyResult, llmTimeoutMs, decideEmptyOrTimeoutAction, isInsufficientCreditError } from "./failure-policy.js";
 import { modelOutputCeiling } from "./model-caps.js";
-import { effectiveThinkBudget, recordObservedThinking } from "./thinking-spill.js";
+import { effectiveThinkBudget, recordObservedThinking, reasoningDisabledForCall } from "./thinking-spill.js";
 // Re-exported for back-compat (callers/tests that imported these from openai.js):
 export { EmptyResponseError, classifyGenError } from "./failure-policy.js";
 
@@ -55,7 +55,7 @@ export class OpenAIProvider implements LLMProvider {
     systemPrompt: string,
     userInput: string,
     schema: object,
-    options?: { thinkingBudget?: number; maxOutputTokens?: number; modelOverride?: string }
+    options?: { thinkingBudget?: number; maxOutputTokens?: number; modelOverride?: string; keepReasoning?: boolean }
   ): Promise<GenerateResult<T>> {
     if (!this.client) return { result: null, rateLimited: false };
     const modelsToTry = options?.modelOverride
@@ -116,13 +116,20 @@ export class OpenAIProvider implements LLMProvider {
       // Inner loop: original + one truncation bump + (on hard error) a one-time
       // prompt-JSON fallback retry.
       while (true) {
+        // No-think models (hy3): reasoning OFF is faster AND better for structured
+        // extraction — force effThink to 0 so the whole budget is OUTPUT, and send
+        // reasoning:{enabled:false} below instead of a token budget. EXCEPT when the
+        // call site is a judgment pass (recognizer / dedup reviewer) and opts to keep
+        // reasoning — those are graph-aware comparison passes where thinking earns its
+        // keep, so no-think is scoped to the mechanical passes only.
+        const noThink = reasoningDisabledForCall(modelName, options?.keepReasoning);
         // Thinking spill: some models IGNORE the reasoning budget (hy3 asked for 1024,
         // spent 4-7K) and reasoning bills inside max_tokens — so budget the SUM with
         // what the model was OBSERVED to spend (recorded below the moment usage is
         // read, so a truncated attempt teaches this very retry). Recomputed per
         // iteration, per model — an escalation may switch to a model with a very
         // different ceiling (Gemini 2.5 Flash 65535 vs GPT-4o 16384).
-        const effThink = effectiveThinkBudget(modelName, thinkBudget);
+        const effThink = noThink ? 0 : effectiveThinkBudget(modelName, thinkBudget);
         const outBudgetCeiling = Math.max(1024, modelOutputCeiling(modelName) - effThink);
         baseMaxOut = Math.min(requestedMaxOut, outBudgetCeiling);
         bumpedMaxOut = Math.min(Math.round(baseMaxOut * 1.5), outBudgetCeiling);
@@ -148,7 +155,11 @@ export class OpenAIProvider implements LLMProvider {
           // reasoning.max_tokens keeps the REQUESTED budget — the intent is unchanged;
           // only the room the response gets to overflow into grows.
           max_tokens: maxOut + effThink,
-          ...(thinkBudget ? { reasoning: { max_tokens: thinkBudget } } as any : {}),
+          // No-think model → explicitly disable reasoning (faster + better structured
+          // output). Otherwise pass the requested reasoning budget when one is set.
+          ...(noThink
+            ? { reasoning: { enabled: false } } as any
+            : thinkBudget ? { reasoning: { max_tokens: thinkBudget } } as any : {}),
           ...(useTemp && Number.isFinite(temperature) ? { temperature } : {}),
         } as any, callTimeoutMs > 0 ? { timeout: callTimeoutMs } : undefined);
         try {
