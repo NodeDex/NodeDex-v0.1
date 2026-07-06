@@ -258,6 +258,29 @@ describe("GET /api/blocks/:id?detail=", () => {
     const res = await fetch(`${baseUrl}/api/blocks/readpath-proj_fact_child-one?detail=huge`);
     assert.equal(res.status, 400);
   });
+
+  test("relations edges carry neighbor essence + currency (a stale premise shines through)", async () => {
+    // The Nazar case (Reddit, 2026-07-06): a dead-end's killing premise gets
+    // superseded, but the dead-end itself was never touched — its own view must
+    // still show the rot, at the edge, without an extra hop.
+    const premise = db.createBlock({ label: "staleprem-proj_constraint_old-premise", type: "constraint", essence: "Old premise: single server only", content: {}, ttl: "permanent" });
+    const dependent = db.createBlock({ label: "staleprem-proj_dead-end_leans-on-premise", type: "dead_end", essence: "Ruled out X because of the old premise", content: {}, ttl: "permanent" });
+    const replacement = db.createBlock({ label: "staleprem-proj_constraint_new-premise", type: "constraint", essence: "New premise: two servers now", content: {}, ttl: "permanent" });
+    db.createRelation({ source_id: dependent.id, target_id: premise.id, type: "based_on" });
+    db.createRelation({ source_id: replacement.id, target_id: premise.id, type: "supersedes" });
+
+    const data = await (await fetch(`${baseUrl}/api/blocks/${dependent.id}?detail=relations`)).json() as any;
+    const edge = data.outgoing.find((r: any) => r.type === "based_on");
+    assert.ok(edge, "based_on edge present");
+    assert.equal(edge.essence, "Old premise: single server only", "edge carries the neighbor's one-line essence inline");
+    assert.equal(edge.superseded_by, "staleprem-proj_constraint_new-premise",
+      "edge carries the premise's currency — the dependent's own view shows its premise was replaced");
+
+    // Absence = current: an edge to a LIVE neighbor carries no currency marker.
+    const back = await (await fetch(`${baseUrl}/api/blocks/${premise.id}?detail=relations`)).json() as any;
+    const inEdge = back.incoming.find((r: any) => r.type === "based_on");
+    assert.ok(inEdge && !("superseded_by" in inEdge), "live-neighbor edge has no superseded_by key");
+  });
 });
 
 // ─── Read-path slice step 3: cross-root entanglement at orient ───

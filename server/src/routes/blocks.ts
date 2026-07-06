@@ -186,8 +186,26 @@ export function createBlocksRouter(db: WorkspaceDB): Router {
         if (detail === "relations") {
           const outgoing = db.getRelations(block.id).filter((r: any) => r.direction === "outgoing");
           const incoming = db.getAllIncomingRelations(block.id);
-          base.outgoing = outgoing.map((r: any) => ({ type: r.type, target_label: r.target_label, target_id: r.target_id }));
-          base.incoming = incoming.map((r: any) => ({ type: r.type, source_label: r.source_label, source_id: r.source_id }));
+          // PARITY with the MCP workspace_get relations view (the two read surfaces
+          // must not drift): each edge carries the neighbor's one-line essence
+          // (signpost — decide whether to walk without an extra call) AND its
+          // currency (superseded_by = what replaced it). The currency annotation is
+          // the "stale premise shines through the edge" fix (Reddit field question,
+          // 2026-07-06): a dead-end whose killing constraint was superseded must
+          // show the rot in THIS view, not one hop away. Batched, one query.
+          const gist = (id: string): string | undefined => {
+            const b = db.getBlock(id);
+            if (!b?.essence) return undefined;
+            return b.essence.length > 140 ? b.essence.slice(0, 137) + "…" : b.essence;
+          };
+          const staleNeighbors = db.getSupersededByLabels([
+            ...outgoing.map((r: any) => r.target_id),
+            ...incoming.map((r: any) => r.source_id),
+          ]);
+          const currency = (id: string) =>
+            staleNeighbors.has(id) ? { superseded_by: staleNeighbors.get(id) } : {};
+          base.outgoing = outgoing.map((r: any) => ({ type: r.type, target_label: r.target_label, target_id: r.target_id, essence: gist(r.target_id), ...currency(r.target_id) }));
+          base.incoming = incoming.map((r: any) => ({ type: r.type, source_label: r.source_label, source_id: r.source_id, essence: gist(r.source_id), ...currency(r.source_id) }));
         }
         return res.json(base);
       }

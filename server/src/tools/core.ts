@@ -492,8 +492,20 @@ Tip: use "surface" first. If the essence tells you what you need, stop there.`,
             if (!b?.essence) return undefined;
             return b.essence.length > 140 ? b.essence.slice(0, 137) + "…" : b.essence;
           };
-          base.outgoing = outgoing.map((r) => ({ type: r.type, to: r.target_label, id: r.target_id, essence: gist(r.target_id) }));
-          base.incoming = incoming.map((r) => ({ type: r.type, from: r.source_label, id: r.source_id, essence: gist(r.source_id) }));
+          // Currency must SHINE THROUGH edges (Reddit field question, 2026-07-06):
+          // a dead-end whose killing premise was superseded looks fully closed on
+          // its OWN record — the stale marker lives one hop away, on the premise.
+          // Annotating each neighbor with what replaced it makes the rot visible
+          // in THIS view: `based_on → old-constraint (superseded_by: new)` reads
+          // as "re-check this premise" with zero extra calls. Batched, one query.
+          const staleNeighbors = db.getSupersededByLabels([
+            ...outgoing.map((r) => r.target_id),
+            ...incoming.map((r) => r.source_id),
+          ]);
+          const currency = (id: string) =>
+            staleNeighbors.has(id) ? { superseded_by: staleNeighbors.get(id) } : {};
+          base.outgoing = outgoing.map((r) => ({ type: r.type, to: r.target_label, id: r.target_id, essence: gist(r.target_id), ...currency(r.target_id) }));
+          base.incoming = incoming.map((r) => ({ type: r.type, from: r.source_label, id: r.source_id, essence: gist(r.source_id), ...currency(r.source_id) }));
           // Surface the causal arc(s) this block sits on (chains) PLUS every chain
           // reachable by a causal path from them (linked_chains = the connected
           // component, distance-ranked) — the whole linked story, not the bare node
