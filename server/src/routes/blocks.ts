@@ -5,7 +5,7 @@ import { WorkspaceDB } from "../store/database.js";
 import { computeQualityScore } from "../store/quality.js";
 import { CAUSAL_TRAVERSAL_RELS } from "../relation-sets.js";
 import { deriveRootRelatedness } from "../middleware/reflect/root-relatedness.js";
-import { assembleBlockChains } from "../tools/helpers.js";
+import { assembleBlockChains, assembleFullThread } from "../tools/helpers.js";
 
 export function createBlocksRouter(db: WorkspaceDB): Router {
   const router = Router();
@@ -387,6 +387,21 @@ export function createBlocksRouter(db: WorkspaceDB): Router {
         return { label: b.label, type: b.type, flow_role: b.flow_role || null, essence: ess.length > 120 ? ess.slice(0, 120) + "…" : ess, depth, via: viaMap.get(id) || null, is_focal: id === focalId };
       }).filter(Boolean);
       res.json({ chain: chainBlocks, length: chainBlocks.length });
+    } catch (e) { res.status(500).json({ error: String(e) }); }
+  });
+
+  // ─── Whole thread (Mode 2) — the entire causal thread in one call ─
+  // The computed, always-current sibling of /chain: every member of the SPINE thread
+  // this block sits on, cause→effect ordered, with role + grounding tags. Lets a caller
+  // read a whole reasoning arc without N block-by-block hops. REST parity for the MCP
+  // workspace_get(id, "thread").
+  router.get("/api/blocks/:id/thread", (req, res) => {
+    try {
+      const block = db.getBlock(req.params.id);
+      if (!block) return res.status(404).json({ error: "Not found" });
+      const thread = assembleFullThread(db, block.id);
+      if (!thread) return res.json({ focal: block.label, count: 0, members: [], note: "standalone — not on a causal thread" });
+      res.json(thread);
     } catch (e) { res.status(500).json({ error: String(e) }); }
   });
 

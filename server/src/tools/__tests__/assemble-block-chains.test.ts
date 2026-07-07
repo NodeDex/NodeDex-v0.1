@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { WorkspaceDB } from "../../store/database.js";
-import { assembleBlockChains } from "../helpers.js";
+import { assembleBlockChains, assembleFullThread } from "../helpers.js";
 
 // assembleBlockChains is the "surface the chain AND its linked path" fold behind
 // workspace_get(detail=relations|full): { chains (the block's own arcs), linked_chains
@@ -39,32 +39,28 @@ before(async () => {
 });
 after(() => { try { (db as any)["db"]?.close(); } catch { /* ignore */ } cleanFiles(); });
 
-describe("assembleBlockChains — own chains", () => {
-  test("a member block returns its named chain with arc, conclusion, and ordered members", () => {
-    const de = db.createBlock({ label: "p_dead_end_caching", type: "dead_end", essence: "caching rejected" });
-    const dec = db.createBlock({ label: "p_decision_dataloader", type: "decision", essence: "dataloader chosen" });
-    makeChain("p_chain_memory-scaling", "dead_end -> decision", "batched dataloader", [de, dec]);
+describe("assembleBlockChains — own arc is the COMPUTED sign (materialized chain no longer read)", () => {
+  test("a block's own arc is the live computed sign, NOT the stale Pass-5 chain", () => {
+    // Wire BOTH a spine edge (the live truth) and a materialized Pass-5 chain (stale).
+    // The read must return the computed sign, ignoring the materialized layer.
+    const a = db.createBlock({ label: "sw_event_a", type: "event", essence: "a happened" });
+    const b = db.createBlock({ label: "sw_dead_end_b", type: "dead_end", essence: "b was rejected" });
+    db.createRelation({ source_id: b.id, target_id: a.id, type: "based_on" }); // spine: b rests on a
+    makeChain("sw_chain_stale", "a -> b", "a STALE conclusion", [a, b]);        // also materialized
 
-    const out = assembleBlockChains(db, de);
-    assert.equal(out.chains.length, 1, "member belongs to exactly one chain");
-    const c = out.chains[0]!;
-    assert.equal(c.label, "p_chain_memory-scaling");
-    assert.equal(c.arc, "dead_end -> decision");
-    assert.equal(c.conclusion, "batched dataloader");
-    assert.deepEqual(c.members.map((m) => m.type), ["dead_end", "decision"], "members ordered cause-first");
-    assert.ok(c.members.every((m) => m.essence && m.essence.length > 0), "each member carries its essence (whole arc readable in one get)");
-    assert.deepEqual(out.linked_chains, [], "isolated chain has no linked path");
+    const c = assembleBlockChains(db, b).chains[0]!;
+    assert.ok(c, "the own arc surfaces");
+    assert.equal(c.mechanical, true, "it's the live computed sign");
+    assert.equal(c.label, null, "not the materialized chain block's label");
+    assert.notEqual(c.conclusion, "a STALE conclusion", "does NOT read the stale Pass-5 conclusion");
   });
 
-  test("a HINGE block (member_of two chains) returns BOTH — the column alone would lose one", () => {
-    const hinge = db.createBlock({ label: "p_fact_p99-after-fix", type: "fact", essence: "p99 800ms" });
-    const tail  = db.createBlock({ label: "p_decision_next", type: "decision", essence: "next step" });
-    makeChain("p_chain_n+1-fix", "fact -> fact", "n+1 fixed", [hinge]);          // sets column → this one
-    makeChain("p_chain_type-mismatch", "fact -> decision", "type fixed", [hinge, tail]); // column overwritten
-
-    const out = assembleBlockChains(db, hinge);
-    assert.equal(out.chains.length, 2, "hinge surfaces both chains, not just the column's one");
-    assert.deepEqual(out.chains.map((c) => c.label).sort(), ["p_chain_n+1-fix", "p_chain_type-mismatch"]);
+  test("a block on ONLY a materialized chain (no spine edge) no longer surfaces an arc", () => {
+    // member_of without any spine edge = the old stamped-once layer. With the read switched
+    // to computed, there's no live thread, so no arc (it's reachable via the chain block).
+    const x = db.createBlock({ label: "sw_fact_x", type: "fact", essence: "x" });
+    makeChain("sw_chain_orphan", "x", "x concluded", [x]);
+    assert.deepEqual(assembleBlockChains(db, x).chains, [], "no spine thread → computed arc is empty");
   });
 
   test("a chain block itself surfaces its own arc (its members)", () => {
@@ -78,9 +74,54 @@ describe("assembleBlockChains — own chains", () => {
     assert.deepEqual(out.chains[0]!.members.map((m) => m.label).sort(), ["p_fact_a", "p_insight_b"]);
   });
 
-  test("a block on no chain returns empty for both", () => {
+  test("a truly standalone block (no causal edges) returns empty for both", () => {
     const loner = db.createBlock({ label: "p_fact_orphan", type: "fact", essence: "alone" });
     assert.deepEqual(assembleBlockChains(db, loner), { chains: [], linked_chains: [] });
+  });
+});
+
+describe("assembleBlockChains — the mechanical SIGN (spine walk, no materialized chain)", () => {
+  test("a linear thread collapses plain steps and shows origin → conclusion", () => {
+    // event → fact → dead_end via based_on. No chain block. The plain `fact` step collapses.
+    const ev = db.createBlock({ label: "m_event_test-ran", type: "event", essence: "the test ran" });
+    const ft = db.createBlock({ label: "m_fact_null-result", type: "fact", essence: "result was null at scale" });
+    const de = db.createBlock({ label: "m_dead_end_claim-rejected", type: "dead_end", essence: "the claim is rejected" });
+    db.createRelation({ source_id: ft.id, target_id: ev.id, type: "based_on" }); // fact rests on event
+    db.createRelation({ source_id: de.id, target_id: ft.id, type: "based_on" }); // dead_end rests on fact
+
+    const c = assembleBlockChains(db, de).chains[0]!;
+    assert.ok(c, "the thread surfaces even with no chain block");
+    assert.equal(c.label, null);
+    assert.equal(c.mechanical, true);
+    // origin (event) + leaf (dead_end); the mid `fact` step is COLLAPSED (not a waypoint type).
+    assert.deepEqual(c.members.map((m) => m.type), ["event", "dead_end"], "plain fact step collapsed; waypoints ordered cause-first");
+    assert.equal(c.conclusion, "the claim is rejected", "conclusion = the leaf");
+    assert.ok(!c.forked, "single destination → not forked");
+  });
+
+  test("a forked thread surfaces every destination, ranked, with fork + grounding tags", () => {
+    // ev → (fact) → decision → { dead_end , blueprint }  — decision is the fork.
+    const ev  = db.createBlock({ label: "f_event_ran", type: "event", essence: "experiment ran" });
+    const ft  = db.createBlock({ label: "f_fact_data", type: "fact", essence: "the data came back" });
+    const dec = db.createBlock({ label: "f_decision_pick", type: "decision", essence: "chose approach X" });
+    const de  = db.createBlock({ label: "f_dead_end_wall", type: "dead_end", essence: "approach X hit a wall" });
+    const bp  = db.createBlock({ label: "f_blueprint_plan", type: "blueprint", essence: "revised plan from X" });
+    const sf  = db.createBlock({ label: "f_fact_evidence", type: "fact", essence: "a supporting measurement" });
+    db.createRelation({ source_id: ft.id,  target_id: ev.id,  type: "based_on" });
+    db.createRelation({ source_id: dec.id, target_id: ft.id,  type: "based_on" });
+    db.createRelation({ source_id: de.id,  target_id: dec.id, type: "based_on" }); // branch 1
+    db.createRelation({ source_id: bp.id,  target_id: dec.id, type: "based_on" }); // branch 2 → FORK
+    db.createRelation({ source_id: sf.id,  target_id: dec.id, type: "supports" }); // GROUNDING, not a step
+
+    const c = assembleBlockChains(db, dec).chains[0]!;
+    assert.ok(c, "the forked thread surfaces");
+    assert.equal(c.forked, true, "two destinations → forked");
+    const leadTypes = (c.leads_to ?? []).map((l) => l.type);
+    assert.deepEqual(leadTypes, ["dead_end", "blueprint"], "destinations ranked: dead_end (weight 5) before blueprint (4)");
+    assert.equal(c.backed_by, 1, "the supports edge is counted as a grounding tag, not walked as a step");
+    // members = the upstream lineage (origin + focal); the plain `fact` step collapses;
+    // the two DOWNSTREAM leaves live in leads_to, not dumped into members (bounded sign).
+    assert.deepEqual(c.members.map((m) => m.type), ["event", "decision"], "members = came-from lineage, not every branch waypoint");
   });
 });
 
@@ -123,5 +164,43 @@ describe("assembleBlockChains — linked_chains (connected component)", () => {
     for (let i = 1; i < linked.length; i++) {
       assert.ok(linked[i]!.distance >= linked[i - 1]!.distance, "non-decreasing distance");
     }
+  });
+});
+
+describe("assembleFullThread — Mode 2 (the whole thread in one call)", () => {
+  test("returns EVERY member spine-ordered with role + grounding, uncollapsed", () => {
+    // ev → ft → dec → { de , bp } ; sf supports dec (grounding).
+    const ev  = db.createBlock({ label: "t_event_ran", type: "event", essence: "ran" });
+    const ft  = db.createBlock({ label: "t_fact_data", type: "fact", essence: "data" });
+    const dec = db.createBlock({ label: "t_decision_pick", type: "decision", essence: "picked X" });
+    const de  = db.createBlock({ label: "t_dead_end_wall", type: "dead_end", essence: "wall" });
+    const bp  = db.createBlock({ label: "t_blueprint_plan", type: "blueprint", essence: "plan" });
+    const sf  = db.createBlock({ label: "t_fact_evidence", type: "fact", essence: "evidence" });
+    db.createRelation({ source_id: ft.id,  target_id: ev.id,  type: "based_on" });
+    db.createRelation({ source_id: dec.id, target_id: ft.id,  type: "based_on" });
+    db.createRelation({ source_id: de.id,  target_id: dec.id, type: "based_on" });
+    db.createRelation({ source_id: bp.id,  target_id: dec.id, type: "based_on" });
+    db.createRelation({ source_id: sf.id,  target_id: dec.id, type: "supports" });
+
+    const t = assembleFullThread(db, dec.id)!;
+    assert.ok(t, "the thread assembles");
+    assert.equal(t.count, 5, "ALL members (incl. the plain fact step) — not collapsed like the sign");
+    assert.equal(t.focal, "t_decision_pick");
+    // spine-ordered cause→effect: ev, ft, dec, then the two leaves.
+    assert.deepEqual(t.members.slice(0, 3).map((m) => m.type), ["event", "fact", "decision"], "cause-first order");
+    const roleOf = new Map(t.members.map((m) => [m.label, m.role]));
+    assert.equal(roleOf.get("t_event_ran"), "origin");
+    assert.equal(roleOf.get("t_decision_pick"), "focal");
+    assert.equal(roleOf.get("t_dead_end_wall"), "leaf");
+    assert.deepEqual(t.origins, ["t_event_ran"]);
+    assert.deepEqual(t.leaves.sort(), ["t_blueprint_plan", "t_dead_end_wall"]);
+    const decMember = t.members.find((m) => m.label === "t_decision_pick")!;
+    assert.equal(decMember.backed_by, 1, "the supports edge tags the decision (grounding), sf itself is off-spine");
+    assert.ok(!t.members.some((m) => m.label === "t_fact_evidence"), "grounding block is NOT a thread member");
+  });
+
+  test("a standalone block has no thread", () => {
+    const lone = db.createBlock({ label: "t_fact_lone", type: "fact", essence: "alone" });
+    assert.equal(assembleFullThread(db, lone.id), null);
   });
 });

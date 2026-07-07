@@ -17,7 +17,7 @@ export function err(code: string, message: string, extra?: Record<string, unknow
 export { cosineSim } from "../engine/vector-math.js";
 
 import type { WorkspaceDB, Block } from "../store/database.js";
-import { CAUSAL_TRAVERSAL_RELS } from "../relation-sets.js";
+import { CAUSAL_TRAVERSAL_RELS, SPINE_RELS, GROUNDING_RELS } from "../relation-sets.js";
 
 // Scale guard: cap how many linked chains we surface. The connected component is
 // naturally small at chain granularity (an incident ≈ 6 chains), but a long-lived
@@ -25,13 +25,28 @@ import { CAUSAL_TRAVERSAL_RELS } from "../relation-sets.js";
 const LINKED_CHAINS_CAP = 12;
 
 export interface ChainSummary {
-  label: string;
+  label: string | null;          // Pass-5 chain block's label; `null` for a mechanical SIGN (no chain block exists)
   essence: string;
   arc: string | null;
   conclusion: string | null;
-  // Members carry their essence so ONE get returns the whole READABLE arc (cause→
-  // outcome), not just labels — the agent reads the story without N follow-up gets.
+  // `mechanical: true` = this was composed LIVE from the spine edges at read time
+  // (no materialized chain block), so it is always current. Absent/false = a Pass-5
+  // (LLM-summarized) chain block. See composeSign / walkThread.
+  mechanical?: boolean;
+  // Members = the WAYPOINTS of the thread (origin(s), any mid-path result block —
+  // dead_end/constraint/decision/blueprint/insight/question — and every leaf), in
+  // causal order. Plain fact/event steps collapse. Each carries its label (the HOP
+  // HANDLE the agent jumps to) + essence, so ONE get = the whole skeleton + how to move.
   members: Array<{ label: string; type: string; essence: string }>;
+  // ── SIGN fields (present only on mechanical signs) ──
+  // `leads_to` = the ranked, capped destinations this thread reaches downstream
+  // (conclusion-type + access ranked). More than one ⇒ the path forked.
+  leads_to?: Array<{ label: string; type: string; essence: string }>;
+  more_leaves?: number;   // destinations beyond the cap — reachable, not shown
+  backed_by?: number;     // count of GROUNDING (evidential) edges on the thread — a tag, not a step
+  forked?: boolean;       // the downstream path splits into >1 destination
+  truncated?: boolean;    // the thread exceeded the walk safety-cap; more is reachable
+  terminal?: boolean;     // the focal block IS the conclusion — nothing further downstream (empty leads_to is expected, not missing)
 }
 
 export interface LinkedChain {
@@ -77,17 +92,48 @@ export function assembleBlockChains(
   db: WorkspaceDB,
   block: { id: string; type: string },
 ): BlockChains {
-  // A chain block itself → its own arc. Any other block → the chain(s) it is a
-  // member_of (member_of is non-bidirectional → only ever an OUTGOING relation).
-  const ownChainIds = block.type === "chain"
-    ? [block.id]
-    : db.getRelations(block.id)
-        .filter((r) => r.direction === "outgoing" && r.type === "member_of")
-        .map((r) => r.target_id);
-  const own = [...new Set(ownChainIds)];
-  if (own.length === 0) return { chains: [], linked_chains: [] };
+  // ── OWN ARC ── every block's own arc is the COMPUTED SIGN (walkThread → composeSign):
+  // always current, bounded, fork-aware. It no longer reads the Pass-5 materialized chain
+  // / `chain_id` column — that layer is stamped-once and goes stale (35% of blocks used to
+  // show it, uncapped). The materialized data still LIVES in the graph (Pass 5, the 20
+  // chain blocks, member_of) — it's just no longer the read source. Retiring the write
+  // side is a separate, deliberate change (it feeds context-injection + dedup).
+  //
+  // Exception: a `type=chain` block gotten DIRECTLY still surfaces its own members, so the
+  // legacy chain blocks stay openable until they're retired.
+  let chains: ChainSummary[] = [];
+  if (block.type === "chain") {
+    const cb = db.getBlock(block.id);
+    if (cb) {
+      let content: Record<string, unknown> = {};
+      try { content = JSON.parse(cb.content); } catch { /* malformed → empty */ }
+      const unique = (content.unique as Record<string, unknown>) || {};
+      chains = [{
+        label:      cb.label,
+        essence:    cb.essence,
+        arc:        (unique.arc as string) ?? null,
+        conclusion: (unique.conclusion as string) ?? null,
+        members:    db.getBlocksByChain(cb.id).map((m) => ({ label: m.label, type: m.type, essence: m.essence })),
+      }];
+    }
+  } else {
+    const sign = composeSign(db, walkThread(db, block.id));
+    if (sign) chains = [sign];
+  }
 
-  // Graph data — fetched ONCE, only when the block is on a chain.
+  // ── LINKED THREADS (transitional) ── still computed over the MATERIALIZED chain graph
+  // (member_of), so it only fires for blocks that belong to a Pass-5 chain; [] otherwise.
+  // Recomputing this over COMPUTED threads is the remaining follow-up (part 8). No new
+  // dependency on the chain_id column here — it reads member_of.
+  const own = [...new Set(
+    block.type === "chain"
+      ? [block.id]
+      : db.getRelations(block.id)
+          .filter((r) => r.direction === "outgoing" && r.type === "member_of")
+          .map((r) => r.target_id)
+  )];
+  if (own.length === 0) return { chains, linked_chains: [] };
+
   const allRels = db.getAllRelations(false);
   const memberOf = new Map<string, Set<string>>(); // blockId → chains it belongs to
   for (const r of allRels) {
@@ -110,25 +156,6 @@ export function assembleBlockChains(
     const tc = memberOf.get(r.target_id);
     if (!sc || !tc) continue;
     for (const a of sc) for (const b of tc) { link(a, b, r.type); link(b, a, r.type); }
-  }
-
-  // The block's OWN chains, full detail.
-  const chains: ChainSummary[] = [];
-  for (const chainId of own) {
-    const cb = db.getBlock(chainId);
-    if (!cb || cb.type !== "chain") continue;
-    let content: Record<string, unknown> = {};
-    try { content = JSON.parse(cb.content); } catch { /* malformed → empty */ }
-    const unique = (content.unique as Record<string, unknown>) || {};
-    chains.push({
-      label:      cb.label,
-      essence:    cb.essence,
-      arc:        (unique.arc as string) ?? null,
-      conclusion: (unique.conclusion as string) ?? null,
-      // cause-first order via getBlocksByChain (chain_id column, created_at ASC),
-      // WITH each member's essence — the whole arc readable in this one call.
-      members:    db.getBlocksByChain(cb.id).map((m) => ({ label: m.label, type: m.type, essence: m.essence })),
-    });
   }
 
   // Multi-source BFS over the chain graph from ALL the block's own chains →
@@ -158,6 +185,229 @@ export function assembleBlockChains(
     });
 
   return { chains, linked_chains };
+}
+
+// ─── The thread engine — walkThread + composeSign ───────────────────────────────
+// Serves the "sign that says which path leads where". Two steps: walkThread finds the
+// thread the focal block sits on (its spine ancestors → origins, descendants → leaves,
+// forks, grounding); composeSign renders the short signpost. Read-only, always current
+// (nothing materialized), so it can never go stale.
+
+// Safety valve: reach is unbounded by design (walk the WHOLE thread so the true
+// destination is never cut off), but a pathological giant component is capped and
+// MARKED — a visible fold ("truncated → more reachable"), never a silent cut.
+const THREAD_SAFETY_CAP = 300;
+
+// Mid-path blocks worth showing as waypoints: the ones that change the agent's next
+// move (Rule 1: dead-ends + constraints; plus committed decisions, plans, learnings,
+// open questions). Plain fact/event steps collapse. Origins + leaves always show.
+const WAYPOINT_TYPES = new Set(["dead_end", "constraint", "decision", "blueprint", "insight", "question"]);
+// Rank of a destination when capping: how "conclusive" is it, then how used.
+const CONCLUSION_WEIGHT: Record<string, number> = { dead_end: 5, constraint: 5, decision: 4, blueprint: 4, insight: 3, question: 3 };
+const BRANCH_CAP = 5;
+
+function truncEssence(s: string, n = 80): string {
+  const t = (s || "").trim();
+  return t.length > n ? t.slice(0, n).trimEnd() + "…" : t;
+}
+
+interface ThreadWalk {
+  focalId: string;
+  depth: Map<string, number>;         // block id → causal depth (neg = cause side, pos = effect side)
+  origins: string[];                  // no spine CAUSE within the thread — where it starts
+  leaves: string[];                   // no spine EFFECT within the thread — where it ends up
+  groundedBy: Map<string, number>;    // block id → # of GROUNDING edges touching it (evidence tags)
+  truncated: boolean;
+}
+
+/**
+ * walkThread — find the thread the focal block sits on, from the SPINE edges only.
+ *
+ * Direction is uniform across SPINE_RELS: an edge source=EFFECT, target=CAUSE. So
+ * walking UP (edges where focal is the source) reaches causes; DOWN (focal is the
+ * target) reaches effects. Cycle-safe (visit-once). GROUNDING edges (supports/…) are
+ * counted as evidence tags, never followed as steps.
+ */
+function walkThread(db: WorkspaceDB, focalId: string): ThreadWalk {
+  const rels = db.getAllRelations(false).filter((r) => r.status === "active");
+  const spine = rels.filter((r) => SPINE_RELS.has(r.type));
+
+  const depth = new Map<string, number>([[focalId, 0]]);
+  let truncated = false;
+  // UP → causes (target of an edge the focal/current is the source of)
+  const up: string[] = [focalId];
+  while (up.length) {
+    if (depth.size >= THREAD_SAFETY_CAP) { truncated = true; break; }
+    const id = up.shift()!;
+    const d = depth.get(id)!;
+    for (const r of spine) {
+      if (r.source_id === id && !depth.has(r.target_id)) { depth.set(r.target_id, d - 1); up.push(r.target_id); }
+    }
+  }
+  // DOWN → effects (source of an edge the focal/current is the target of)
+  const down: string[] = [focalId];
+  while (down.length) {
+    if (depth.size >= THREAD_SAFETY_CAP) { truncated = true; break; }
+    const id = down.shift()!;
+    const d = depth.get(id)!;
+    for (const r of spine) {
+      if (r.target_id === id && !depth.has(r.source_id)) { depth.set(r.source_id, d + 1); down.push(r.source_id); }
+    }
+  }
+
+  // origins = no spine cause in-thread; leaves = no spine effect in-thread.
+  const hasCause = new Set<string>();   // this block rests on a cause that's in the thread
+  const hasEffect = new Set<string>();  // something in the thread rests on this block
+  for (const r of spine) {
+    if (depth.has(r.source_id) && depth.has(r.target_id)) { hasCause.add(r.source_id); hasEffect.add(r.target_id); }
+  }
+  const origins = [...depth.keys()].filter((id) => !hasCause.has(id));
+  const leaves = [...depth.keys()].filter((id) => !hasEffect.has(id));
+
+  // grounding: count evidential edges touching each in-thread block (a "backed by" tag).
+  const groundedBy = new Map<string, number>();
+  for (const r of rels) {
+    if (!GROUNDING_RELS.has(r.type)) continue;
+    for (const side of [r.source_id, r.target_id]) {
+      if (depth.has(side)) groundedBy.set(side, (groundedBy.get(side) ?? 0) + 1);
+    }
+  }
+
+  return { focalId, depth, origins, leaves, groundedBy, truncated };
+}
+
+/**
+ * composeSign — render the short signpost from a walked thread.
+ *
+ * members = the focal's UPSTREAM lineage (origin → focal), bounded — the "came from".
+ * leads_to = the ranked, capped DOWNSTREAM destinations (>1 ⇒ forked). Splitting the
+ * two keeps the sign short even at a wide fork: a 12-way fork puts 1–2 lines in members
+ * and the fan in leads_to (capped), instead of dumping every branch's waypoints. Mid-
+ * branch results are reachable by drilling into a destination (the whole-chain fetch).
+ * conclusion = the top destination's essence. Each entry carries its LABEL = the hop
+ * handle. Returns null for a standalone block (thread < 2) so "loner → empty" holds.
+ */
+function composeSign(db: WorkspaceDB, walk: ThreadWalk): ChainSummary | null {
+  if (walk.depth.size < 2) return null;
+  const get = (id: string) => db.getBlock(id);
+
+  // members = the "came from" lineage: origins + upstream (depth ≤ 0) result waypoints
+  // + the focal. Downstream (depth > 0) is leads_to, NOT dumped here.
+  const lineageIds = new Set<string>(walk.origins);
+  for (const [id, d] of walk.depth) {
+    if (d > 0) continue; // downstream → leads_to
+    const b = get(id);
+    if (id === walk.focalId || (b && WAYPOINT_TYPES.has(b.type))) lineageIds.add(id);
+  }
+  let ordered = [...lineageIds]
+    .map((id) => ({ b: get(id), d: walk.depth.get(id)! }))
+    .filter((x): x is { b: Block; d: number } => !!x.b && x.b.status !== "archived")
+    .sort((a, b) => a.d - b.d); // cause-first
+  if (ordered.length === 0) return null;
+  // bound the lineage — keep the origin + the steps nearest the focal.
+  const LINEAGE_CAP = 8;
+  if (ordered.length > LINEAGE_CAP) ordered = [ordered[0]!, ...ordered.slice(ordered.length - (LINEAGE_CAP - 1))];
+
+  // Destinations = leaves OTHER than the focal, ranked by how conclusive then how used, capped.
+  const rankedLeaves = walk.leaves
+    .filter((id) => id !== walk.focalId)
+    .map((id) => get(id))
+    .filter((b): b is Block => !!b && b.status !== "archived")
+    .map((b) => ({ label: b.label, type: b.type, essence: b.essence || "", w: CONCLUSION_WEIGHT[b.type] ?? 1, a: b.access_count ?? 0 }))
+    .sort((x, y) => y.w - x.w || y.a - x.a);
+  const shown = rankedLeaves.slice(0, BRANCH_CAP);
+  const moreLeaves = Math.max(0, rankedLeaves.length - BRANCH_CAP);
+
+  let backed = 0;
+  for (const c of walk.groundedBy.values()) backed += c;
+
+  const members = ordered.map((x) => ({ label: x.b.label, type: x.b.type, essence: x.b.essence || "" }));
+  const origin = ordered[0]!.b;
+  // Terminal = there's nothing downstream to navigate to (and we didn't hit the safety
+  // cap) — so an empty leads_to reads as "you're at the end of this thread", not
+  // "missing". Reader-honest: covers the focal-is-a-leaf case AND the case where the
+  // only downstream leaves are archived/gone.
+  const isTerminal = shown.length === 0 && !walk.truncated;
+  const topLeaf = shown[0] ?? { essence: ordered[ordered.length - 1]!.b.essence || "" };
+
+  return {
+    label: null,
+    mechanical: true,
+    essence: `${truncEssence(origin.essence)} → ${truncEssence(topLeaf.essence)}`,
+    arc: ordered.map((x) => truncEssence(x.b.essence, 60)).join("  →  "),
+    conclusion: topLeaf.essence || null,
+    members,
+    leads_to: shown.map(({ label, type, essence }) => ({ label, type, essence })),
+    ...(moreLeaves > 0 ? { more_leaves: moreLeaves } : {}),
+    ...(backed > 0 ? { backed_by: backed } : {}),
+    ...(walk.leaves.length > 1 ? { forked: true } : {}),
+    ...(walk.truncated ? { truncated: true } : {}),
+    ...(isTerminal ? { terminal: true } : {}),
+  };
+}
+
+export interface FullThread {
+  focal: string;                 // focal block's label
+  count: number;                 // # members in the whole thread
+  origins: string[];             // labels where the thread starts
+  leaves: string[];              // labels where it ends up (the destinations)
+  truncated: boolean;            // hit the walk safety-cap → more members reachable
+  // ALL members, spine-ordered (cause→effect), FULL essence — "read the whole thread
+  // in ONE call" instead of N block-by-block hops. role situates each; backed_by tags
+  // the evidence. This is Mode 2 (the whole-chain read); the SIGN (Mode 1) is the short
+  // signpost you read to decide whether to fetch this.
+  members: Array<{
+    label: string;
+    type: string;
+    essence: string;
+    role: "origin" | "focal" | "leaf" | "step";
+    backed_by?: number;
+  }>;
+}
+
+/**
+ * assembleFullThread — Mode 2: the whole thread a block sits on, in one call.
+ *
+ * The SIGN (composeSign) is the short "origin → destinations" you read to CHOOSE a
+ * thread. Once chosen, this returns the ENTIRE thread — every member, spine-ordered,
+ * with full essences + grounding tags — so the agent reads the reasoning without N
+ * block-by-block hops (chain-as-unit traversal). Computed live from the spine, so it is
+ * always current. Returns null for a standalone block (thread < 2).
+ *
+ * Order = causal depth (cause-first), ties broken by created_at (a topo proxy — exact
+ * for a line, good enough for a DAG). Bounded by walkThread's safety cap (`truncated`).
+ */
+export function assembleFullThread(db: WorkspaceDB, blockId: string): FullThread | null {
+  const walk = walkThread(db, blockId);
+  if (walk.depth.size < 2) return null;
+
+  const originSet = new Set(walk.origins);
+  const leafSet = new Set(walk.leaves);
+  const rows = [...walk.depth.entries()]
+    .map(([id, d]) => ({ b: db.getBlock(id), d }))
+    .filter((x): x is { b: Block; d: number } => !!x.b && x.b.status !== "archived")
+    .sort((a, b) => a.d - b.d || String(a.b.created_at).localeCompare(String(b.b.created_at)));
+  if (rows.length < 2) return null;
+
+  const label = (id: string) => db.getBlock(id)?.label ?? id;
+  const members = rows.map(({ b }) => {
+    const role: "origin" | "focal" | "leaf" | "step" =
+      b.id === blockId ? "focal"
+      : originSet.has(b.id) ? "origin"
+      : leafSet.has(b.id) ? "leaf"
+      : "step";
+    const g = walk.groundedBy.get(b.id);
+    return { label: b.label, type: b.type, essence: b.essence || "", role, ...(g ? { backed_by: g } : {}) };
+  });
+
+  return {
+    focal: label(blockId),
+    count: members.length,
+    origins: walk.origins.map(label),
+    leaves: walk.leaves.map(label),
+    truncated: walk.truncated,
+    members,
+  };
 }
 
 export interface RootSuggestion {

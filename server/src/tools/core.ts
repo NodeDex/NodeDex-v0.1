@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine, blockEmbeddingText } from "../engine/embeddings.js";
-import { ok, err, cosineSim, assembleBlockChains, filterRootsByConcepts } from "./helpers.js";
+import { ok, err, cosineSim, assembleBlockChains, assembleFullThread, filterRootsByConcepts } from "./helpers.js";
 import { searchBlocks, rootContextFor, allWeak, WEAK_NOTE } from "../engine/search-core.js";
 
 // ─── Keyword concept extractor ───────────────────────────────────
@@ -407,15 +407,17 @@ DETAIL LEVELS (default: "surface" — start here, drill down only if needed):
                  Use when: scanning, checking existence, deciding if worth reading
 - "content"   → + is_a, unique{}, has{} (the full knowledge body / procedure steps)
                  Use when: you need the actual facts, properties, or skill steps
-- "relations" → surface + outgoing/incoming links + the causal CHAIN(s) this block sits on
-                 Use when: navigating the graph — surfaces the whole arc (cause→outcome), not the bare block
+- "relations" → surface + outgoing/incoming links + the SIGN: the thread this block sits on (origin → destinations)
+                 Use when: navigating — a short signpost of the causal arc + where each branch leads, to decide where to go
+- "thread"    → the WHOLE thread in one call: every member, cause→effect order, full essence + evidence tags
+                 Use when: you picked this thread from the sign and want to read it ALL — no block-by-block hops
 - "full"      → everything: content + relations + metadata (source, dates, ttl, aliases)
                  Use when: auditing, debugging, or you genuinely need all fields
 
-Tip: use "surface" first. If the essence tells you what you need, stop there.`,
+Tip: use "surface" first. If the essence tells you what you need, stop there. "relations" to orient, "thread" to read the whole arc.`,
     {
       id:     z.string().describe("Block ID (blk_xxx) or label"),
-      detail: z.enum(["surface", "content", "relations", "full"]).optional()
+      detail: z.enum(["surface", "content", "relations", "full", "thread"]).optional()
                .describe("Level of detail to return. Default: 'surface'"),
     },
     async (params) => {
@@ -468,7 +470,7 @@ Tip: use "surface" first. If the essence tells you what you need, stop there.`,
 
         if (detail === "surface") {
           return ok({ ...base, detail_level: "surface",
-            hint: "Call workspace_get(id, 'content') for the full knowledge body, or 'relations' for links + the causal chain(s) this block sits on." });
+            hint: "Call workspace_get(id, 'content') for the full knowledge body, 'relations' for links + the SIGN (the thread this block sits on + where it leads), or 'thread' to read that whole thread in one call." });
         }
 
         // ── content ───────────────────────────────────────────────
@@ -513,6 +515,13 @@ Tip: use "surface" first. If the essence tells you what you need, stop there.`,
           const { chains, linked_chains } = assembleBlockChains(db, block);
           if (chains.length > 0) base.chains = chains;
           if (linked_chains.length > 0) base.linked_chains = linked_chains;
+        }
+
+        // ── thread (Mode 2 — the whole thread in one call) ─────────
+        if (detail === "thread") {
+          const thread = assembleFullThread(db, block.id);
+          if (thread) base.thread = thread;
+          else base.thread_note = "This block is standalone — not on a causal thread.";
         }
 
         // ── full metadata ─────────────────────────────────────────
