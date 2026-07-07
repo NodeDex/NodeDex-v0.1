@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { WorkspaceDB } from "../../store/database.js";
-import { assembleBlockChains, assembleFullThread } from "../helpers.js";
+import { assembleBlockChains, assembleFullThread, orderMembersCausally } from "../helpers.js";
 
 // assembleBlockChains is the "surface the chain AND its linked path" fold behind
 // workspace_get(detail=relations|full): { chains (the block's own arcs), linked_chains
@@ -192,5 +192,26 @@ describe("assembleFullThread — Mode 2 (the whole thread in one call)", () => {
   test("a standalone block has no thread", () => {
     const lone = db.createBlock({ label: "t_fact_lone", type: "fact", essence: "alone" });
     assert.equal(assembleFullThread(db, lone.id), null);
+  });
+});
+
+describe("orderMembersCausally — members follow the chain's flow, not created_at", () => {
+  test("re-orders cause-first even when creation order is reversed", () => {
+    // Create in REVERSE causal order (conclusion first) so created_at is backwards —
+    // this is the real-world case: 20/20 dogfood chains had created_at != causal order.
+    const dec = db.createBlock({ label: "o_decision_adopt", type: "decision", essence: "adopt X" });   // created 1st
+    const ft  = db.createBlock({ label: "o_fact_benchmark", type: "fact", essence: "benchmark result" }); // created 2nd
+    const ev  = db.createBlock({ label: "o_event_ran", type: "event", essence: "the run happened" });   // created 3rd
+    db.createRelation({ source_id: ft.id,  target_id: ev.id,  type: "based_on" }); // fact rests on event
+    db.createRelation({ source_id: dec.id, target_id: ft.id,  type: "based_on" }); // decision rests on fact
+
+    const members = [dec, ft, ev]; // as fetched by created_at (reversed from causality)
+    const ordered = orderMembersCausally(db, members).map((m) => m.type);
+    assert.deepEqual(ordered, ["event", "fact", "decision"], "cause-first flow, not creation order");
+  });
+
+  test("a set with fewer than 2 members is returned unchanged", () => {
+    const only = db.createBlock({ label: "o_fact_only", type: "fact", essence: "x" });
+    assert.deepEqual(orderMembersCausally(db, [only]).map((m) => m.label), ["o_fact_only"]);
   });
 });

@@ -106,7 +106,7 @@ export function assembleBlockChains(
         essence:    cb.essence,
         arc:        (unique.arc as string) ?? null,
         conclusion: (unique.conclusion as string) ?? null,
-        members:    db.getBlocksByChain(cb.id).map((m) => ({ label: m.label, type: m.type, essence: m.essence })),
+        members:    orderMembersCausally(db, db.getBlocksByChain(cb.id)).map((m) => ({ label: m.label, type: m.type, essence: m.essence })),
       }],
       linked_chains: [],
     };
@@ -413,6 +413,42 @@ export function assembleFullThread(db: WorkspaceDB, blockId: string): FullThread
     truncated: walk.truncated,
     members,
   };
+}
+
+/**
+ * orderMembersCausally — order a chain's member blocks by the CHAIN'S FLOW (cause → effect),
+ * not by created_at. Verified against the real dogfood graph: created_at order disagreed with
+ * causal order in 20/20 chains (a decision/conclusion routinely sorted FIRST by creation time),
+ * and the chain blocks carry no stored member order — so the only faithful source of flow is a
+ * topological sort over the SPINE edges. Ties (multiple roots / a DAG) break by created_at for
+ * determinism. Cycle-safe (leftovers appended). Used by every chain-member read path.
+ */
+export function orderMembersCausally(db: WorkspaceDB, members: Block[]): Block[] {
+  if (members.length < 2) return members;
+  const ids = new Set(members.map((m) => m.id));
+  const byId = new Map(members.map((m) => [m.id, m]));
+  const spine = db.getAllRelations(false).filter(
+    (r) => r.status === "active" && SPINE_RELS.has(r.type) && ids.has(r.source_id) && ids.has(r.target_id),
+  );
+  // Directed cause → effect: a spine edge is source=EFFECT, target=CAUSE, so target → source.
+  const next = new Map<string, string[]>(members.map((m) => [m.id, []]));
+  const indeg = new Map<string, number>(members.map((m) => [m.id, 0]));
+  for (const r of spine) { next.get(r.target_id)!.push(r.source_id); indeg.set(r.source_id, (indeg.get(r.source_id) ?? 0) + 1); }
+
+  const byCreated = (a: string, b: string) => String(byId.get(a)!.created_at).localeCompare(String(byId.get(b)!.created_at));
+  const ready = members.filter((m) => (indeg.get(m.id) ?? 0) === 0).map((m) => m.id).sort(byCreated);
+  const seen = new Set<string>();
+  const order: Block[] = [];
+  while (ready.length) {
+    const id = ready.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id); order.push(byId.get(id)!);
+    const unlocked: string[] = [];
+    for (const y of next.get(id) ?? []) { indeg.set(y, (indeg.get(y) ?? 1) - 1); if ((indeg.get(y) ?? 0) <= 0 && !seen.has(y)) unlocked.push(y); }
+    ready.push(...unlocked); ready.sort(byCreated); // keep deterministic cause-first tie-break
+  }
+  for (const m of members) if (!seen.has(m.id)) order.push(m); // cycle leftover
+  return order;
 }
 
 export interface RootSuggestion {

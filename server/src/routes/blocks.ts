@@ -5,7 +5,7 @@ import { WorkspaceDB } from "../store/database.js";
 import { computeQualityScore } from "../store/quality.js";
 import { CAUSAL_TRAVERSAL_RELS, SPINE_RELS } from "../relation-sets.js";
 import { deriveRootRelatedness } from "../middleware/reflect/root-relatedness.js";
-import { assembleBlockChains, assembleFullThread } from "../tools/helpers.js";
+import { assembleBlockChains, assembleFullThread, orderMembersCausally } from "../tools/helpers.js";
 
 export function createBlocksRouter(db: WorkspaceDB): Router {
   const router = Router();
@@ -452,7 +452,9 @@ export function createBlocksRouter(db: WorkspaceDB): Router {
         .filter((b: any): b is NonNullable<typeof b> => !!b && b.status !== "archived");
       if (blocks.length === 0) blocks = db.getBlocksByChain(id);
       if (blocks.length === 0) return res.status(404).json({ error: "Chain not found" });
-      blocks.sort((a: any, b: any) => String(a.created_at).localeCompare(String(b.created_at)));
+      // Present members in the chain's causal FLOW (cause → effect), not creation time —
+      // created_at disagreed with causal order in 20/20 real chains (conclusions sorted first).
+      blocks = orderMembersCausally(db, blocks as any) as any;
       res.json({ chain_id: id, count: blocks.length, blocks: blocks.map((b) => ({ id: b.id, label: b.label, type: b.type, flow_role: b.flow_role, essence: b.essence, quality_score: b.quality_score })) });
     } catch (e) { res.status(500).json({ error: String(e) }); }
   });

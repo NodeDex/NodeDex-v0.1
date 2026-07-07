@@ -28,6 +28,7 @@ import type { LLMProvider } from "../../engine/ai-provider.js";
 import type { PipelineFlag, FlagActionTaken, ReviewVerdict } from "./types.js";
 import { getPendingFlags, markFlagReviewed } from "./pipeline-flags.js";
 import { getBlockTranscript } from "./provenance-check.js";
+import { orderMembersCausally } from "../../tools/helpers.js";
 import { extractPrimaryValueFromUnique } from "./dedup-by-source-and-value.js";
 import { getLLMProvider } from "../../engine/providers/index.js";
 import { budgetTripped } from "./cost-guard.js";
@@ -101,7 +102,8 @@ export function buildReviewInput(db: WorkspaceDB, block: Block, transcript: stri
   const cid = (block as any).chain_id as string | null;
   if (cid) {
     try {
-      for (const m of db.getBlocksByChain(cid)) {
+      // Causal FLOW order (cause → effect), not created_at — see orderMembersCausally.
+      for (const m of orderMembersCausally(db, db.getBlocksByChain(cid))) {
         if (m.id === block.id) continue;
         chainLines.push(`  - [${m.type}] ${m.label} — "${(m.essence || "").slice(0, 100)}"`);
       }
