@@ -18,6 +18,14 @@ export function arcAutoTurns(): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+// Pass 5 chain assembly: "llm" (default — the LLM summarizes clusters into chain blocks)
+// or "mechanical" (deterministic clusterer, no model call). The mechanical path produces
+// the same chain-block shape from the causal edges; consumers (pass4-slice / context /
+// provenance) read membership + a summary line + the arc, all of which it computes.
+export function pass5Mode(): "llm" | "mechanical" {
+  return (process.env.NODEDEX_PASS5_MODE ?? "llm").toLowerCase() === "mechanical" ? "mechanical" : "llm";
+}
+
 // ─── Per-pass model routing (user-configurable; defaults to the provider model) ──
 // VISION: users bring ANY model/provider. They set 2-3 TIER vars and the pipeline
 // routes each pass to the right tier by its competence need; a per-pass override

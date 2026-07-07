@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import * as fs from "fs";
 import * as path from "path";
 import { buildProjectContext, buildPreSearchContext, buildDuplicateAlerts, buildItemContext, reflectTokenStats, embeddingStats } from "./context.js";
-import { getThinkingBudget } from "./config.js";
+import { getThinkingBudget, pass5Mode } from "./config.js";
 import { callPass0LLM, formatSceneCard } from "./pass0.js";
 import { callPass1LLM } from "./pass1.js";
 import { callPass2LLM } from "./pass2.js";
@@ -23,6 +23,7 @@ import { callPass4LLM, chunkForPass4 } from "./pass4.js";
 import { buildPass4Slice, pass4SliceEnabled, pass4SliceMinGraph } from "./pass4-slice.js";
 import { v2LazyCaptureEnabled } from "./comprehend.js";
 import { callPass5LLM } from "./pass5.js";
+import { assembleMechanicalChains } from "./pass5-mechanical.js";
 import { CAUSAL_TRAVERSAL_RELS } from "../../relation-sets.js";
 import { synthesizeFromSceneCard } from "./synthesizeFromSceneCard.js";
 import { dedupBySourceAndValue } from "./dedup-by-source-and-value.js";
@@ -2828,7 +2829,11 @@ export async function runAutoReflect(
       );
 
       const _t5 = Date.now();
-      const p5Response = await callPass5LLM(provider, p5Blocks, p5Rels);
+      // Pass 5 mode: "mechanical" (deterministic, no LLM) or "llm" (default). Both return
+      // the same Pass5Result → identical downstream chain-block creation below.
+      const p5Response = pass5Mode() === "mechanical"
+        ? { result: assembleMechanicalChains(p5Blocks, p5Rels), rateLimited: false, model: "mechanical", attempts: [{ model: "mechanical", outcome: "ok" }] }
+        : await callPass5LLM(provider, p5Blocks, p5Rels);
       _passWallMs.pass5 = Date.now() - _t5;
       const p5 = p5Response.result;
       _pass5Result = p5;  // capture for turn-log persistence (carries per-chain reasoning)
