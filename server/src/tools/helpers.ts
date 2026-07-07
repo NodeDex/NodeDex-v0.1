@@ -173,11 +173,16 @@ export function assembleLinkedThreads(db: WorkspaceDB, walk: ThreadWalk): Linked
     for (const id of w.depth.keys()) seen.add(id);     // dedup: many bridges into one thread → one entry
     seen.add(targetId);
 
-    const entry = (w.depth.size >= 2 ? topRankedBlock(db, w.leaves) : db.getBlock(targetId)) ?? db.getBlock(targetId);
+    const onThread = w.depth.size >= 2;
+    const entry = (onThread ? topRankedBlock(db, w.leaves) : db.getBlock(targetId)) ?? db.getBlock(targetId);
     const origin = (w.origins[0] && db.getBlock(w.origins[0])) || db.getBlock(targetId);
+    // A bridge target may itself be a STANDALONE block (linked only by this non-spine
+    // edge, no arc of its own) → render its essence once, not "X → X". Only when it's on
+    // a real thread do we show origin → conclusion.
+    const arc = onThread && origin && entry && origin.id !== entry.id;
     out.push({
-      chain:      entry?.label ?? targetId,            // hop handle: get it to ENTER that thread (at its conclusion)
-      essence:    origin && entry ? `${truncEssence(origin.essence)} → ${truncEssence(entry.essence)}` : (entry?.essence ?? ""),
+      chain:      entry?.label ?? targetId,            // hop handle: workspace_get it to enter (workspace_thread if on an arc)
+      essence:    arc ? `${truncEssence(origin!.essence)} → ${truncEssence(entry!.essence)}` : truncEssence(entry?.essence ?? ""),
       conclusion: entry?.essence ?? null,
       distance:   1,
       via,
