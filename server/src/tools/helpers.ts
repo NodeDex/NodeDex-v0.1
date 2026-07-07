@@ -17,7 +17,7 @@ export function err(code: string, message: string, extra?: Record<string, unknow
 export { cosineSim } from "../engine/vector-math.js";
 
 import type { WorkspaceDB, Block } from "../store/database.js";
-import { CAUSAL_TRAVERSAL_RELS, SPINE_RELS, GROUNDING_RELS } from "../relation-sets.js";
+import { SPINE_RELS, GROUNDING_RELS } from "../relation-sets.js";
 
 // Scale guard: cap how many linked chains we surface. The connected component is
 // naturally small at chain granularity (an incident ≈ 6 chains), but a long-lived
@@ -50,40 +50,32 @@ export interface ChainSummary {
 }
 
 export interface LinkedChain {
-  chain: string;             // the linked chain's label — open it to drill in
-  essence: string;           // its one-line story
-  conclusion: string | null; // its committed outcome
-  distance: number;          // chain-hops from the block's OWN chain(s) (1 = directly bridged)
-  via: string;               // the causal relation on the path that first reached it
+  chain: string;             // hop handle — a block label in the linked thread; get it to enter (at its conclusion)
+  essence: string;           // the linked thread's one-line story (origin → conclusion)
+  conclusion: string | null; // its conclusion
+  distance: number;          // 1 = directly bridged (v1 surfaces direct bridges; deeper is reachable by navigating)
+  via: string;               // the NON-spine bridge relation (grounding / related_to / contradicts)
 }
 
 export interface BlockChains {
-  chains: ChainSummary[];       // the block's OWN arc(s) — full detail (the story it sits on)
-  linked_chains: LinkedChain[]; // every chain with a causal PATH to it — the connected component, distance-ranked
+  chains: ChainSummary[];       // the block's OWN arc — the computed SIGN (origin → destinations)
+  linked_chains: LinkedChain[]; // OTHER threads bridged to this one by a non-spine edge (Mode 3)
 }
 
 /**
- * assembleBlockChains — "surface the chain AND its linked path, not the bare block."
+ * assembleBlockChains — "surface the thread AND its linked threads, not the bare block."
  *
- * A block's meaning in a cause-and-effect store lives in the causal ARC it sits
- * on. So a single `workspace_get` returns:
- *   - `chains`        — the named Pass-5 chain(s) the block belongs to (its own arc).
- *   - `linked_chains` — every OTHER chain reachable by a causal PATH from those
- *                       chains (the connected component), with hop-`distance` and
- *                       the bridging relation. This is "everything linked back to
- *                       this block" — the whole relevant story, NOT the whole root
- *                       (unrelated islands in the same project are excluded).
+ * Fully COMPUTED (no materialized chain read). A single `workspace_get(detail=relations)`
+ * returns:
+ *   - `chains`        — the block's own arc as the SIGN (composeSign): origin → ranked
+ *                       destinations, bounded, fork/terminal/grounding-tagged. Always
+ *                       current (walked live from the spine).
+ *   - `linked_chains` — the OTHER threads causally linked to this one (assembleLinkedThreads,
+ *                       Mode 3). Spine edges stay WITHIN a thread, so a linked thread is one
+ *                       bridged by a NON-spine edge (grounding / related_to / contradicts),
+ *                       deduped and summarized once. Hop thread→thread, not block→block.
  *
- * Why CHAIN-level, not block-level: a ±N block BFS floods (one anchor reached 40%
- * of a root in testing). Walking the CHAIN graph instead (chains = nodes, causal
- * bridges = edges) keeps the same incident at ~6 nodes — the whole linked story,
- * digestible. Distance-ranked + capped (LINKED_CHAINS_CAP) for the scale edge;
- * anything past the cap is reached by NAVIGATING (each linked chain is itself a
- * get-able anchor). Bound is on what's PUSHED, never on what's REACHABLE.
- *
- * Reads `member_of` (many-to-many) NOT the lossy `chain_id` column, so a HINGE
- * block (member of >1 chain) keeps all its memberships. Only CAUSAL_TRAVERSAL_RELS
- * bridge chains — NOT part_of / member_of / related_to / contradicts.
+ * Exception: a legacy `type=chain` block gotten directly still shows its members.
  *
  * Portable, server-side equivalent of the Claude-Code chain-injection hook — it
  * rides the tool RESULT, so it works on ANY MCP host.
@@ -101,90 +93,98 @@ export function assembleBlockChains(
   //
   // Exception: a `type=chain` block gotten DIRECTLY still surfaces its own members, so the
   // legacy chain blocks stay openable until they're retired.
-  let chains: ChainSummary[] = [];
+  // A legacy chain block gotten DIRECTLY still shows its own members (openable until retired).
   if (block.type === "chain") {
     const cb = db.getBlock(block.id);
-    if (cb) {
-      let content: Record<string, unknown> = {};
-      try { content = JSON.parse(cb.content); } catch { /* malformed → empty */ }
-      const unique = (content.unique as Record<string, unknown>) || {};
-      chains = [{
+    if (!cb) return { chains: [], linked_chains: [] };
+    let content: Record<string, unknown> = {};
+    try { content = JSON.parse(cb.content); } catch { /* malformed → empty */ }
+    const unique = (content.unique as Record<string, unknown>) || {};
+    return {
+      chains: [{
         label:      cb.label,
         essence:    cb.essence,
         arc:        (unique.arc as string) ?? null,
         conclusion: (unique.conclusion as string) ?? null,
         members:    db.getBlocksByChain(cb.id).map((m) => ({ label: m.label, type: m.type, essence: m.essence })),
-      }];
-    }
-  } else {
-    const sign = composeSign(db, walkThread(db, block.id));
-    if (sign) chains = [sign];
+      }],
+      linked_chains: [],
+    };
   }
 
-  // ── LINKED THREADS (transitional) ── still computed over the MATERIALIZED chain graph
-  // (member_of), so it only fires for blocks that belong to a Pass-5 chain; [] otherwise.
-  // Recomputing this over COMPUTED threads is the remaining follow-up (part 8). No new
-  // dependency on the chain_id column here — it reads member_of.
-  const own = [...new Set(
-    block.type === "chain"
-      ? [block.id]
-      : db.getRelations(block.id)
-          .filter((r) => r.direction === "outgoing" && r.type === "member_of")
-          .map((r) => r.target_id)
-  )];
-  if (own.length === 0) return { chains, linked_chains: [] };
-
-  const allRels = db.getAllRelations(false);
-  const memberOf = new Map<string, Set<string>>(); // blockId → chains it belongs to
-  for (const r of allRels) {
-    if (r.type !== "member_of") continue;
-    if (!memberOf.has(r.source_id)) memberOf.set(r.source_id, new Set());
-    memberOf.get(r.source_id)!.add(r.target_id);
-  }
-
-  // Build the CHAIN graph (undirected — a "linked path" can run either causal
-  // direction): chainId → neighbourChainId → the relation that first bridges them.
-  const chainGraph = new Map<string, Map<string, string>>();
-  const link = (a: string, b: string, via: string) => {
-    if (a === b) return;
-    if (!chainGraph.has(a)) chainGraph.set(a, new Map());
-    if (!chainGraph.get(a)!.has(b)) chainGraph.get(a)!.set(b, via);
+  // Everything else: FULLY COMPUTED. Own arc = the sign (Mode 1); linked = other threads
+  // bridged to this one (Mode 3). Walk once, reuse for both.
+  const walk = walkThread(db, block.id);
+  const sign = composeSign(db, walk);
+  return {
+    chains: sign ? [sign] : [],
+    linked_chains: assembleLinkedThreads(db, walk),
   };
-  for (const r of allRels) {
-    if (!CAUSAL_TRAVERSAL_RELS.has(r.type)) continue;
-    const sc = memberOf.get(r.source_id);
-    const tc = memberOf.get(r.target_id);
-    if (!sc || !tc) continue;
-    for (const a of sc) for (const b of tc) { link(a, b, r.type); link(b, a, r.type); }
-  }
+}
 
-  // Multi-source BFS over the chain graph from ALL the block's own chains →
-  // every chain on a linked path, with its min hop-distance + bridging relation.
-  const ownSet = new Set(own);
-  const dist = new Map<string, number>();
-  const via = new Map<string, string>();
-  const queue: string[] = [];
-  for (const c of own) { dist.set(c, 0); queue.push(c); }
-  while (queue.length) {
-    const cur = queue.shift()!;
-    const d = dist.get(cur)!;
-    for (const [nb, rel] of chainGraph.get(cur) ?? []) {
-      if (!dist.has(nb)) { dist.set(nb, d + 1); via.set(nb, rel); queue.push(nb); }
-    }
-  }
+// Cross-thread bridges (Mode 3): edges that link one spine thread to ANOTHER. Spine edges
+// stay WITHIN a thread, so a cross-thread link is by definition a NON-spine edge — shared
+// evidence (grounding) or a semantic tie (related_to / contradicts / affects).
+const LINKED_THREAD_BRIDGES = new Set<string>([...GROUNDING_RELS, "related_to", "contradicts", "affects"]);
+// Bridge strength — surface MEANINGFUL cross-thread links first within the cap, so the
+// loosest tie (`related_to`, by far the most common) can't crowd out a conflict or shared
+// evidence. contradicts (a clash the agent must see) > supports (shared evidence) > affects
+// (influence) > related_to (loose topical).
+const BRIDGE_STRENGTH: Record<string, number> = { contradicts: 4, supports: 3, affects: 2, related_to: 1 };
 
-  const linked_chains: LinkedChain[] = [...dist.entries()]
-    .filter(([id]) => !ownSet.has(id))
-    .sort((a, b) => a[1] - b[1])                  // nearest first
-    .slice(0, LINKED_CHAINS_CAP)
-    .map(([id, d]) => {
-      const cb = db.getBlock(id);
-      let conclusion: string | null = null;
-      try { conclusion = (JSON.parse(cb?.content ?? "{}")?.unique?.conclusion as string) ?? null; } catch { /* ignore */ }
-      return { chain: cb?.label ?? id, essence: cb?.essence ?? "", conclusion, distance: d, via: via.get(id)! };
+function topRankedBlock(db: WorkspaceDB, ids: string[]): Block | null {
+  const blocks = ids.map((id) => db.getBlock(id)).filter((b): b is Block => !!b && b.status !== "archived");
+  if (blocks.length === 0) return null;
+  blocks.sort((a, b) => (CONCLUSION_WEIGHT[b.type] ?? 1) - (CONCLUSION_WEIGHT[a.type] ?? 1) || (b.access_count ?? 0) - (a.access_count ?? 0));
+  return blocks[0]!;
+}
+
+/**
+ * assembleLinkedThreads — Mode 3: the OTHER threads causally linked to this one, so the
+ * agent hops thread→thread, not block→block. A "link" is a NON-spine bridge (grounding /
+ * related_to / contradicts) from a member of this thread to a block in another thread.
+ * Each linked thread is summarized once (deduped) by its origin → top-ranked conclusion,
+ * with the bridging relation and a hop handle (its conclusion block). Directly-bridged
+ * (distance 1) for now; deeper threads are reachable by navigating into a linked one.
+ */
+export function assembleLinkedThreads(db: WorkspaceDB, walk: ThreadWalk): LinkedChain[] {
+  if (walk.depth.size < 1) return [];
+  const threadSet = new Set(walk.depth.keys());
+  const rels = db.getAllRelations(false).filter((r) => r.status === "active" && LINKED_THREAD_BRIDGES.has(r.type));
+
+  // First bridge edge to each block OUTSIDE this thread → (outside block id, via relation).
+  const bridges = new Map<string, string>();
+  for (const r of rels) {
+    if (threadSet.has(r.source_id) && !threadSet.has(r.target_id)) { if (!bridges.has(r.target_id)) bridges.set(r.target_id, r.type); }
+    else if (threadSet.has(r.target_id) && !threadSet.has(r.source_id)) { if (!bridges.has(r.source_id)) bridges.set(r.source_id, r.type); }
+  }
+  if (bridges.size === 0) return [];
+
+  // Strongest bridge relations first, so the cap keeps conflicts/evidence over loose ties.
+  const orderedBridges = [...bridges.entries()].sort(
+    (a, b) => (BRIDGE_STRENGTH[b[1]] ?? 0) - (BRIDGE_STRENGTH[a[1]] ?? 0)
+  );
+
+  const seen = new Set<string>(threadSet);
+  const out: LinkedChain[] = [];
+  for (const [targetId, via] of orderedBridges) {
+    if (seen.has(targetId)) continue;                 // already covered by an emitted linked thread
+    const w = walkThread(db, targetId);
+    for (const id of w.depth.keys()) seen.add(id);     // dedup: many bridges into one thread → one entry
+    seen.add(targetId);
+
+    const entry = (w.depth.size >= 2 ? topRankedBlock(db, w.leaves) : db.getBlock(targetId)) ?? db.getBlock(targetId);
+    const origin = (w.origins[0] && db.getBlock(w.origins[0])) || db.getBlock(targetId);
+    out.push({
+      chain:      entry?.label ?? targetId,            // hop handle: get it to ENTER that thread (at its conclusion)
+      essence:    origin && entry ? `${truncEssence(origin.essence)} → ${truncEssence(entry.essence)}` : (entry?.essence ?? ""),
+      conclusion: entry?.essence ?? null,
+      distance:   1,
+      via,
     });
-
-  return { chains, linked_chains };
+    if (out.length >= LINKED_CHAINS_CAP) break;
+  }
+  return out;
 }
 
 // ─── The thread engine — walkThread + composeSign ───────────────────────────────

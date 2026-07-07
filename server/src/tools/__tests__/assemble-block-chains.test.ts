@@ -125,45 +125,35 @@ describe("assembleBlockChains — the mechanical SIGN (spine walk, no materializ
   });
 });
 
-describe("assembleBlockChains — linked_chains (connected component)", () => {
-  test("a directly-bridged chain surfaces in linked_chains at distance 1, with the via relation", () => {
-    const fix = db.createBlock({ label: "lk_decision_fix", type: "decision", essence: "the fix" });
-    const problem = db.createBlock({ label: "lk_fact_problem", type: "fact", essence: "the problem the fix caused" });
-    makeChain("lk_chain_fix", "decision", "fix shipped", [fix]);
-    makeChain("lk_chain_problem", "fact", "problem found", [problem]);
-    // the problem was triggered BY the fix: problem --prompted_by--> fix (a causal bridge)
-    db.createRelation({ source_id: problem.id, target_id: fix.id, type: "prompted_by" });
+describe("assembleBlockChains — linked_chains (Mode 3, computed: non-spine bridges)", () => {
+  test("a thread bridged to ANOTHER by a grounding edge surfaces as a linked thread", () => {
+    // Thread A: a1 based_on a2 (spine). Thread B: b1 based_on b2 (spine).
+    // Bridge: a1 --supports--> b1 (grounding, cross-thread) — NOT spine, so B stays a separate thread.
+    const a2 = db.createBlock({ label: "lk_fact_a2", type: "fact", essence: "a2 evidence" });
+    const a1 = db.createBlock({ label: "lk_decision_a1", type: "decision", essence: "a1 decided" });
+    const b2 = db.createBlock({ label: "lk_fact_b2", type: "fact", essence: "b2 evidence" });
+    const b1 = db.createBlock({ label: "lk_blueprint_b1", type: "blueprint", essence: "b1 planned" });
+    db.createRelation({ source_id: a1.id, target_id: a2.id, type: "based_on" }); // thread A
+    db.createRelation({ source_id: b1.id, target_id: b2.id, type: "based_on" }); // thread B
+    db.createRelation({ source_id: a1.id, target_id: b1.id, type: "supports" }); // CROSS-THREAD bridge
 
-    const fromFix = assembleBlockChains(db, fix).linked_chains;
-    const lp = fromFix.find((l) => l.chain === "lk_chain_problem")!;
-    assert.ok(lp, "the problem chain is on the fix's linked path");
+    const linked = assembleBlockChains(db, a1).linked_chains;
+    const lp = linked.find((l) => l.via === "supports")!;
+    assert.ok(lp, "thread B surfaces as a linked thread via the grounding bridge");
     assert.equal(lp.distance, 1);
-    assert.equal(lp.via, "prompted_by");
-    assert.ok(!fromFix.some((l) => l.chain === "lk_chain_fix"), "the block's OWN chain is not in linked_chains");
+    assert.equal(lp.chain, "lk_blueprint_b1", "hop handle = the linked thread's conclusion (blueprint > fact)");
+    assert.ok(!linked.some((l) => ["lk_decision_a1", "lk_fact_a2"].includes(l.chain)), "the block's OWN thread is not linked");
   });
 
-  test("a chain TWO hops away surfaces (the whole linked path, not just 1 hop)", () => {
-    // X — Y — Z, with NO direct X↔Z edge. Anchored in X, both Y (1) and Z (2) must appear.
-    const x = db.createBlock({ label: "h_fact_x", type: "fact", essence: "x" });
-    const y = db.createBlock({ label: "h_fact_y", type: "fact", essence: "y" });
-    const z = db.createBlock({ label: "h_fact_z", type: "fact", essence: "z" });
-    makeChain("h_chain_x", "fact", "x done", [x]);
-    makeChain("h_chain_y", "fact", "y done", [y]);
-    makeChain("h_chain_z", "fact", "z done", [z]);
-    db.createRelation({ source_id: y.id, target_id: x.id, type: "prompted_by" }); // X — Y
-    db.createRelation({ source_id: z.id, target_id: y.id, type: "prompted_by" }); // Y — Z
+  test("spine-connected blocks are the SAME thread, not a linked one", () => {
+    // x based_on y is a SPINE edge → x and y are one thread; nothing linked.
+    const y = db.createBlock({ label: "lk_fact_y", type: "fact", essence: "y" });
+    const x = db.createBlock({ label: "lk_decision_x", type: "decision", essence: "x" });
+    db.createRelation({ source_id: x.id, target_id: y.id, type: "based_on" });
 
-    const linked = assembleBlockChains(db, x).linked_chains;
-    const byChain = new Map(linked.map((l) => [l.chain, l.distance]));
-    assert.equal(byChain.get("h_chain_y"), 1, "Y is one hop from X");
-    assert.equal(byChain.get("h_chain_z"), 2, "Z is two hops — 1-hop would have MISSED it");
-  });
-
-  test("linked_chains are distance-ranked (nearest first)", () => {
-    const linked = assembleBlockChains(db, db.getBlock("h_fact_x")!).linked_chains;
-    for (let i = 1; i < linked.length; i++) {
-      assert.ok(linked[i]!.distance >= linked[i - 1]!.distance, "non-decreasing distance");
-    }
+    const out = assembleBlockChains(db, x);
+    assert.ok(out.chains[0]!.members.some((m) => m.label === "lk_fact_y"), "y is in x's OWN thread (spine-connected)");
+    assert.deepEqual(out.linked_chains, [], "no non-spine bridge → nothing linked");
   });
 });
 

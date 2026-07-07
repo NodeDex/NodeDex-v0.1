@@ -39,25 +39,27 @@ export const CAUSAL_TRAVERSAL_RELS: ReadonlySet<string> = new Set([
 // is a *directional* job, and not every causal edge is a narrative step. So the
 // thread composer (walkThread / composeSign in tools/helpers.ts) reads two sub-sets:
 //
-//   SPINE — order-bearing "this LED TO that". All four share ONE direction
+//   SPINE — order-bearing "this LED TO that". Every member shares ONE direction
 //   convention: source = the EFFECT (later), target = the CAUSE (earlier). Verified
 //   against pass4.ts prompt (based_on {source: claim, target: evidence};
 //   prompted_by {source: effect, target: cause}). So a single up/down walk orients
-//   the whole thread correctly — no per-type direction map needed.
+//   the whole thread correctly — no per-type direction map needed. `derived_from`
+//   (derived ← source) and `resolves` (answer ← question) belong here: they ARE
+//   narrative steps and share the source=EFFECT direction — the discriminator for
+//   SPINE isn't "semantic vs not", it's "order-bearing with the spine direction".
 export const SPINE_RELS: ReadonlySet<string> = new Set([
   "prompted_by",   // effect ← trigger
   "based_on",      // claim  ← evidence
   "extends",       // specific ← broader
   "supersedes",    // new    ← old
+  "derived_from",  // derived ← source (logical inference — a narrative step)
+  "resolves",      // answer  ← question (poses → answered — a narrative step)
 ]);
 
-//   GROUNDING — evidential / semantic. NOT a sequence: `supports` is a many-to-one
-//   fan-in (evidence → claim, the INVERSE direction of based_on), `resolves` and
-//   `derived_from` are semantic links. Folding these into the ordered walk is what
-//   made evidence read "backwards". They belong on a node as a "backed by N" tag,
-//   never as a hop. (The pipeline itself classifies these as SEMANTIC — pipeline.ts.)
+//   GROUNDING — the ONLY genuinely non-sequential causal edge: `supports` is a
+//   many-to-one evidential fan-in (evidence → claim), the INVERSE direction of
+//   based_on. Folding it into the ordered walk is what made evidence read
+//   "backwards". It belongs on a node as a "backed by N" tag, never as a hop.
 export const GROUNDING_RELS: ReadonlySet<string> = new Set([
   "supports",
-  "resolves",
-  "derived_from",
 ]);
