@@ -28,7 +28,7 @@ First time connecting in this project? Call workspace_onboard ONCE — it offers
 // The agent surface is READ-ONLY by default — it traverses/queries/retrieves; the pipeline
 // does all writing. Pure reads only. (extract_arc etc. are INFRA, triggered by host/timer.)
 const READ_TOOLS_BASE = [
-  "workspace_get", "workspace_search", "workspace_filter", "workspace_tree",
+  "workspace_get", "workspace_thread", "workspace_search", "workspace_filter", "workspace_tree",
   "workspace_list", "workspace_stats", "workspace_history", "workspace_find_skill",
   "workspace_onboard", "workspace_install_capture",
 ];

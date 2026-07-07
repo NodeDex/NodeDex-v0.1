@@ -407,17 +407,15 @@ DETAIL LEVELS (default: "surface" — start here, drill down only if needed):
                  Use when: scanning, checking existence, deciding if worth reading
 - "content"   → + is_a, unique{}, has{} (the full knowledge body / procedure steps)
                  Use when: you need the actual facts, properties, or skill steps
-- "relations" → surface + outgoing/incoming links + the SIGN: the thread this block sits on (origin → destinations)
+- "relations" → surface + outgoing/incoming links + the SIGN: the thread this block sits on (origin → destinations) + linked threads
                  Use when: navigating — a short signpost of the causal arc + where each branch leads, to decide where to go
-- "thread"    → the WHOLE thread in one call: every member, cause→effect order, full essence + evidence tags
-                 Use when: you picked this thread from the sign and want to read it ALL — no block-by-block hops
 - "full"      → everything: content + relations + metadata (source, dates, ttl, aliases)
                  Use when: auditing, debugging, or you genuinely need all fields
 
-Tip: use "surface" first. If the essence tells you what you need, stop there. "relations" to orient, "thread" to read the whole arc.`,
+Tip: use "surface" first. If the essence tells you what you need, stop there. "relations" to orient; then workspace_thread(id) to read the WHOLE arc in one call.`,
     {
       id:     z.string().describe("Block ID (blk_xxx) or label"),
-      detail: z.enum(["surface", "content", "relations", "full", "thread"]).optional()
+      detail: z.enum(["surface", "content", "relations", "full"]).optional()
                .describe("Level of detail to return. Default: 'surface'"),
     },
     async (params) => {
@@ -517,13 +515,6 @@ Tip: use "surface" first. If the essence tells you what you need, stop there. "r
           if (linked_chains.length > 0) base.linked_chains = linked_chains;
         }
 
-        // ── thread (Mode 2 — the whole thread in one call) ─────────
-        if (detail === "thread") {
-          const thread = assembleFullThread(db, block.id);
-          if (thread) base.thread = thread;
-          else base.thread_note = "This block is standalone — not on a causal thread.";
-        }
-
         // ── full metadata ─────────────────────────────────────────
         if (detail === "full") {
           base.metadata = {
@@ -542,6 +533,35 @@ Tip: use "surface" first. If the essence tells you what you need, stop there. "r
         return ok(base);
       } catch (error) {
         return err("GET_FAILED", String(error));
+      }
+    }
+  );
+
+  // ─── Tool: workspace_thread ──────────────────────────────────────
+  server.tool(
+    "workspace_thread",
+    `Read the WHOLE causal thread a block sits on — in one call, no block-by-block hops.
+
+A block's reasoning lives in the causal THREAD (arc) it belongs to. workspace_get(id,"relations")
+gives you the short SIGN (origin -> where it leads) + linked threads, to help you CHOOSE which
+thread is relevant. Once chosen, THIS returns the entire thread: every member in cause->effect
+order, full essence, each tagged by role (origin / step / focal / leaf) and how much evidence
+backs it. Computed live from the causal edges, so it is always current.
+
+Returns { focal, count, origins[], leaves[], truncated, members[] }. Use when you've decided a
+thread matters and want to read the whole reasoning at once instead of hopping block by block.`,
+    {
+      id: z.string().describe("Block ID (blk_xxx) or label — any block ON the thread you want"),
+    },
+    async (params) => {
+      try {
+        const block = db.getBlock(params.id);
+        if (!block) return err("BLOCK_NOT_FOUND", `No block found with id or label '${params.id}'`);
+        const thread = assembleFullThread(db, block.id);
+        if (!thread) return ok({ focal: block.label, count: 0, members: [], note: "This block is standalone — not on a causal thread." });
+        return ok(thread);
+      } catch (error) {
+        return err("THREAD_FAILED", String(error));
       }
     }
   );
