@@ -18,12 +18,14 @@ export function arcAutoTurns(): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-// Pass 5 chain assembly: "llm" (default — the LLM summarizes clusters into chain blocks)
-// or "mechanical" (deterministic clusterer, no model call). The mechanical path produces
-// the same chain-block shape from the causal edges; consumers (pass4-slice / context /
-// provenance) read membership + a summary line + the arc, all of which it computes.
+// Pass 5 chain assembly: "mechanical" (DEFAULT — deterministic clusterer, no model call)
+// or "llm" (the old LLM summary). Mechanical produces the same chain-block shape (members +
+// arc + conclusion) from the causal edges; consumers (pass4-slice / context / provenance)
+// read membership + a summary line + the arc, all of which it computes — validated by an
+// A/B on identical input (structurally identical output; LLM cost ~9K tokens + 68s/turn,
+// mechanical 0). Set NODEDEX_PASS5_MODE=llm to restore the LLM pass.
 export function pass5Mode(): "llm" | "mechanical" {
-  return (process.env.NODEDEX_PASS5_MODE ?? "llm").toLowerCase() === "mechanical" ? "mechanical" : "llm";
+  return (process.env.NODEDEX_PASS5_MODE ?? "mechanical").toLowerCase() === "llm" ? "llm" : "mechanical";
 }
 
 // ─── Per-pass model routing (user-configurable; defaults to the provider model) ──
