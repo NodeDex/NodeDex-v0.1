@@ -23,7 +23,7 @@ import { callPass4LLM, chunkForPass4 } from "./pass4.js";
 import { buildPass4Slice, pass4SliceEnabled, pass4SliceMinGraph } from "./pass4-slice.js";
 import { v2LazyCaptureEnabled } from "./comprehend.js";
 import { callPass5LLM } from "./pass5.js";
-import { CAUSAL_TRAVERSAL_RELS } from "../../relation-sets.js";
+import { CAUSAL_TRAVERSAL_RELS, SPINE_RELS } from "../../relation-sets.js";
 import { synthesizeFromSceneCard } from "./synthesizeFromSceneCard.js";
 import { dedupBySourceAndValue } from "./dedup-by-source-and-value.js";
 import { writePipelineFlag } from "./pipeline-flags.js";
@@ -2907,7 +2907,7 @@ export async function runAutoReflect(
         // Any freshly-saved block still holding a UUID chain_id (not "blk_" prefixed)
         // that has a causal relation to a confirmed chain member gets patched in.
         const freshRels5Final = db.getAllRelations(false).filter((r: any) => r.status === "active");
-        const CAUSAL_TYPES = new Set(["prompted_by", "based_on", "extends", "supersedes"]);
+        const CAUSAL_TYPES = SPINE_RELS; // single source (relation-sets.ts) — was a hardcoded subset that drifted
         for (const b of freshBlocks5) {
           if (!savedLabelSet5.has(b.label)) continue;
           if (!b.chain_id || String(b.chain_id).startsWith("blk_")) continue; // already patched or no chain

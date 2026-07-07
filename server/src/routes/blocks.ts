@@ -3,7 +3,7 @@
 import { Router } from "express";
 import { WorkspaceDB } from "../store/database.js";
 import { computeQualityScore } from "../store/quality.js";
-import { CAUSAL_TRAVERSAL_RELS } from "../relation-sets.js";
+import { CAUSAL_TRAVERSAL_RELS, SPINE_RELS } from "../relation-sets.js";
 import { deriveRootRelatedness } from "../middleware/reflect/root-relatedness.js";
 import { assembleBlockChains, assembleFullThread } from "../tools/helpers.js";
 
@@ -349,7 +349,11 @@ export function createBlocksRouter(db: WorkspaceDB): Router {
       const allBlocks = db.getAllBlocks();
       const allRels = db.getAllRelations(false).filter((r: any) => r.status === "active");
       const blockMap = new Map(allBlocks.map((b: any) => [b.id, b]));
-      const CAUSAL = CAUSAL_TRAVERSAL_RELS; // shared single source — relation-sets.ts
+      // Order the arc on the SPINE (relation-sets.ts): order-bearing, uniform direction
+      // (source=effect, target=cause). Grounding edges like `supports` are the INVERSE
+      // direction, so including them here made evidence sort backwards — kept OUT of the
+      // linearized walk (they belong on a node as evidence, not as a step).
+      const CAUSAL = SPINE_RELS;
       const focalId = (block as any).id;
       const depthMap = new Map<string, number>();
       const viaMap   = new Map<string, string>();
