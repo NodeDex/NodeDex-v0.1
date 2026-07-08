@@ -42,21 +42,54 @@ Two wires, set up separately:
    Hermes: automatic (the state.db watcher, on by default in the TUI).
    Everything else: see ${p.readmeUrl}
 
+One graph, many hosts: connect as many agents as you like — they all READ and FEED the SAME
+graph. Switching tools, or adding one (Hermes today, Claude Code tomorrow), moves NO data — the
+new host connects and immediately sees everything the others left behind.
+
 ---
 
-## Claude Code
+## Claude Code (CLI)
 
 \`\`\`bash
 claude mcp add --transport http nodedex ${p.mcpUrl}${auth}
 \`\`\`
+Add \`--scope user\` to expose it in EVERY project, not just this one.
 
-Then in any session the workspace_* read tools are available. Capture: Claude Code's
-own transcripts can feed NodeDex — see the README's capture section.
+## Claude Code in an IDE (VS Code / JetBrains / the Cursor extension)
 
-Note: Claude Code's built-in auto-memory is per-project notes for Claude Code alone.
-NodeDex complements it: one structured, self-maintaining graph that EVERY agent you
-run (Claude Code, Hermes, Codex, custom) reads and feeds — your experience follows
-you across tools instead of living in one.
+A GUI editor has no \`claude\` command — register with files. In your PROJECT root create
+\`.mcp.json\`:
+\`\`\`json
+{ "mcpServers": { "nodedex": { "type": "http", "url": "${p.mcpUrl}" } } }
+\`\`\`
+…and approve it once in \`.claude/settings.local.json\`:
+\`\`\`json
+{ "enableAllProjectMcpServers": true, "enabledMcpjsonServers": ["nodedex"] }
+\`\`\`
+Then start a NEW session in that project — MCP attaches at session start. (Gated server? add
+\`"headers": { "Authorization": "Bearer <token>" }\` inside the nodedex block.)
+
+## Cursor (Cursor's own AI)
+
+Cursor's built-in agent reads Cursor's config, NOT Claude Code's. Global \`~/.cursor/mcp.json\`
+(all projects) or \`.cursor/mcp.json\` in one project:
+\`\`\`json
+{ "mcpServers": { "nodedex": { "url": "${p.mcpUrl}" } } }
+\`\`\`
+
+## VS Code (Copilot agent mode)
+
+VS Code's Copilot uses \`.vscode/mcp.json\` — the top key is "servers", not "mcpServers":
+\`\`\`json
+{ "servers": { "nodedex": { "type": "http", "url": "${p.mcpUrl}" } } }
+\`\`\`
+
+It's the AGENT that picks the file, not the editor: the Claude Code extension always uses
+\`.mcp.json\` even inside Cursor or VS Code; Cursor's and VS Code's OWN agents use their files above.
+
+Note: these coding agents' built-in memory is per-tool notes. NodeDex complements them — ONE
+self-maintaining graph that every agent you run reads and feeds, so your context follows you
+across tools instead of living in one.
 
 ## Hermes
 

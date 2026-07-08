@@ -255,6 +255,21 @@ on PATH; from a clone use `node /path/to/server/scripts/nodedex-entry.mjs` inste
 CLI-style host (e.g. Hermes): `hermes mcp add nodedex --url http://127.0.0.1:3001/mcp`, then
 reload its MCP connections and start a new session.
 
+**Claude Code, Cursor, VS Code — the *agent* picks the config file, not the editor.** The Claude
+Code extension uses `.mcp.json` even when it runs inside Cursor or VS Code; Cursor's and VS Code's
+*own* agents use their own files. Same `/mcp` URL, different location + key per agent:
+
+| Agent | Where the config lives | Config |
+|---|---|---|
+| **Claude Code** (CLI) | `claude mcp add --transport http nodedex http://127.0.0.1:3001/mcp` — add `--scope user` for all projects | — |
+| **Claude Code** (VS Code / JetBrains / Cursor *extension*) | project `.mcp.json` + one-time approval in `.claude/settings.local.json` | `{ "mcpServers": { "nodedex": { "type": "http", "url": "http://127.0.0.1:3001/mcp" } } }`, plus `{ "enableAllProjectMcpServers": true, "enabledMcpjsonServers": ["nodedex"] }` in settings, then start a **new** session |
+| **Cursor** (Cursor's own AI) | `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` | `{ "mcpServers": { "nodedex": { "url": "http://127.0.0.1:3001/mcp" } } }` |
+| **VS Code** (Copilot agent) | `.vscode/mcp.json` | `{ "servers": { "nodedex": { "type": "http", "url": "http://127.0.0.1:3001/mcp" } } }` — note the key is `servers`, not `mcpServers` |
+
+> **Switching hosts (e.g. Hermes → Claude Code) moves no data.** The graph is host-agnostic — every
+> agent reads and feeds the *same* graph. To add or switch, just connect the new host (MCP above +
+> its capture path below) and it immediately sees everything the previous one left. Run several at once if you like.
+
 ### Agent in Docker / on another machine (advanced — not first-run)
 A containerized or remote agent can't reach the host's loopback, so the server must bind
 `0.0.0.0` and use a token, and the agent connects via the host address (e.g.
