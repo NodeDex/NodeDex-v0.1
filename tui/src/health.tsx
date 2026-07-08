@@ -23,7 +23,7 @@ import {
 } from "./config.js";
 import {
   launchWatcher, stopWatcher, isWatcherRunning,
-  listDbs, swapDb, isManaged, discover, saveLastServer,
+  listDbs, swapDb, isManaged, discover, saveLastServer, resolveNewDbPath,
   type ServerEntry,
 } from "./servers.js";
 import { ReviewTab } from "./review.js";
@@ -56,6 +56,7 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
   const [overlay, setOverlay] = useState<"none" | "db" | "servers" | "review" | "provider">("none");
   const [dbs, setDbs] = useState(listDbs());
   const [dbSel, setDbSel] = useState(0);
+  const [dbNew, setDbNew] = useState<string | null>(null); // switch-db overlay: name being typed for a NEW db (null = list mode)
   const [servers, setServers] = useState<ServerEntry[]>([]);
   const [srvSel, setSrvSel] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -277,14 +278,36 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
       return;
     }
     if (overlay === "db") {
+      // Typing a name for a NEW db — create-in-place, no onboarding round-trip.
+      if (dbNew !== null) {
+        if (key.escape) { setDbNew(null); return; }
+        if (key.return) {
+          const res = resolveNewDbPath(dbNew);
+          if (!res.ok) { setNotice(res.error ?? "invalid name"); return; }
+          const base = getBase();
+          const port = Number(new URL(base).port) || 3001;
+          const name = res.path!.split(/[\\/]/).pop()!.replace(/\.db$/, "");
+          setDbNew(null); setBusy(true); setOverlay("none"); setNotice(`creating ${name}…`);
+          void swapDb(base, port, res.path!).then((r) => {
+            setBusy(false);
+            setNotice(r.ok ? `db → ${name}` : `create failed: ${r.error}`);
+            onConnect();
+          });
+          return;
+        }
+        if (key.backspace || key.delete) { setDbNew((s) => (s ?? "").slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setDbNew((s) => (s ?? "") + input); return; }
+        return;
+      }
+      const total = dbs.length + 1; // existing dbs + the "+ new database" row (last)
       if (key.escape) { setOverlay("none"); return; }
       if (key.upArrow) { setDbSel((s) => Math.max(0, s - 1)); return; }
-      if (key.downArrow) { setDbSel((s) => Math.min(dbs.length - 1, s + 1)); return; }
-      if (key.return && dbs[dbSel]) {
+      if (key.downArrow) { setDbSel((s) => Math.min(total - 1, s + 1)); return; }
+      if (key.return) {
+        if (dbSel >= dbs.length) { setDbNew(""); return; } // "+ new database…" row
         const target = dbs[dbSel]!;
         const base = getBase();
         const port = Number(new URL(base).port) || 3001;
-        if (!isManaged(base)) { setNotice("current server isn't TUI-managed — switch db via onboarding"); setOverlay("none"); return; }
         setBusy(true); setOverlay("none"); setNotice(`switching db → ${target.name}…`);
         void swapDb(base, port, target.path).then((r) => {
           setBusy(false);
@@ -464,13 +487,28 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
       ) : null}
       {overlay === "db" ? (
         <Panel title="switch database" hot>
-          {dbs.map((d, i) => (
-            <Row key={d.path} selected={i === dbSel}>
-              <Text color={i === dbSel ? theme.value : theme.label}>{d.name}</Text>
-              <Text color={theme.dim}>{`  ${trunc(d.path, 50)}`}</Text>
-            </Row>
-          ))}
-          {dbs.length === 0 ? <Text color={theme.dim}>no dbs in ~/.nodedex</Text> : null}
+          {dbNew !== null ? (
+            <>
+              <Box>
+                <Text color={theme.warn}>new db name: </Text>
+                <Text color={dbNew ? theme.value : theme.dim}>{dbNew || "my-project"}</Text>
+                <Text color={theme.accent}>▏</Text>
+              </Box>
+              <Text color={theme.dim}>{"creates ~/.nodedex/<name>.db · enter create · esc back"}</Text>
+            </>
+          ) : (
+            <>
+              {dbs.map((d, i) => (
+                <Row key={d.path} selected={i === dbSel}>
+                  <Text color={i === dbSel ? theme.value : theme.label}>{d.name}</Text>
+                  <Text color={theme.dim}>{`  ${trunc(d.path, 50)}`}</Text>
+                </Row>
+              ))}
+              <Row key="__new_db__" selected={dbSel === dbs.length}>
+                <Text color={dbSel === dbs.length ? theme.value : theme.accent}>+ new database…</Text>
+              </Row>
+            </>
+          )}
         </Panel>
       ) : null}
       {overlay === "servers" ? (

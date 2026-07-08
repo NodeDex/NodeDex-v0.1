@@ -16,7 +16,7 @@
 //   - the TUI can only STOP servers IT launched (we hold the child handle);
 //     pre-existing servers are shown but never killed (containment)
 //   - all launched children are killed when the TUI exits
-import { spawn, type ChildProcess } from "child_process";
+import { spawn, execSync, type ChildProcess } from "child_process";
 import { createServer } from "net";
 import { fileURLToPath } from "url";
 import { dirname, resolve, basename } from "path";
@@ -497,14 +497,51 @@ export function isManaged(url: string): boolean {
   return managed.has(norm(url));
 }
 
+// ─── external-server takeover helpers (db switch/create on a non-managed port) ─
+// PID listening on a local TCP port + a hard kill — used ONLY to take over an EXTERNAL
+// NodeDex (one this TUI didn't launch, e.g. `nodedex run`/onboarding-CLI) when the user
+// switches or creates a db on its port. Mirrors `nodedex stop`: kill by port only AFTER a
+// health probe confirms a NodeDex answers there (never blind-kill), and only on the user's
+// explicit db action. This is the single, fenced relaxation of "never kill an external server".
+function pidOnPort(port: number): number | null {
+  try {
+    if (process.platform === "win32") {
+      const out = execSync("netstat -ano -p tcp", { encoding: "utf8" });
+      for (const line of out.split(/\r?\n/)) {
+        const m = line.trim().match(/^TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)$/i);
+        if (m && Number(m[1]) === port) return Number(m[2]);
+      }
+      return null;
+    }
+    const out = execSync(`lsof -ti tcp:${port} -sTCP:LISTEN`, { encoding: "utf8" });
+    const pid = Number(out.trim().split(/\s+/)[0]);
+    return Number.isInteger(pid) ? pid : null;
+  } catch { return null; }
+}
+function killPidByNum(pid: number): void {
+  try {
+    if (process.platform === "win32") execSync(`taskkill /PID ${pid} /T /F`, { stdio: "ignore" });
+    else process.kill(pid, "SIGTERM");
+  } catch { /* already gone */ }
+}
+
 // ─── swap: run a DIFFERENT db on the SAME port ──────────────────────────────
-// "a single port that can run different db at a time" — stop the managed server
-// on this port, wait for the port to actually release (polling, not a fixed
-// guess — the OS frees it in a few hundred ms but timing varies), then relaunch
-// it on the new db. Only valid for a TUI-managed port.
+// "a single port that can run different db at a time" — stop whatever server holds this
+// port, wait for the port to actually release (polling, not a fixed guess — the OS frees it
+// in a few hundred ms but timing varies), then relaunch it (TUI-managed) on the new db.
+// Managed server → clean stop (we hold the child handle). External server → health-confirmed
+// takeover (see helpers above) so the user never has to re-run onboarding just to switch a db.
 export async function swapDb(url: string, port: number, dbPath: string): Promise<LaunchResult> {
-  if (!managed.has(norm(url))) return { ok: false, url, error: "not managed by this TUI" };
-  stopServer(url);
+  if (managed.has(norm(url))) {
+    stopServer(url);
+  } else {
+    const health = await probeServer(candidateUrl(port));
+    if (health.up) {
+      const pid = pidOnPort(port);
+      if (!pid) return { ok: false, url, error: "a server holds this port but its PID couldn't be found — run `nodedex stop` and retry" };
+      killPidByNum(pid);
+    }
+  }
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
     const r = await probeServer(candidateUrl(port));
