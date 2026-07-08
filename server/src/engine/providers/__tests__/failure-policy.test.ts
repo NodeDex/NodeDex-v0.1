@@ -6,6 +6,7 @@ import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   EmptyResponseError,
+  TruncatedResponseError,
   classifyGenError,
   isEmptyResult,
   withTimeout,
@@ -38,6 +39,13 @@ describe("classifyGenError (provider-agnostic failure routing)", () => {
     try { JSON.parse('{"a":1'); } catch (pe) { parseErr = pe; }
     assert.equal(classifyGenError(parseErr), "truncated");
     assert.equal(classifyGenError(new Error("Unterminated string in JSON")), "truncated");
+  });
+
+  test("TruncatedResponseError (finish_reason=length, valid-but-partial body) → truncated", () => {
+    // The valid-but-partial case: the body PARSES, so JSON.parse throws nothing — only the
+    // explicit error carries the truncation signal. Must classify as 'truncated' → same-model
+    // bump retry (grow the budget for the full result), NEVER a model swap (determinism trap).
+    assert.equal(classifyGenError(new TruncatedResponseError("any/model")), "truncated");
   });
 
   test("a 400/other provider error → mechanism_or_other (prompt-JSON floor / degrade)", () => {

@@ -6,12 +6,12 @@
     "url": "https://github.com/NodeDex/NodeDex-v0.1",
     "source": "github"
   },
-  "version": "0.1.14",
+  "version": "0.1.15",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "nodedex",
-      "version": "0.1.14",
+      "version": "0.1.15",
       "transport": {
         "type": "stdio"
       }

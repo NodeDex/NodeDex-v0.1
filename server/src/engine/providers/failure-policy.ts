@@ -29,6 +29,20 @@ export class EmptyResponseError extends Error {
   }
 }
 
+/** finish_reason='length' with a PARSEABLE body: the model hit max_tokens but still
+ *  emitted VALID JSON — cut at a group/array boundary → valid-but-PARTIAL, silently
+ *  dropping content. DISTINCT from the SyntaxError truncation (a body cut MID-structure
+ *  that fails JSON.parse); this one parses cleanly, so classifyGenError can't infer it
+ *  from the error alone — the provider raises it explicitly when finish_reason='length'.
+ *  Same recovery as any truncation: bump max_tokens on the SAME model (never swap — the
+ *  determinism trap), then fail clean (→ turns left re-extractable). */
+export class TruncatedResponseError extends Error {
+  constructor(public readonly model: string) {
+    super(`truncated response (finish_reason=length) from ${model}`);
+    this.name = "TruncatedResponseError";
+  }
+}
+
 /** True when an extracted completion body has no usable content. */
 export function isEmptyResult(text: string | null | undefined): boolean {
   return (text ?? "").trim() === "";
@@ -64,6 +78,9 @@ export type GenFailureKind = "empty" | "timeout" | "rate_limited" | "truncated" 
  *  SyntaxError that an empty body would otherwise produce. */
 export function classifyGenError(e: unknown): GenFailureKind {
   if (e instanceof EmptyResponseError) return "empty";
+  // finish_reason='length' surfaced by the provider (valid-but-partial body). Must win
+  // over the SyntaxError branch below (this one PARSED, so it isn't a SyntaxError anyway).
+  if (e instanceof TruncatedResponseError) return "truncated";
   const msg = String((e as any)?.message ?? "");
   const status = (e as any)?.status;
   // Capacity / rate-limit: 429, 503 (overloaded), 529 (Anthropic overloaded), quota.

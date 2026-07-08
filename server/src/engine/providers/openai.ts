@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { LLMProvider, EmbeddingProvider, GenerateResult } from "../ai-provider.js";
-import { EmptyResponseError, classifyGenError, isEmptyResult, llmTimeoutMs, decideEmptyOrTimeoutAction, isInsufficientCreditError } from "./failure-policy.js";
+import { EmptyResponseError, TruncatedResponseError, classifyGenError, isEmptyResult, llmTimeoutMs, decideEmptyOrTimeoutAction, isInsufficientCreditError } from "./failure-policy.js";
 import { modelOutputCeiling } from "./model-caps.js";
 import { effectiveThinkBudget, recordObservedThinking, reasoningDisabledForCall } from "./thinking-spill.js";
 // Re-exported for back-compat (callers/tests that imported these from openai.js):
@@ -224,6 +224,17 @@ export class OpenAIProvider implements LLMProvider {
               console.warn(`[trunc-debug] ${modelName} EMPTY: completion_tokens=${completionTokens}, reasoning=${thinkingTokens}, finish=${fin}`);
             }
             throw new EmptyResponseError(modelName);
+          }
+
+          // finish_reason='length' with a NON-empty, parseable body: the model hit
+          // max_tokens but still emitted VALID JSON — cut at a group/array boundary →
+          // valid-but-PARTIAL, silently dropping content. classifyGenError can't see this
+          // (JSON.parse below would succeed), so raise it explicitly → the truncated policy
+          // bumps max_tokens on the SAME model for the full result. (Empty + length is
+          // handled above: no output to grow → escalate to a different model, not bump.)
+          const finishReason = (completion.choices?.[0] as any)?.finish_reason;
+          if (finishReason === "length") {
+            throw new TruncatedResponseError(modelName);
           }
 
           // Parse BEFORE pushing the ok attempt — a truncation-induced SyntaxError must
