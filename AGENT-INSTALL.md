@@ -41,13 +41,19 @@ to show the user what will be written. (The first `npx` run downloads the packag
 npx nodedex run
 ```
 
-Verify: `curl http://127.0.0.1:3001/api/health` → `{"status":"ok"}`. Enabled capture
+Verify: `curl http://127.0.0.1:3001/api/health` → JSON with `"overall":"ok"`. Enabled capture
 watchers start with it (you'll see `capture watcher started` lines).
 
-**4. Connect yourself (the read side)**
-- **Claude Code:** `claude mcp add --transport http nodedex http://127.0.0.1:3001/mcp`
-- **Other MCP hosts:** add a server entry pointing at `http://127.0.0.1:3001/mcp`
-  (Streamable HTTP). Use `127.0.0.1`, not `localhost`.
+**4. Connect yourself (the read side)** — pick the row for the host you're running as. The AGENT
+picks the config file, not the editor (the Claude Code extension uses `.mcp.json` even inside
+Cursor/VS Code). Use `127.0.0.1`, not `localhost`.
+- **Claude Code (CLI):** `claude mcp add --transport http nodedex http://127.0.0.1:3001/mcp` (add `--scope user` for every project).
+- **Claude Code (VS Code / JetBrains / Cursor extension):** write `.mcp.json` in the project root — `{ "mcpServers": { "nodedex": { "type": "http", "url": "http://127.0.0.1:3001/mcp" } } }` — and approve it in `.claude/settings.local.json`: `{ "enableAllProjectMcpServers": true, "enabledMcpjsonServers": ["nodedex"] }`. Then tell the user to start a NEW session (MCP attaches at session start).
+- **Cursor (its own AI):** write `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` — `{ "mcpServers": { "nodedex": { "url": "http://127.0.0.1:3001/mcp" } } }`.
+- **VS Code (Copilot agent):** write `.vscode/mcp.json` (top key is `servers`, not `mcpServers`) — `{ "servers": { "nodedex": { "type": "http", "url": "http://127.0.0.1:3001/mcp" } } }`.
+- **Any other MCP host:** add a server entry pointing at `http://127.0.0.1:3001/mcp` (Streamable HTTP).
+
+Capture note: only **Claude Code** and **Hermes** have capture watchers today — **Cursor / VS Code can read the graph but can't feed it yet**, so they'll read what your other hosts leave.
 
 Then verify: call `workspace_stats` — a fresh graph reports 0 blocks without erroring.
 
