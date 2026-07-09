@@ -106,10 +106,17 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
       const via = m.role === "origin" ? "start" : m.role === "leaf" ? "led to" : "step";
       out.push({ id: m.label, label: m.essence || m.label, kind: "chain", via, type: m.type, mark: m.role === "leaf" ? "★" : "⛓" });
     }
-    for (const e of detail.outgoing ?? []) if (e.target_id) out.push({ id: e.target_id, label: e.target_label || e.target_id, kind: "out", via: e.type });
-    for (const e of detail.incoming ?? []) if (e.source_id) out.push({ id: e.source_id, label: e.source_label || e.source_id, kind: "in", via: e.type });
+    // Edges render the NEIGHBOR'S ESSENCE (the server sends it per-edge exactly so
+    // a reader never has to jump just to learn what's on the other end); the label
+    // is the fallback, trimmed of the project prefix. ⚠ = the neighbor is stale
+    // (superseded) — the rot shines through the edge.
+    const prefix = detail.project_id && openRoot ? `${openRoot.label}_` : "";
+    const gist = (e: EdgeRef, lbl?: string) =>
+      `${e.superseded_by ? "⚠ " : ""}${e.essence || (lbl || "").replace(prefix, "")}`;
+    for (const e of detail.outgoing ?? []) if (e.target_id) out.push({ id: e.target_id, label: gist(e, e.target_label || e.target_id), kind: "out", via: e.type });
+    for (const e of detail.incoming ?? []) if (e.source_id) out.push({ id: e.source_id, label: gist(e, e.source_label || e.source_id), kind: "in", via: e.type });
     return out;
-  }, [detail, thread]);
+  }, [detail, thread, openRoot]);
 
   useInput((input, k) => {
     if (searching) {

@@ -344,6 +344,10 @@ export interface EdgeRef {
   target_label?: string;
   source_id?: string;
   source_label?: string;
+  // detail=relations sends per-edge signposts: the neighbor's one-line essence
+  // (read the edge without jumping) + currency (what replaced a stale neighbor).
+  essence?: string;
+  superseded_by?: string;
 }
 
 export interface BlockDetail extends BlockRow {
