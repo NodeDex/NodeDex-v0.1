@@ -4,13 +4,13 @@
 
 **your project's decision history, for agents**
 
-Agent memory remembers *notes, facts, preferences* — what was said. NodeDex keeps a different record: the project's **reasoning** — what was tried and abandoned (and why), what was chosen (and over what alternatives), what's imposed and can't move. A local causal graph your agent **checks before proposing**, session after session. Different job than your fact store; run both.
+Give your agent your project's **decision history**: it checks what was already **ruled out** before proposing, follows **supersede** edges to current truth instead of citing a stale decision, and inherits the whole investigation cold — session after session. Built automatically from the agent's own conversations into a local causal graph. Works with Claude Code, Cursor, Hermes, or an agent loop you wrote yourself. (A different job than your fact store — [run both](#why-nodedex).)
 
-[Quick start](#setup) · [How it works](#how-it-works--three-actors) · [Connect your agent](#connect-your-agent) · [Why NodeDex](#why-nodedex) · [Docs](docs/README.md)
+[Quick start](#setup) · [How it works](#how-it-works--three-actors) · [Connect your agent](#connect-your-agent) · [Why NodeDex](#why-nodedex) · [Evidence](#evidence-it-works) · [Docs](docs/README.md)
 
 [![npm: nodedex](https://img.shields.io/npm/v/nodedex.svg?label=npm&color=cb3837)](https://www.npmjs.com/package/nodedex)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![tests: 1196 passing](https://img.shields.io/badge/tests-1196%20passing-brightgreen.svg)](#evidence-it-works)
+[![tests: 1231 passing](https://img.shields.io/badge/tests-1231%20passing-brightgreen.svg)](#evidence-it-works)
 [![status: early & solo-built](https://img.shields.io/badge/status-early%20%26%20solo--built-orange.svg)](#)
 [![MCP: stdio + HTTP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7b5cff.svg)](#connect-your-agent)
 
@@ -25,7 +25,7 @@ Agent memory remembers *notes, facts, preferences* — what was said. NodeDex ke
 Without NodeDex, every session starts blank. Decisions made last week, dead ends hit last month, reasoning chains built over hours — all gone on context reset. NodeDex stores them in a local SQLite graph the agent navigates deliberately, session after session.
 
 > **Status — early & solo-built.** NodeDex is developed by one person and is at an early stage.
-> The engine is tested end-to-end (1196 passing tests), but it hasn't been battle-tested across
+> The engine is tested end-to-end (1231 passing tests), but it hasn't been battle-tested across
 > many machines and agents yet — **expect rough edges, and please [open an issue](https://github.com/NodeDex/NodeDex-v0.1/issues)
 > when you hit one.** Feedback at this stage is hugely valuable.
 >
@@ -37,30 +37,66 @@ Without NodeDex, every session starts blank. Decisions made last week, dead ends
 
 ## Why NodeDex
 
-Most "agent memory" (mem0, vector RAG) stores **facts and preferences** and retrieves the top-k at query time. Perfect for *"the user prefers TypeScript."* But it loses the thing that actually costs you re-work: the agent **re-derives** — it re-proposes an approach it tried and abandoned three sessions ago, or plans against a decision that was replaced two weeks back.
+Forgetting announces itself — the agent asks again, you sigh, you re-explain. The failure that actually costs you re-work is **silent**: the agent re-proposes an approach it tried and abandoned three sessions ago, or plans against a decision that was replaced two weeks back. The stale decision looks exactly as authoritative as the current one, the ruled-out approach sounds fresh, and the hours get burned twice.
 
-**Generic memory fixes *forgetting*. NodeDex fixes being *confidently wrong about the past*.** Forgetting announces itself — the agent asks again. Confident wrongness is silent: the stale decision looks exactly as authoritative as the current one, the ruled-out approach sounds fresh, and the hours get burned twice. That's a knowledge-*status* problem — ruled-out, superseded, still-open — and status is structure, not recall.
+**NodeDex fixes being *confidently wrong about the past*.** That's a knowledge-*status* problem — ruled-out, superseded, still-open — and status is structure, not recall. So NodeDex keeps the project's **reasoning residue** as a graph the agent *walks*: decisions with their why and the alternatives that lost, **dead-ends** as a permanent, enumerable closed-door list the agent is taught to check first (a strong nudge, not a hard block), constraints that can't silently move, and the causal chains tying them together.
 
-NodeDex stores the **reasoning residue** instead, as a graph the agent *walks*:
+A new agent inheriting a project doesn't get a ranked pile of facts — it **walks the investigation**, and learns what *not* to repeat.
 
-| | a fact store (mem0 / RAG) | NodeDex |
+<details>
+<summary><b>How is this different from mem0 / RAG / native memory?</b></summary>
+
+Different job. Most "agent memory" stores **facts and preferences** and retrieves the top-k at query time — perfect for *"the user prefers TypeScript"*, and genuinely good at it. NodeDex captures the reasoning *around* those facts: what was tried, what was ruled out, what was decided and why.
+
+| | a fact store (mem0 / RAG / native memory) | NodeDex |
 |---|---|---|
 | Stores | facts, preferences | decisions + *why*, **dead-ends**, constraints, insights |
 | Links | shared-entity association | **causal** (`prompted_by → based_on → supersedes`) |
 | Recall | one-shot top-k retrieval | **traverse** root → decision → why → chain |
-| Failed approaches | — | **permanent dead-ends** — an enumerable closed-door list the agent is taught to check first (a strong nudge, not a hard block) |
+| Failed approaches | — | **permanent dead-ends** — an enumerable closed-door list checked before proposing |
 
-A new agent inheriting a project doesn't get a ranked pile of facts — it **walks the investigation**, and learns what *not* to repeat.
+They're complementary, and many setups run both. NodeDex doesn't replace your fact store.
 
-**It doesn't replace your fact store.** mem0 / RAG are good at recalling *what's true*; NodeDex captures the reasoning *around* it — what was tried, ruled out, and decided. They're complementary, and many setups run both.
+</details>
+
+## When you *don't* need NodeDex
+
+Honest scope: for short sessions, one-shot tasks, and fact-recall workflows, **native memory is good enough — skip NodeDex**, it would be overkill. It earns its keep on **long-running, decision-dense, multi-session** work where repeating a failure is expensive — and especially on **autonomous runs, where no human is watching to catch the agent re-proposing a dead end**.
+
+---
+
+## Try it in 60 seconds — no key, no setup
+
+A fresh graph is empty (the value accumulates from your real work), so NodeDex ships a
+sample project history you can explore immediately:
+
+```bash
+npx nodedex demo
+```
+
+That serves a small finished project — its decisions (with the why and the rejected
+alternatives), its dead-ends, its constraints, and one decision that got *superseded* —
+at `http://127.0.0.1:3009/mcp`. Point any MCP agent at it and ask:
+
+1. *"What did we try and abandon in the ratelimiter project, and why?"*
+2. *"Why was token bucket chosen — what else was considered?"*
+3. *"Is 'keep the counters in Redis' still the current decision?"* — it isn't; watch the
+   agent follow the supersede edge to current truth instead of quoting the stale one.
+4. *"What's still open or unverified?"*
+
+If those answers are useful from a 15-block toy, imagine them from six weeks of your own
+work. `nodedex stop 3009` ends the demo; your real graph is never touched.
+
+Want receipts before installing? **[Evidence it works](#evidence-it-works)** — what the
+pipeline captures from real transcripts, graph health, and search that admits its limits.
 
 ---
 
 ## What it is
 
-A local knowledge graph the agent reads from. Not a note-taking tool — **the agent's memory**. The blocks are its thoughts, persisted. The relations are its understanding of how things connect.
+A local knowledge graph of what the project **established** — every decision, dead-end, constraint, and the causal links between them — persisted outside the context window and read by the agent over MCP. Not a note-taking tool: nobody curates it; a background pipeline builds it from the work itself.
 
-The agent is stateless by default. NodeDex makes it stateful. The graph is the identity that survives a context reset — the LLM is just the reasoning engine that runs on top of it.
+The agent is stateless by default. NodeDex gives it a durable record of the project's reasoning that survives every context reset — the LLM is just the reasoning engine that runs on top of it.
 
 **Key properties:**
 - All data stays local (`~/.nodedex/*.db`) — nothing leaves the machine
@@ -93,30 +129,6 @@ The agent is stateless by default. NodeDex makes it stateful. The graph is the i
 - **Capture** wires each finished turn to the server. The path depends on the host: **Hermes / Owl** are captured by reading their own `state.db` (they ignore a model proxy); an **OpenAI-compatible host** that honors a custom base URL can route its model through NodeDex's proxy; an agent whose **loop you control** uses a small out-of-path tee (`workspace_install_capture`). NodeDex is a passive MCP server — it can't see the agent's replies on its own, so **without capture the graph stays empty** (see [Connect your agent](#connect-your-agent)).
 
 **SQLite WAL** — a single local file, bitemporal relations (history preserved, never deleted).
-
----
-
-## Try it in 60 seconds — no key, no setup
-
-A fresh graph is empty (the value accumulates from your real work), so NodeDex ships a
-sample project history you can explore immediately:
-
-```bash
-npx nodedex demo
-```
-
-That serves a small finished project — its decisions (with the why and the rejected
-alternatives), its dead-ends, its constraints, and one decision that got *superseded* —
-at `http://127.0.0.1:3009/mcp`. Point any MCP agent at it and ask:
-
-1. *"What did we try and abandon in the ratelimiter project, and why?"*
-2. *"Why was token bucket chosen — what else was considered?"*
-3. *"Is 'keep the counters in Redis' still the current decision?"* — it isn't; watch the
-   agent follow the supersede edge to current truth instead of quoting the stale one.
-4. *"What's still open or unverified?"*
-
-If those answers are useful from a 15-block toy, imagine them from six weeks of your own
-work. `nodedex stop 3009` ends the demo; your real graph is never touched.
 
 ---
 
@@ -190,7 +202,8 @@ config value, not a shell command, so it's the same on every OS. All config live
 
 ## Connect your agent
 
-NodeDex is built for **autonomous agents** (e.g. Hermes). The onboarding wizard sets up
+NodeDex is built for **agents doing long, multi-session work** — Claude Code, Cursor, an
+autonomous host like Hermes, or an agent loop you wrote yourself. The onboarding wizard sets up
 and starts the **server**; pointing your agent at it is the one remaining step.
 
 > **Use what the wizard showed you.** Its final screen prints your **server URL**
@@ -200,6 +213,18 @@ and starts the **server**; pointing your agent at it is the one remaining step.
 > gated. If you ever lose them, run **`nodedex connect`** — it prints the connection card
 > (per-location URLs + when a token is needed) — and `~/.nodedex/connect-snippets.md` always
 > holds ready-to-paste configs for every host, regenerated at each launch.
+
+### Quickstart (Claude Code) — one command
+
+**1. Connect** (terminal):
+```bash
+claude mcp add --transport http nodedex http://127.0.0.1:3001/mcp   # 3001 → your wizard port; add --scope user for all projects
+```
+Using the **VS Code / Cursor / JetBrains extension** instead of the CLI? Add a project `.mcp.json` (config in the table below) and start a **new** session.
+
+**2. Capture is already handled** — the Claude Code watcher tails your session transcripts locally (`~/.claude/projects/…jsonl`), read-only and forward-only. The wizard detects Claude Code and asks; per-project toggles live in the TUI's settings view.
+
+That's it — the graph grows from your sessions on its own, and the agent gets the usage protocol over MCP automatically.
 
 ### Quickstart (Hermes) — two pastes, once
 
@@ -219,6 +244,24 @@ Then restart Hermes (or start a new session). Use `127.0.0.1`, **not** `localhos
 > Your long-term memory is NodeDex, connected as MCP tools. To recall anything, use `workspace_tree` to see what exists, then `workspace_get` / `workspace_search` and follow the chains — don't search files, the database, or ports; it's all behind the tools.
 
 **That's the whole setup.** Capture is **on by default**, so once connected the graph grows from your turns on its own — no extra step. (The agent also gets this usage protocol automatically over MCP; the message above just reinforces it on turn one.)
+
+### Your own agent loop? Two wires, ~5 lines
+
+Building with the Agent SDK / OpenAI Agents SDK / LangChain / a hand-rolled loop? The integration is one MCP entry (read) + one post-turn call (write):
+
+```json
+{ "mcpServers": { "nodedex": { "url": "http://127.0.0.1:3001/mcp" } } }
+```
+
+```js
+import { nodedexCapture } from './nodedex-capture.mjs';
+// after your turn completes — a fire-and-forget COPY, out of your model's path:
+nodedexCapture({ userMessage, agentResponse: out.text, agentId: sessionId });
+```
+
+Get the adapter by having your agent call **`workspace_install_capture`** once — it returns the file plus wiring examples for your seam shape (post-turn callback, OpenAI-style call site, or framework `onTurnEnd`/Stop hook), and asks the user's permission before touching anything. Not on Node? The adapter is sugar over a single HTTP call — replicate it as one fire-and-forget `POST /api/reflect/trigger` with `{user_message, agent_response, reasoning}` from any language.
+
+> This tee is the newest capture path with the least real-world mileage — if it fights your framework, [open an issue](https://github.com/NodeDex/NodeDex-v0.1/issues).
 
 ---
 
@@ -470,7 +513,7 @@ decontextualized fragment.
 > skill, not the memory. Full write-up:
 > [docs/NODEDEX-MEMORY-MODEL.md](docs/NODEDEX-MEMORY-MODEL.md).
 
-Engine health: **1196/1196 server tests pass**, with extraction → graph → retrieval validated
+Engine health: **1231/1231 server tests pass**, with extraction → graph → retrieval validated
 end-to-end.
 
 We also ran NodeDex on itself: the last ~50 turns of the Claude Code session that *built* it,
