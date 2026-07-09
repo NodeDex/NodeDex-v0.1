@@ -96,15 +96,32 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
 
   // Everything the right pane can jump to, in display order: the story first
   // (cause→effect, ESSENCES not labels — the narrative a human can read), then
-  // the raw edges (labels = addresses). Thread rows jump by label (getBlock
-  // accepts idOrLabel).
+  // the raw edges. ONE ROW PER NEIGHBOR: a block linked by several relations
+  // (based_on + prompted_by is common) showed once per edge, so the same essence
+  // repeated 2-3× and drowned the story. The story row wins outright (its spine
+  // edges ARE how the story was built — repeating them says nothing new); an
+  // edge-only neighbor with extra links shows "verb +N". Thread rows jump by
+  // label (getBlock accepts idOrLabel).
   const jumpables = useMemo<Jumpable[]>(() => {
     if (!detail) return [];
     const out: Jumpable[] = [];
+    const byNeighbor = new Map<string, Jumpable>();
+    const push = (key: string, j: Jumpable) => {
+      const existing = byNeighbor.get(key);
+      if (existing) {
+        if (existing.kind !== "chain") {
+          const m = existing.via.match(/^(.*) \+(\d+)$/);
+          existing.via = m ? `${m[1]} +${Number(m[2]) + 1}` : `${existing.via} +1`;
+        }
+        return;
+      }
+      byNeighbor.set(key, j);
+      out.push(j);
+    };
     for (const m of thread) {
       if (m.role === "focal") continue;
       const via = m.role === "origin" ? "start" : m.role === "leaf" ? "led to" : "step";
-      out.push({ id: m.label, label: m.essence || m.label, kind: "chain", via, type: m.type, mark: m.role === "leaf" ? "★" : "⛓" });
+      push(m.label, { id: m.label, label: m.essence || m.label, kind: "chain", via, type: m.type, mark: m.role === "leaf" ? "★" : "⛓" });
     }
     // Edges render the NEIGHBOR'S ESSENCE (the server sends it per-edge exactly so
     // a reader never has to jump just to learn what's on the other end); the label
@@ -113,8 +130,8 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
     const prefix = detail.project_id && openRoot ? `${openRoot.label}_` : "";
     const gist = (e: EdgeRef, lbl?: string) =>
       `${e.superseded_by ? "⚠ " : ""}${e.essence || (lbl || "").replace(prefix, "")}`;
-    for (const e of detail.outgoing ?? []) if (e.target_id) out.push({ id: e.target_id, label: gist(e, e.target_label || e.target_id), kind: "out", via: e.type });
-    for (const e of detail.incoming ?? []) if (e.source_id) out.push({ id: e.source_id, label: gist(e, e.source_label || e.source_id), kind: "in", via: e.type });
+    for (const e of detail.outgoing ?? []) if (e.target_id) push(e.target_label || e.target_id, { id: e.target_id, label: gist(e, e.target_label || e.target_id), kind: "out", via: e.type });
+    for (const e of detail.incoming ?? []) if (e.source_id) push(e.source_label || e.source_id, { id: e.source_id, label: gist(e, e.source_label || e.source_id), kind: "in", via: e.type });
     return out;
   }, [detail, thread, openRoot]);
 

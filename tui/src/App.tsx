@@ -21,7 +21,7 @@ const VIEWS = ["memory", "feed", "settings"];
 const MEMORY = 0;
 const FEED = 1;
 const HEALTH = 2;
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 const FAST_MS = 2000;
 const SLOW_MS = 30000;
 
