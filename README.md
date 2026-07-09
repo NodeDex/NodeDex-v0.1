@@ -22,7 +22,7 @@ Give your agent your project's **decision history**: it checks what was already 
 
 ---
 
-Without NodeDex, every session starts blank. Decisions made last week, dead ends hit last month, reasoning chains built over hours — all gone on context reset. NodeDex stores them in a local SQLite graph the agent navigates deliberately, session after session.
+Without NodeDex, session N+1 quietly **re-derives what session N already settled** — which approaches failed (and why), which decisions were replaced (and by what), which constraints still bind. NodeDex keeps that record in a local SQLite graph the agent navigates deliberately, session after session.
 
 > **Status — early & solo-built.** NodeDex is developed by one person and is at an early stage.
 > The engine is tested end-to-end (1231 passing tests), but it hasn't been battle-tested across

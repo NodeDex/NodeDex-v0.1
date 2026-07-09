@@ -6,8 +6,9 @@
 
 ---
 
-You are installing **NodeDex** — a local, self-maintaining knowledge-graph memory you (the
-agent) will read and feed. Follow these steps exactly; prefer the given commands over
+You are installing **NodeDex** — a local, self-maintaining graph of the project's decision
+history (decisions, dead-ends, constraints — your long-term record across sessions) that you
+(the agent) will read and feed. Follow these steps exactly; prefer the given commands over
 improvising. Ask the user only the questions in step 2.
 
 **1. Prerequisite**
