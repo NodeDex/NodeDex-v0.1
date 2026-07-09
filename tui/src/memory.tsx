@@ -14,14 +14,14 @@ import { Section, Row, Keys, Panel, windowSlice } from "./components.js";
 import { theme, typeColorOf, typeGlyphOf, trunc, relTime } from "./theme.js";
 import { useTermSize } from "./hooks.js";
 import {
-  fetchTree, fetchProjectBlocks, fetchBlockDetail, fetchChainMembers, searchMemory,
-  type TreeRoot, type BlockRow, type SearchRow, type BlockDetail, type ChainMember, type EdgeRef,
+  fetchTree, fetchProjectBlocks, fetchBlockDetail, fetchThread, searchMemory,
+  type TreeRoot, type BlockRow, type SearchRow, type BlockDetail, type ThreadMember, type EdgeRef,
 } from "./api.js";
 
 type LeftLevel = "roots" | "blocks";
 
-// A row the right pane can jump to (chain member or relation endpoint).
-interface Jumpable { id: string; label: string; kind: "chain" | "out" | "in"; via: string; type?: string }
+// A row the right pane can jump to (thread step or relation endpoint).
+interface Jumpable { id: string; label: string; kind: "chain" | "out" | "in"; via: string; type?: string; mark?: string }
 
 export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCapture: (v: boolean) => void }) {
   const { rows: termRows, columns: cols } = useTermSize();
@@ -37,7 +37,7 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
 
   // ── right pane: the story ──────────────────────────────────────────────────
   const [detail, setDetail] = useState<BlockDetail | null>(null);
-  const [chain, setChain] = useState<ChainMember[]>([]);
+  const [thread, setThread] = useState<ThreadMember[]>([]);
   const [rightSel, setRightSel] = useState(0);
   const [focus, setFocus] = useState<"left" | "right">("left");
   const [trail, setTrail] = useState<string[]>([]); // jump history (block ids) for esc-back
@@ -57,13 +57,17 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
   useEffect(() => { onCapture(searching); }, [searching, onCapture]);
 
   // Load the story for a block id (shared by list-select, search, edge-jump).
+  // The thread is COMPUTED on read (causal walk over live edges) — it exists for
+  // every linked block, not just ones a Pass-5 chain block happened to claim.
   const inspect = useCallback((id: string | null) => {
-    if (!id) { setDetail(null); setChain([]); return; }
+    if (!id) { setDetail(null); setThread([]); return; }
     fetchBlockDetail(id).then(async (d) => {
       setDetail(d);
       setRightSel(0);
-      if (d?.chain_id) setChain(await fetchChainMembers(d.chain_id));
-      else setChain([]);
+      if (d) {
+        const t = await fetchThread(d.id);
+        setThread(Array.isArray(t?.members) ? t!.members : []);
+      } else setThread([]);
     });
   }, []);
 
@@ -90,15 +94,22 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
     void fetchProjectBlocks(root.label).then((b) => setBlocks(b));
   }, []);
 
-  // Everything the right pane can jump to, in display order.
+  // Everything the right pane can jump to, in display order: the story first
+  // (cause→effect, ESSENCES not labels — the narrative a human can read), then
+  // the raw edges (labels = addresses). Thread rows jump by label (getBlock
+  // accepts idOrLabel).
   const jumpables = useMemo<Jumpable[]>(() => {
     if (!detail) return [];
     const out: Jumpable[] = [];
-    for (const m of chain) if (m.id !== detail.id) out.push({ id: m.id, label: m.label, kind: "chain", via: m.flow_role || "member", type: m.type });
+    for (const m of thread) {
+      if (m.role === "focal") continue;
+      const via = m.role === "origin" ? "start" : m.role === "leaf" ? "led to" : "step";
+      out.push({ id: m.label, label: m.essence || m.label, kind: "chain", via, type: m.type, mark: m.role === "leaf" ? "★" : "⛓" });
+    }
     for (const e of detail.outgoing ?? []) if (e.target_id) out.push({ id: e.target_id, label: e.target_label || e.target_id, kind: "out", via: e.type });
     for (const e of detail.incoming ?? []) if (e.source_id) out.push({ id: e.source_id, label: e.source_label || e.source_id, kind: "in", via: e.type });
     return out;
-  }, [detail, chain]);
+  }, [detail, thread]);
 
   useInput((input, k) => {
     if (searching) {
@@ -128,7 +139,7 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
         if (k.upArrow) setBlockSel((s) => Math.max(0, s - 1));
         else if (k.downArrow) setBlockSel((s) => Math.min(blocks.length - 1, s + 1));
         else if (k.return && detail) setFocus("right");
-        else if (k.escape) { setLevel("roots"); setOpenRoot(null); setBlocks([]); setDetail(null); setChain([]); setTrail([]); }
+        else if (k.escape) { setLevel("roots"); setOpenRoot(null); setBlocks([]); setDetail(null); setThread([]); setTrail([]); }
       }
       return;
     }
@@ -231,17 +242,17 @@ export function MemoryTab({ isActive, onCapture }: { isActive: boolean; onCaptur
                 </Box>
               ) : null}
               {jumpables.length > 0 ? (
-                <Section title={chain.length > 0 ? `⛓ chain + edges` : "edges"} hot={focus === "right"}>
+                <Section title={thread.length > 0 ? `⛓ story · cause → effect` : "edges"} hot={focus === "right"}>
                   {jumpWin.above > 0 ? <Text color={theme.dim}>{`  ↑ ${jumpWin.above} more`}</Text> : null}
                   {jumpWin.visible.map((j, i) => {
                     const idx = jumpWin.start + i;
                     return (
                       <Row key={`${j.kind}-${j.id}-${idx}`} selected={idx === rightSel} focused={focus === "right"}>
                         <Box width={14}>
-                          <Text color={theme.dim}>{j.kind === "in" ? `← ${trunc(j.via, 11)}` : j.kind === "out" ? `→ ${trunc(j.via, 11)}` : `⛓ ${trunc(j.via, 11)}`}</Text>
+                          <Text color={j.mark === "★" ? theme.accent : theme.dim}>{j.kind === "in" ? `← ${trunc(j.via, 11)}` : j.kind === "out" ? `→ ${trunc(j.via, 11)}` : `${j.mark ?? "⛓"} ${trunc(j.via, 11)}`}</Text>
                         </Box>
                         {j.type ? <Text color={typeColorOf(j.type)}>{`${typeGlyphOf(j.type)} `}</Text> : null}
-                        <Text color={idx === rightSel && focus === "right" ? theme.value : theme.label}>{trunc(j.label, essW - 20)}</Text>
+                        <Text color={idx === rightSel && focus === "right" ? theme.value : theme.label} wrap="truncate">{trunc(j.label, essW - 20)}</Text>
                       </Row>
                     );
                   })}

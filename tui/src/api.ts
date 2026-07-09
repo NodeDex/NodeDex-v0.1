@@ -381,6 +381,32 @@ export async function fetchChainMembers(chainBlockId: string): Promise<ChainMemb
   return Array.isArray(r?.blocks) ? r!.blocks : [];
 }
 
+// ─── Story — the whole causal thread (compute-on-read, never stale) ─────────
+// GET /api/blocks/:id/thread — every member of the SPINE thread this block sits
+// on, cause→effect ordered, with role tags (origin/step/focal/leaf). Works for
+// EVERY causally-linked block — no materialized chain_id needed. This is the
+// same surface agents read (workspace_get detail="thread"), so the human sees
+// exactly the story the agent sees.
+export interface ThreadMember {
+  label: string;
+  type: string;
+  essence: string;
+  role: "origin" | "focal" | "leaf" | "step";
+  backed_by?: unknown;
+}
+export interface FullThread {
+  focal: string;
+  count: number;
+  origins?: string[];
+  leaves?: string[];
+  truncated?: boolean;
+  members: ThreadMember[];
+  note?: string;
+}
+export async function fetchThread(id: string): Promise<FullThread | null> {
+  return getJSON<FullThread>(`/api/blocks/${encodeURIComponent(id)}/thread`);
+}
+
 // ─── Review pane (the TUI's only write surface: flag verdicts) ──────────────
 
 export interface PipelineFlagRow {
