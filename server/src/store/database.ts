@@ -915,7 +915,18 @@ export class WorkspaceDB {
     return block;
   }
 
-  getBlock(idOrLabel: string): Block | null {
+  /** Fetch by id or label. PURE by default — a read must not change what it reads.
+   *  `opts.touch = true` records access telemetry (last_accessed, access_count); pass it
+   *  ONLY from real consumption edges (the agent's workspace_get focal read, the REST
+   *  block-detail read) — never from internal traversal, neighbor previews, or
+   *  maintenance. The telemetry feeds the staleness score, TTL promotion, and
+   *  fallback-search ordering, so it must mean "someone actually consumed this block".
+   *  Until 0.1.18 EVERY read also flipped stale/created → 'active' (audit F-11): merely
+   *  opening a derived block whose input had changed silently reactivated it without
+   *  re-derivation — and workspace_get's neighbor-essence previews did that to every
+   *  neighbor of every read. Status is now never changed by a read; 'stale' clears only
+   *  via an explicit write (re-derive / update / reviewer verdict). */
+  getBlock(idOrLabel: string, opts?: { touch?: boolean }): Block | null {
     if (!this.db) throw new Error("Database not initialized");
 
     const row = this.db.prepare(
@@ -926,11 +937,11 @@ export class WorkspaceDB {
 
     const block = this.decryptBlockIfSensitive(this.rowToBlock(row));
 
-    this.db.prepare(
-      `UPDATE blocks SET last_accessed = ?, access_count = access_count + 1,
-       status = CASE WHEN status = 'stale' THEN 'active' WHEN status = 'created' THEN 'active' ELSE status END
-       WHERE id = ?`
-    ).run(new Date().toISOString(), block.id);
+    if (opts?.touch) {
+      this.db.prepare(
+        `UPDATE blocks SET last_accessed = ?, access_count = access_count + 1 WHERE id = ?`
+      ).run(new Date().toISOString(), block.id);
+    }
 
     return block;
   }

@@ -168,7 +168,9 @@ export function createBlocksRouter(db: WorkspaceDB): Router {
       if (!DETAILS.has(detail)) {
         return res.status(400).json({ error: `Unknown detail '${req.query.detail}'. Allowed: surface, content, relations, full.` });
       }
-      const block = db.getBlock(req.params.id);
+      // touch: the block-detail read is a real consumption (TUI open, script fetch).
+      // Navigation/list endpoints stay pure so traversal measurement doesn't move the metric.
+      const block = db.getBlock(req.params.id, { touch: true });
       if (!block) return res.status(404).json({ error: "Not found" });
       if (detail !== "full") {
         let c: any = {};

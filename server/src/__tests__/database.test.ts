@@ -813,6 +813,49 @@ describe("DEBT 5 Phase 5: D3 source_excerpt propagation (createBlock layer)", ()
   });
 });
 
+describe("pure reads (audit F-11): getBlock never changes what it reads", () => {
+  const rawStatus = (id: string) =>
+    ((db as any).db.prepare(`SELECT status, access_count FROM blocks WHERE id = ?`).get(id)) as { status: string; access_count: number };
+
+  test("reading a stale derived block does NOT reactivate it", () => {
+    // stale = "a derivation input changed since this was derived" (_invalidateDerivedBlocks).
+    // Reading it must not clear that — only a re-derive / explicit write may.
+    const src = db.createBlock({ label: "pureread_fact_source", type: "fact", essence: "source v1", content: { unique: { value: "v1" } }, ttl: "permanent" });
+    const derived = db.createBlock({
+      label: "pureread_insight_derived", type: "insight", essence: "derived from source",
+      content: { unique: { insight: "derived" }, derivation: { input_ids: [src.id] } }, ttl: "permanent", status: "active",
+    });
+    db.updateBlock(src.id, { essence: "source v2 — the premise changed" }, "test", "test");
+    assert.equal(rawStatus(derived.id).status, "stale", "input update must invalidate the derived block");
+    db.getBlock(derived.id);
+    db.getBlock(derived.id, { touch: true });
+    assert.equal(rawStatus(derived.id).status, "stale", "reads (even touching ones) must never revive an invalidated block");
+  });
+
+  test("reading a 'created' block does NOT promote it to active", () => {
+    const b = db.createBlock({ label: "pureread_fact_created", type: "fact", essence: "fresh", content: { unique: { value: "x" } }, ttl: "permanent" });
+    assert.equal(rawStatus(b.id).status, "created");
+    db.getBlock(b.id, { touch: true });
+    assert.equal(rawStatus(b.id).status, "created", "status transitions belong to writes, not reads");
+  });
+
+  test("reading an archived block leaves it archived", () => {
+    const b = db.createBlock({ label: "pureread_fact_archived", type: "fact", essence: "old", content: { unique: { value: "x" } }, ttl: "permanent" });
+    db.archiveBlock(b.id, "test");
+    db.getBlock(b.id, { touch: true });
+    assert.equal(rawStatus(b.id).status, "archived");
+  });
+
+  test("telemetry is opt-in: default read records nothing, touch:true records the consumption", () => {
+    const b = db.createBlock({ label: "pureread_fact_telemetry", type: "fact", essence: "counted", content: { unique: { value: "x" } }, ttl: "permanent" });
+    db.getBlock(b.id);
+    db.getBlock(b.label);
+    assert.equal(rawStatus(b.id).access_count, 0, "internal/default reads must not inflate access_count");
+    db.getBlock(b.id, { touch: true });
+    assert.equal(rawStatus(b.id).access_count, 1, "a consumption edge records exactly one access");
+  });
+});
+
 // ─── DEBT 5 Phase 9: extracted_from provenance via block_extractions join ────
 // Validates the join table + helpers introduced in Phase 9. Schema: each row
 // pairs a block_id with a conversation_turn_ranges row that produced it.

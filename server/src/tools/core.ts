@@ -420,7 +420,9 @@ Tip: use "surface" first. If the essence tells you what you need, stop there. "r
     },
     async (params) => {
       try {
-        const block = db.getBlock(params.id);
+        // touch: the agent consuming THIS block is exactly what access telemetry means.
+        // Neighbor essences below read pure — a preview is not a consumption.
+        const block = db.getBlock(params.id, { touch: true });
         if (!block) {
           return err("BLOCK_NOT_FOUND", `No block found with id or label '${params.id}'`,
             { suggestion: "Try workspace_search to find the block." });
@@ -450,6 +452,11 @@ Tip: use "surface" first. If the essence tells you what you need, stop there. "r
           locked:     block.locked || false,
           flow_role:  block.flow_role || null,
           chain_id:   (block as any).chain_id || null,
+          // Provenance travels at EVERY detail level: the protocol + skill instruct the
+          // agent to judge a record by its verbatim source, and until this line the MCP
+          // read path never returned it (REST did) — the agent was told to run a check
+          // it couldn't perform. null = not extracted (manual save / derived / root).
+          source_excerpt: (block as any).source_excerpt ?? null,
         };
 
         // Derivation staleness warning: if any input block was updated after this block was created
@@ -526,6 +533,12 @@ Tip: use "surface" first. If the essence tells you what you need, stop there. "r
             ttl:           block.ttl,
             aliases:       JSON.parse(block.aliases || "[]"),
             is_sensitive:  block.is_sensitive,
+            // Turn-range provenance: which conversation_turn_ranges row(s) produced this
+            // block — the pointer from source_excerpt (line-level) back to the original
+            // transcript span. Empty = not arc-extracted.
+            extracted_from: db.getBlockExtractions(block.id).map((e) => ({
+              range_id: e.range_id, extracted_at: e.extracted_at,
+            })),
           };
         }
 
@@ -555,7 +568,7 @@ thread matters and want to read the whole reasoning at once instead of hopping b
     },
     async (params) => {
       try {
-        const block = db.getBlock(params.id);
+        const block = db.getBlock(params.id, { touch: true }); // reading a thread consumes its focal block
         if (!block) return err("BLOCK_NOT_FOUND", `No block found with id or label '${params.id}'`);
         const thread = assembleFullThread(db, block.id);
         if (!thread) return ok({ focal: block.label, count: 0, members: [], note: "This block is standalone — not on a causal thread." });
