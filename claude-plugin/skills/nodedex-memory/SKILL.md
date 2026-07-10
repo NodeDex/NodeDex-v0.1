@@ -5,9 +5,13 @@ description: Consult the project's NodeDex memory graph (the workspace_* MCP too
 
 # NodeDex memory — the five moves
 
-Read-only for you: a background pipeline captures the conversation automatically — do
-not `workspace_remember` in normal work. Tools missing? Say so once and continue;
+Read-only for KNOWLEDGE: a background pipeline captures the conversation automatically —
+do not `workspace_remember` in normal work. Tools missing? Say so once and continue;
 never invent remembered content.
+The ONE thing you maintain is your own work-state: when you finish or abandon work
+tracked as a task, `workspace_task_update(id, "done"|"blocked", note)` at the boundary —
+only you know completion; an open task you finished misleads every later session.
+See what's open with `workspace_list(project, type="task")` (rows carry status).
 
 **Before proposing any approach** — the reflex this skill exists for:
 `workspace_list(project, type="dead_end")` and `type="constraint"`.

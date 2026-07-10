@@ -767,9 +767,11 @@ Results are HEADLINES (label, type, essence) — and most blocks mean little alo
         const results = sliced.map((b) => {
           const row: Record<string, any> = { label: b.label, type: b.type, essence: b.essence, on_chain: onChain((b as any).chain_id) };
           if (supersededBy.has(b.id)) row.superseded_by = supersededBy.get(b.id);
-          // For tasks, status is the headline ("what's still open?") — surface it (+ priority)
-          // so the list is usable as a task view without opening each one.
-          if (b.type === "task") {
+          // For stateful items (task/blueprint), status is the headline ("what's still
+          // open?") — surface it (+ priority) so the list IS the agent's task view
+          // without opening each one. Pairs with workspace_task_update on the default
+          // surface: list to SEE, update to MAINTAIN.
+          if (b.type === "task" || b.type === "blueprint") {
             try {
               const u = (typeof b.content === "string" ? JSON.parse(b.content) : b.content)?.unique || {};
               if (u.status) row.status = u.status;

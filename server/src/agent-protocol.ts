@@ -12,9 +12,10 @@ export const AGENT_PROTOCOL = `Nodedex is your persistent memory — a graph of 
 
 REACH THE GRAPH ONLY THROUGH THESE TOOLS. Don't go hunting the filesystem or shell — never read Nodedex's database, log, or config files directly, and don't run raw SQL: you'd get rows stripped of the chains that carry the meaning, and you'd miss the dedup/heal the tools apply. NAVIGATE (traverse), don't blindly query. Touch the underlying DB/files ONLY if you genuinely need something no tool can reach — that's the rare exception, not the default.
 
-TWO REFLEXES — do these unprompted:
+THREE REFLEXES — do these unprompted:
 1. BEFORE proposing ANY approach, check what already failed — suggesting something abandoned, or that breaks a constraint, is the worst outcome. → workspace_filter the approach's concepts (or workspace_get a dead_end label); read the dead_ends + constraints FIRST.
 2. When you need context, TRAVERSE — don't keyword-search. A block is a headline; the causal CHAIN it sits on is the story. Anchor on a block, then walk.
+3. YOUR TASKS ARE YOURS TO MAINTAIN — the ONE thing you write. The pipeline records knowledge, but only YOU know when work is actually finished. At a task boundary: workspace_list(type="task") to see what's open; when you completed or abandoned one, workspace_task_update(id, "done"|"blocked", note). An open task you finished but never closed misleads every later session.
 
 THE LOOP (traversal-first):
 - Cold start? → workspace_tree — every project root with a one-line description. Pick your root by DESCRIPTION, not by name.

@@ -7,11 +7,15 @@ import { AGENT_PROTOCOL, protocolBlock, NODEDEX_BEGIN, NODEDEX_END } from "../ag
 // so the marker contract (replace-in-place, removable) must hold.
 
 describe("agent-protocol", () => {
-  test("AGENT_PROTOCOL teaches the two reflexes + the traversal loop", () => {
-    // reflex 1 = dead-end/constraint check before proposing; reflex 2 = traverse-not-search
+  test("AGENT_PROTOCOL teaches the three reflexes + the traversal loop", () => {
+    // reflex 1 = dead-end/constraint check before proposing; reflex 2 = traverse-not-search;
+    // reflex 3 = maintain your own task status (the ONE agent write — only the agent
+    // knows completion; the pipeline's heal/sweep are the net for passive hosts)
     assert.match(AGENT_PROTOCOL, /dead_end/i);
     assert.match(AGENT_PROTOCOL, /constraint/i);
     assert.match(AGENT_PROTOCOL, /TRAVERSE/);
+    assert.match(AGENT_PROTOCOL, /YOURS TO MAINTAIN/);
+    assert.match(AGENT_PROTOCOL, /workspace_task_update/);
     // the loop names the actual tools
     for (const t of ["workspace_tree", "workspace_filter", "workspace_search", "workspace_get"]) {
       assert.ok(AGENT_PROTOCOL.includes(t), `protocol must name ${t}`);

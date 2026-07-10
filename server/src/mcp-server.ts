@@ -25,15 +25,22 @@ export const WORKSPACE_INSTRUCTIONS = `${AGENT_PROTOCOL}
 
 First time connecting in this project? Call workspace_onboard ONCE — it offers to persist these reflexes into your own standing config (it checks whether you can, and you explain why + ask the user first). If you can't persist, this advisory copy still applies for the session.`;
 
-// The agent surface is READ-ONLY by default — it traverses/queries/retrieves; the pipeline
-// does all writing. Pure reads only. (extract_arc etc. are INFRA, triggered by host/timer.)
+// The agent surface is READ-ONLY for KNOWLEDGE — the pipeline does all knowledge
+// writing. ONE deliberate exception (user design call, 2026-07-11): the agent
+// MAINTAINS ITS OWN WORK-STATE. workspace_task_update sits on the default surface
+// because the ground truth of "did I finish?" lives with the agent — extraction can
+// miss a pure confirmation turn (worth-test), but the agent always knows. Scoped to
+// status+note on task blocks; knowledge create/update/derive stay hidden. This is
+// the FIRST zombie-task defense (the pipeline's resolves-heal, twin-merge carry, and
+// sweep are the net for passive hosts where no agent maintains anything).
 const READ_TOOLS_BASE = [
   "workspace_get", "workspace_thread", "workspace_search", "workspace_filter", "workspace_tree",
   "workspace_list", "workspace_stats", "workspace_history", "workspace_find_skill",
   "workspace_onboard", "workspace_install_capture",
+  "workspace_task_update",
 ];
-// Task tools are opt-in (a host often has its own task system).
-const TASK_TOOLS = ["workspace_task_next", "workspace_task_create", "workspace_task_update"];
+// Task claiming/creation stay opt-in (a host often has its own task system).
+const TASK_TOOLS = ["workspace_task_next", "workspace_task_create"];
 
 /** Whether write/admin/maintenance tools are exposed (default off → read-only surface). */
 export function writesExposed(): boolean {

@@ -75,6 +75,18 @@ after(async () => {
   if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB);
 });
 
+describe("the default agent surface (what tools the agent actually sees)", () => {
+  test("task maintenance is ON by default; task create/claim stay opt-in; knowledge writes hidden", async () => {
+    const tools = (await client.listTools()).tools.map((t) => t.name);
+    assert.ok(tools.includes("workspace_task_update"),
+      "the ONE agent write — its own work-state — must be on the default surface");
+    assert.ok(!tools.includes("workspace_task_create"), "task creation stays opt-in (NODEDEX_EXPOSE_TASKS)");
+    assert.ok(!tools.includes("workspace_task_next"), "task claiming stays opt-in (multi-agent feature)");
+    assert.ok(!tools.includes("workspace_remember"), "knowledge writes stay hidden");
+    assert.ok(!tools.includes("workspace_update"), "knowledge updates stay hidden");
+  });
+});
+
 describe("workspace_get carries provenance to the agent", () => {
   test("surface (default) returns the verbatim source_excerpt", async () => {
     const got = await callGet({ id: blockLabel });

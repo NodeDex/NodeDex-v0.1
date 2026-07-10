@@ -10,7 +10,7 @@ Give your agent your project's **decision history**: it checks what was already 
 
 [![npm: nodedex](https://img.shields.io/npm/v/nodedex.svg?label=npm&color=cb3837)](https://www.npmjs.com/package/nodedex)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![tests: 1270 passing](https://img.shields.io/badge/tests-1270%20passing-brightgreen.svg)](#evidence-it-works)
+[![tests: 1271 passing](https://img.shields.io/badge/tests-1271%20passing-brightgreen.svg)](#evidence-it-works)
 [![status: early & solo-built](https://img.shields.io/badge/status-early%20%26%20solo--built-orange.svg)](#)
 [![MCP: stdio + HTTP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7b5cff.svg)](#connect-your-agent)
 
@@ -25,7 +25,7 @@ Give your agent your project's **decision history**: it checks what was already 
 Without NodeDex, session N+1 quietly **re-derives what session N already settled** — which approaches failed (and why), which decisions were replaced (and by what), which constraints still bind. NodeDex keeps that record in a local SQLite graph the agent navigates deliberately, session after session.
 
 > **Status — early & solo-built.** NodeDex is developed by one person and is at an early stage.
-> The engine is tested end-to-end (1270 passing tests), but it hasn't been battle-tested across
+> The engine is tested end-to-end (1271 passing tests), but it hasn't been battle-tested across
 > many machines and agents yet — **expect rough edges, and please [open an issue](https://github.com/NodeDex/NodeDex-v0.1/issues)
 > when you hit one.** Feedback at this stage is hugely valuable.
 >
@@ -124,7 +124,7 @@ The agent is stateless by default. NodeDex gives it a durable record of the proj
               ~/.nodedex/<your>.db   (SQLite WAL — local, bitemporal)
 ```
 
-- **The agent** navigates the graph with **read-only** MCP tools (`workspace_get`, `workspace_search`, `workspace_filter`, `workspace_tree`, `workspace_stats`, …). Knowledge-write tools are hidden by default; a read records usage metadata (access counts) on the block it opens — never content, links, or status.
+- **The agent** navigates the graph with **read-only** MCP tools (`workspace_get`, `workspace_search`, `workspace_filter`, `workspace_tree`, `workspace_stats`, …). Knowledge-write tools are hidden by default; a read records usage metadata (access counts) on the block it opens — never content, links, or status. The one deliberate write on the default surface: `workspace_task_update` — the agent maintains **its own task status** (only the agent knows when its work is actually finished; everything else stays the pipeline's job).
 - **The pipeline** (a server-side AI) compiles everything — facts, decisions, dead ends, insights, constraints, reasoning chains — **async**, from each captured turn. The agent never has to stop and save.
 - **Capture** wires each finished turn to the server. The path depends on the host: **Hermes / Owl** are captured by reading their own `state.db` (they ignore a model proxy); an **OpenAI-compatible host** that honors a custom base URL can route its model through NodeDex's proxy; an agent whose **loop you control** uses a small out-of-path tee (`workspace_install_capture`). NodeDex is a passive MCP server — it can't see the agent's replies on its own, so **without capture the graph stays empty** (see [Connect your agent](#connect-your-agent)).
 
@@ -513,7 +513,7 @@ decontextualized fragment.
 > skill, not the memory. Full write-up:
 > [docs/NODEDEX-MEMORY-MODEL.md](docs/NODEDEX-MEMORY-MODEL.md).
 
-Engine health: **1270/1270 server tests pass**, with extraction → graph → retrieval validated
+Engine health: **1271/1271 server tests pass**, with extraction → graph → retrieval validated
 end-to-end — including capture-loss (ack-safe watcher cursors) and the MCP read surface itself
 (what the agent receives, provenance included). Tests prove the *mechanisms* work; whether the
 memory makes *your* agent measurably better is the claim we're still validating with users.
