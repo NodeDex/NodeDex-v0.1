@@ -112,7 +112,7 @@ export async function postTrigger(target, body, timeoutMs = 5000) {
 }
 
 /**
- * Convenience: build → resolve → post. Returns a short status string (for logging only):
+ * Convenience: build → resolve → post. Returns a short status string:
  *   "captured" | "skipped:short" | "skipped:no-server" | "failed:post"
  * Never throws — capture must never affect the agent's turn.
  */
@@ -126,4 +126,16 @@ export async function captureTurn(turn) {
   } catch {
     return "failed:post";
   }
+}
+
+/**
+ * TRANSIENT capture statuses: the server wasn't reachable or rejected the POST — a later
+ * retry can succeed, so a watcher's durable cursor must NOT pass a turn that returned one
+ * of these (that's how source turns get permanently lost). Everything else is FINAL:
+ * "captured" is done, "skipped:short" is content-determined (retrying can't change it).
+ * Re-emits after a retry are safe — the server reuses the existing (agent_id, turn_number)
+ * conversation_turns row instead of duplicating.
+ */
+export function isTransientCaptureStatus(status) {
+  return status === "skipped:no-server" || status === "failed:post";
 }

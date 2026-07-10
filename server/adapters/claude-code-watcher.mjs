@@ -52,7 +52,8 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSy
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
-import { captureTurn } from "./nodedex-capture-core.mjs";
+import { pathToFileURL } from "node:url";
+import { captureTurn, isTransientCaptureStatus, resolveNodedexTarget } from "./nodedex-capture-core.mjs";
 
 const HOME = join(homedir(), ".nodedex");
 const CONFIG_FILE = join(HOME, "config.json");
@@ -193,10 +194,11 @@ async function emitTurn(fileState, filePath) {
     console.log(`  user:      ${truncate(turn.userMessage.replace(/\n/g, " ⏎ "), 160)}`);
     console.log(`  response:  ${truncate(clean(turn.agentResponse), 200)}  (${turn.agentResponse.length} ch)`);
     console.log(`  thinking:  ${truncate(turn.reasoning.replace(/\n/g, " · "), 200)}  (${turn.reasoning.length} ch)`);
-  } else {
-    const status = await captureTurn(turn);
-    console.log(`[claude-code-watcher] captured ${fileState.project}/${String(sid).slice(0, 8)}@${b.openedAt} → ${status}`);
+    return "dry-run";
   }
+  const status = await captureTurn(turn);
+  console.log(`[claude-code-watcher] captured ${fileState.project}/${String(sid).slice(0, 8)}@${b.openedAt} → ${status}`);
+  return status;
 }
 
 /** Feed one parsed JSONL line into the file's buffer. Returns "opened" when a new turn began. */
@@ -208,7 +210,14 @@ async function feedLine(fileState, filePath, lineStartOffset, j) {
     const prompt = userPromptText(j.message);
     if (prompt) {
       // A real user prompt = the boundary. Emit the buffered turn, then open a new one here.
-      if (emitReady(fileState)) await emitTurn(fileState, filePath);
+      // ACK-SAFE: a transient failure (server down / POST failed) STALLS the file — the
+      // caller rewinds to the un-captured turn's start and a later poll re-reads and
+      // re-emits it. Replay is safe: the server reuses the existing (agent_id,
+      // turn_number) row, so nothing duplicates and nothing is silently dropped.
+      if (emitReady(fileState)) {
+        const status = await emitTurn(fileState, filePath);
+        if (isTransientCaptureStatus(status)) return "stall";
+      }
       if (!fileState.buf || fileState.buf.response.length > 0 || fileState.buf.user.length === 0) {
         fileState.buf = newBuffer();
         fileState.buf.openedAt = lineStartOffset;
@@ -233,8 +242,13 @@ async function feedLine(fileState, filePath, lineStartOffset, j) {
   }
 }
 
+// While the server is unreachable, retry the stalled turn at this cadence instead of
+// every poll — bounded, visible pressure, no hot loop against a dead port.
+const STALL_RETRY_MS = 15_000;
+
 // ─── one pass over one file: read appended bytes, feed complete lines ──────────────────────────
 async function passFile(fileState, filePath, cfg) {
+  if (fileState.stallUntil && Date.now() < fileState.stallUntil) return; // server-down backoff
   const size = statSync(filePath).size;
   if (size < fileState.offset) fileState.offset = size; // truncated? resync forward-only
   if (size > fileState.offset) {
@@ -256,7 +270,17 @@ async function passFile(fileState, filePath, cfg) {
         const lineBytes = Buffer.byteLength(line, "utf8") + 1;
         if (line.trim()) {
           let j = null; try { j = JSON.parse(line); } catch { /* garbled line → skip */ }
-          if (j) await feedLine(fileState, filePath, lineStart, j);
+          if (j && (await feedLine(fileState, filePath, lineStart, j)) === "stall") {
+            // ACK-SAFE REWIND: the buffered turn could not be delivered. Reset the file
+            // offset to that turn's opening line — the next attempt re-reads the same
+            // bytes and re-assembles it deterministically. No in-memory retry queue to
+            // grow unbounded, and the persisted cursor (pendingStart) never passed the
+            // turn, so a restart replays it identically.
+            fileState.offset = fileState.pendingStart;
+            fileState.buf = newBuffer();
+            fileState.stallUntil = Date.now() + STALL_RETRY_MS;
+            return;
+          }
         }
         lineStart += lineBytes;
         consumed += lineBytes;
@@ -267,7 +291,12 @@ async function passFile(fileState, filePath, cfg) {
     } finally { closeSync(fd); }
   } else if (emitReady(fileState) && Date.now() - fileState.lastGrowth > cfg.idleFlushMs) {
     // idle flush: the session went quiet with a complete turn buffered (the session's last turn)
-    await emitTurn(fileState, filePath);
+    const status = await emitTurn(fileState, filePath);
+    if (isTransientCaptureStatus(status)) {
+      // keep the buffered turn intact — cursor unmoved, a later poll re-emits it
+      fileState.stallUntil = Date.now() + STALL_RETRY_MS;
+      return;
+    }
     fileState.buf = newBuffer();
     fileState.pendingStart = fileState.offset;
   }
@@ -299,7 +328,7 @@ async function pass(cfg) {
           console.log(`[claude-code-watcher] ${basename(filePath)}: --last ${LAST} → starting at byte ${startAt}`);
         } else if (BACKFILL) startAt = 0;
         else startAt = persisted?.offset ?? statSync(filePath).size;
-        fs_ = { offset: startAt, pendingStart: startAt, buf: newBuffer(), lastGrowth: Date.now(), sessionId: null, project: dir.name };
+        fs_ = { offset: startAt, pendingStart: startAt, buf: newBuffer(), lastGrowth: Date.now(), sessionId: null, project: dir.name, stallUntil: 0 };
         state.set(filePath, fs_);
       }
       try { await passFile(fs_, filePath, cfg); } catch (e) { console.error(`[claude-code-watcher] ${basename(filePath)}: ${e?.message ?? e}`); }
@@ -317,6 +346,12 @@ async function main() {
   const boot = loadCaptureConfig();
   console.log(`[claude-code-watcher] ${DRY_RUN ? "DRY-RUN " : ""}watching ${boot.projectsDir}`);
   console.log(`[claude-code-watcher] projects=${boot.allowAll ? "* (all)" : boot.projects.join(",")}  poll=${boot.pollMs}ms${BACKFILL ? "  (backfill)" : ""}`);
+  // Report the RESOLVED capture destination, not just "started" — a watcher that starts
+  // fine but captures nowhere (no env, no tui-session.json) was invisible before this line.
+  const target = resolveNodedexTarget();
+  console.log(target
+    ? `[claude-code-watcher] capture target: ${target.url}`
+    : `[claude-code-watcher] NO capture target yet (no NODEDEX_CAPTURE_URL, no tui-session.json) — turns are held and retried, not lost`);
   let warnedMissing = false;
   do {
     const cfg = loadCaptureConfig();
@@ -333,4 +368,12 @@ async function main() {
   } while (true);
 }
 
-main().catch((e) => { console.error(`[claude-code-watcher] fatal: ${e?.message ?? e}`); process.exit(1); });
+// Poll only when executed directly (`node claude-code-watcher.mjs`) — tests import
+// passFile/newBuffer below without starting a watcher.
+const isDirectRun = (() => {
+  try { return process.argv[1] ? pathToFileURL(process.argv[1]).href === import.meta.url : false; }
+  catch { return false; }
+})();
+if (isDirectRun) main().catch((e) => { console.error(`[claude-code-watcher] fatal: ${e?.message ?? e}`); process.exit(1); });
+
+export { passFile, newBuffer }; // for testing (watcher-cursor.test.mjs)

@@ -43,8 +43,8 @@ import { createRequire } from "node:module";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join, resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { captureTurn } from "./nodedex-capture-core.mjs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { captureTurn, isTransientCaptureStatus, resolveNodedexTarget } from "./nodedex-capture-core.mjs";
 
 // better-sqlite3 lives in server/node_modules; resolve it relative to THIS file so the watcher
 // runs from any cwd (TUI spawns it with cwd=server, but a manual run shouldn't have to).
@@ -177,6 +177,15 @@ async function pass(cfg, cursor) {
         } else {
           const status = await captureTurn(turn);
           console.log(`[hermes-watcher] captured stop_id=${stop.id} session=${String(sid).slice(0, 15)} → ${status}`);
+          // ACK-SAFE cursor: a transient failure (server down / POST failed) must not be
+          // passed — end this pass with the cursor at the last ACKED stop and let the next
+          // poll retry from there, in order. Re-emits are safe (server reuses the existing
+          // (agent_id, turn_number) row). Deterministic outcomes (captured, skipped:short,
+          // privacy skip, orphan turn) advance — retrying cannot change them.
+          if (isTransientCaptureStatus(status)) {
+            console.log(`[hermes-watcher] holding cursor at ${lastStopId} — retrying next poll`);
+            return lastStopId;
+          }
         }
       }
       lastStopId = stop.id;
@@ -192,6 +201,12 @@ async function main() {
   const boot = loadCaptureConfig();
   console.log(`[hermes-watcher] ${DRY_RUN ? "DRY-RUN " : ""}watching ${boot.stateDbPath}`);
   console.log(`[hermes-watcher] sources=${boot.allowAll ? "* (all)" : boot.sources.join(",")}  poll=${boot.pollMs}ms${BACKFILL ? "  (backfill)" : ""}`);
+  // Report the RESOLVED capture destination, not just "started" — a watcher that starts
+  // fine but captures nowhere (no env, no tui-session.json) was invisible before this line.
+  const target = resolveNodedexTarget();
+  console.log(target
+    ? `[hermes-watcher] capture target: ${target.url}`
+    : `[hermes-watcher] NO capture target yet (no NODEDEX_CAPTURE_URL, no tui-session.json) — turns are held and retried, not lost`);
 
   // --backfill starts at 0; else the persisted cursor wins. If neither, DEFER picking the start
   // point until state.db first appears, then start forward-only (current max stop-id). This lets a
@@ -229,6 +244,12 @@ async function main() {
   } while (!ONCE);
 }
 
-main().catch((e) => { console.error(`[hermes-watcher] fatal: ${e?.message ?? e}`); process.exit(1); });
+// Poll only when executed directly (`node hermes-statedb-watcher.mjs`) — the test-only
+// exports below must be importable without starting a watcher.
+const isDirectRun = (() => {
+  try { return process.argv[1] ? pathToFileURL(process.argv[1]).href === import.meta.url : false; }
+  catch { return false; }
+})();
+if (isDirectRun) main().catch((e) => { console.error(`[hermes-watcher] fatal: ${e?.message ?? e}`); process.exit(1); });
 
 export { assembleTurn, sourceAllowed, loadCaptureConfig }; // for testing
