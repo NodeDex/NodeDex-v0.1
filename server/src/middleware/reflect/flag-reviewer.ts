@@ -426,6 +426,19 @@ export async function runFlagReviewerTick(
   let unpricedHit = false;
 
   for (const flag of pending) {
+    // resolution_pending is a REALITY judgment (did later work actually complete this
+    // open item?) — the dup-reviewer has no basis to decide it. The sweep normally
+    // writes these already routed (pending_clarification, excluded from this queue);
+    // this branch is the defensive net for any writer that forgets: route to the
+    // agent/user, never auto-judge, never mark reviewed.
+    if (flag.flag_type === 'resolution_pending') {
+      markFlagPendingClarification(rawDb, {
+        flag_id: flag.id,
+        reason: "resolution is a reality judgment — agent/user confirms, never auto-closed",
+      });
+      continue;
+    }
+
     // Deferral: island_candidate + entity_unresolved don't fit merge/leave/split
     // cleanly — design §2.4 + §7 mark Sub-step 2.6 as the optional reviewer for
     // these. For now: write 'leave' + a deferral reason so they don't re-block

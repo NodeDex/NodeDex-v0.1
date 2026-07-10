@@ -34,6 +34,7 @@ import { getLLMProvider } from "../../engine/providers/index.js";
 import { runArcEntityResolve } from "./arc-entity-resolve.js";
 import { pipelineV2Enabled, v2LazyCaptureEnabled, arcMaxRetries } from "./comprehend.js";
 import { runComprehendFrontHalf } from "./v2-integrate.js";
+import { applyResolvesStatusEffects } from "./resolution-heal.js";
 import { isInsufficientCreditError } from "../../engine/providers/failure-policy.js";
 import { writeSpendPauseFile, creditExhausted } from "./cost-guard.js";
 import { setSpendPaused } from "../../routes/state.js";
@@ -408,6 +409,20 @@ export async function runArcExtraction(
       console.error(`[arc-extract] back-half STILL incomplete after ${maxBack} retr(ies) (resumeFrom=${reflectResult.checkpoint.resumeFrom}) — failing clean, turns left re-extractable`);
       return failClean('pipeline_incomplete', `Pass 3 incomplete after ${maxBack + 1} attempt(s) — turns left re-extractable`);
     }
+  }
+
+  // 4b. Resolution self-heal (Fix 2, 2026-07-10): apply every `resolves` edge whose
+  //     target is an open task/blueprint → unique.status 'done'. Runs on the WHOLE
+  //     graph (idempotent, edges are rare) so it catches resolves written by any of
+  //     this run's writers — comprehend link-intent, Pass 4, cross-group. Best-effort:
+  //     a heal failure must never fail an otherwise-committed extraction.
+  try {
+    const heal = applyResolvesStatusEffects(db);
+    if (heal.flipped.length > 0) {
+      console.log(`[arc-extract] resolution-heal: ${heal.flipped.length} open item(s) closed by resolves edges`);
+    }
+  } catch (e: any) {
+    console.warn(`[arc-extract] resolution-heal skipped: ${e?.message ?? e}`);
   }
 
   // 5. Pipeline succeeded — record the extraction event and flip turn statuses.

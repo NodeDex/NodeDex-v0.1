@@ -14,6 +14,7 @@ import { runPass2Split, type Pass2SplitResult } from "./pass2-split-orchestrator
 import { buildCostBreakdown } from "./cost-breakdown.js";
 import { callPassJudgeLLM, applyJudgeVerdicts, type PassJudgeVerdict } from "./pass_judge.js";
 import { validateUniqueSchema, schemaMismatchReason, demoteForSave } from "./schema-validator.js";
+import { normalizeWorkStatus } from "./resolution-heal.js";
 import { callPass3LLM } from "./pass3.js";
 import { callPass3Batched } from "./pass3-batch.js";
 import { applyArcEntityCanonicalNames } from "./arc-entity-resolve.js";
@@ -2083,6 +2084,20 @@ export async function runAutoReflect(
       // excerpt empty → createBlock writes NULL → dedup logic (D2) treats
       // NULL as "pre-Debt-5 atomic" / no-pin and falls through to label dedup.
       const blockSourceExcerpt = blockDef.from_item_id ? sourceExcerptMap.get(blockDef.from_item_id as string) : undefined;
+
+      // Fix 2 (2026-07-10): work-status vocabulary gate. Extraction wrote free text
+      // into task/blueprint unique.status ("REQUIRED", whole sentences) — nothing
+      // downstream could ever match it against open|in_progress|done, so items looked
+      // permanently open. Normalize at save; unrecognized text is preserved in
+      // has.status_note (never silently destroyed).
+      const savedType = blockDef.is_a || "note";
+      if ((savedType === "task" || savedType === "blueprint") && blockDef.unique && "status" in blockDef.unique) {
+        const norm = normalizeWorkStatus((blockDef.unique as Record<string, unknown>).status);
+        (blockDef.unique as Record<string, unknown>).status = norm.status;
+        if (norm.note && norm.note.toLowerCase() !== norm.status) {
+          blockDef.has = { ...(blockDef.has ?? {}), status_note: norm.note };
+        }
+      }
 
       const created = db.createBlock({
         label: blockDef.label,

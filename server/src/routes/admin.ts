@@ -14,6 +14,7 @@ import { performBackup } from "../store/backup.js";
 import { runProvenanceCheck } from "../middleware/reflect/provenance-check.js";
 import { healSchemaDemotes } from "../middleware/reflect/schema-heal.js";
 import { pruneCollapsedTypes } from "../middleware/reflect/prune-collapsed-types.js";
+import { sweepUnresolvedTasks } from "../middleware/reflect/resolution-heal.js";
 
 // ─── .env helpers ─────────────────────────────────────────────────────────────
 // Env-file LOCATION + parsing + the serializeEnvFile write-side all live in
@@ -220,6 +221,24 @@ export function createAdminRouter(
   router.post("/api/admin/prune-collapsed-types", (_req, res) => {
     try {
       res.json(pruneCollapsedTypes(db));
+    } catch (e) { res.status(500).json({ error: String(e) }); }
+  });
+
+  // ─── Admin: resolution sweep (Fix 2's one-time retro half) ──────────────────
+  // For every OPEN task/blueprint with a newer completion-shaped neighbor, emit a
+  // `resolution_pending` flag routed to the agent/user — NEVER auto-close (wrong
+  // auto-close is worse than a zombie; the resolves-edge path is the only
+  // auto-closer, and only because the LLM explicitly asserted the completion).
+  // Defaults to dry_run:true — pass {"dry_run":false} to write flags. $0, idempotent
+  // (one unreviewed flag per item), through the server's single connection (safe
+  // live). exclude_labels protects experiment fixtures from being flagged.
+  router.post("/api/maintenance/resolution-sweep", (req, res) => {
+    try {
+      const body = (req.body ?? {}) as { dry_run?: boolean; exclude_labels?: string[] };
+      res.json(sweepUnresolvedTasks(db, {
+        dry_run: body.dry_run !== false,
+        exclude_labels: Array.isArray(body.exclude_labels) ? body.exclude_labels.map(String) : [],
+      }));
     } catch (e) { res.status(500).json({ error: String(e) }); }
   });
 

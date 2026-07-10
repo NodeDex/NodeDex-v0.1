@@ -181,6 +181,12 @@ export type PipelineFlagType =
                                  //   async reviewer ACTS (merge/leave). Judged WITH
                                  //   conversation context, unlike AUDIT's blind scan.
   | 'entity_unresolved'          // Stage C (Sub-step 1.2): anaphora couldn't decide
+  | 'resolution_pending'         // Fix 2 sweep (resolution-heal.ts): an OPEN task/
+                                 //   blueprint has a newer completion-shaped neighbor —
+                                 //   "did that work resolve it?" Routed straight to the
+                                 //   agent/user (pending_clarification): resolution is a
+                                 //   reality judgment, never auto-closed, never judged
+                                 //   by the autonomous dup-reviewer.
   | 'provenance_mismatch';       // Gap ④(a) provenance check: a block's source_excerpt
                                  //   does NOT appear in its source transcript. severity
                                  //   'missing' = likely fabricated quote; 'fuzzy' =
@@ -195,6 +201,7 @@ export type PipelineFlagWriter =
   | 'stage_flag_dedup'           // Sub-step 1.4 — atomic_dup_candidate
   | 'stage_audit_islands'        // Slice 2.3 — island_candidate
   | 'stage_audit_scope'          // Slice 2.3 — scope_disagreement
+  | 'resolution_sweep'           // Fix 2 retro sweep — resolution_pending
   | 'stage_audit_project_dup'    // Slice 2.3 — project_dup_candidate (one writer
                                  //   per flag_type keeps Rule 5 producers disjoint)
   | 'stage_audit_block_dup'      // Periodic AUDIT scan — block_dup_candidate

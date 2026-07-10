@@ -665,7 +665,8 @@ type whose MEANING matches:
   based_on     — from is a conclusion grounded in to (evidence)
   extends      — from is a more specific case of to (broader)
   supersedes   — from replaces an earlier to
-  resolves     — from answers the open question to
+  resolves     — from answers the open question to, OR completes the open task /
+                 executes the blueprint to (work that finishes what to called for)
   supports     — from is evidence for the proposal to
   contradicts  — from and to conflict
   related_to   — from and to are associated, with no sharper relationship
@@ -685,7 +686,10 @@ before, not only its evidence:
     never leave a superseded block standing as if nothing replaced it;
   - what TRIGGERED it: the event, failure, or need it arose as a consequence of
     (prompted_by);
-  - the open QUESTION it answers (resolves).
+  - the open item it CLOSES: the question it answers, or the task/blueprint this
+    work completes (resolves). When the turn reports finishing something an open
+    item called for, the link is resolves — NOT a bare based_on/related_to; a
+    completion wired only as based_on leaves the item looking forever open.
 The trap to avoid, for ANY block type: a block that REPLACED or was TRIGGERED BY
 another, but is wired only to its supporting evidence, leaves that other block
 ORPHANED — you recorded why it is justified but dropped what it displaced or
