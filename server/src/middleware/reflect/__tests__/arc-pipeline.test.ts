@@ -273,6 +273,31 @@ describe("Phase 8: runArcExtraction guards (idempotency + rate-limit + min-range
     assert.equal(r.status, "no_turns", "distinct from min_range — caller learns 'nothing captured yet'");
   });
 
+  test("NODEDEX_ARC_MAX_TURNS clamps the range to the OLDEST N turns (watermark shrinks too)", async () => {
+    // Model-floor guard: arc survival on a weak model ≈ per-call success ^ n_calls,
+    // so a capped model must never be handed a whole-backlog arc. The clamp takes the
+    // oldest N and the recorded end_turn must shrink to the last CONSUMED turn —
+    // otherwise the range/watermark would claim turns the arc never touched.
+    _resetArcGuardsForTests();
+    seedAgent("agent_clamp", 6);
+    const saved = process.env.NODEDEX_ARC_MAX_TURNS;
+    process.env.NODEDEX_ARC_MAX_TURNS = "2";
+    try {
+      const r = await runArcExtraction(db, {
+        agent_id: "agent_clamp",
+        trigger_source: "api",
+      });
+      // No LLM in tests → pipeline fails AFTER the guards; the clamp is visible in
+      // the reported range + consumed count regardless of the downstream failure.
+      assert.equal(r.turns_consumed, 2, "only the clamped slice is consumed");
+      assert.equal(r.start_turn, 1, "clamp keeps the OLDEST turns (walks the backlog forward)");
+      assert.equal(r.end_turn, 2, "watermark shrinks to the last consumed turn");
+    } finally {
+      if (saved === undefined) delete process.env.NODEDEX_ARC_MAX_TURNS;
+      else process.env.NODEDEX_ARC_MAX_TURNS = saved;
+    }
+  });
+
   test("min-range guard: re_extract=true BYPASSES min-range check (single turn allowed)", async () => {
     _resetArcGuardsForTests();
     seedAgent("agent_p8_reextract_single", 1);

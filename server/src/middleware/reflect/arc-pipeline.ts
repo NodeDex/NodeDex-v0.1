@@ -179,7 +179,7 @@ export async function runArcExtraction(
     };
   }
   const startTurn = opts.start_turn ?? candidatesAll[0]!.turn_number;
-  const endTurn   = opts.end_turn   ?? candidatesAll[candidatesAll.length - 1]!.turn_number;
+  let endTurn     = opts.end_turn   ?? candidatesAll[candidatesAll.length - 1]!.turn_number;
 
   // Re-read with the explicit range bounds (in case caller scoped tighter than 'all').
   let turnsInRange = db.listConversationTurnsByAgent(opts.agent_id, {
@@ -189,6 +189,23 @@ export async function runArcExtraction(
   });
   if (turnsInRange.length === 0) {
     return { range_id: null, turns_consumed: 0, status: 'no_turns', reflect_result: null, start_turn: startTurn, end_turn: endTurn };
+  }
+
+  // ── Model-floor guard: arc size cap (opt-in) ────────────────────────────────
+  // NODEDEX_ARC_MAX_TURNS=N clamps EVERY arc to the OLDEST N turns of its range —
+  // repeated triggers then walk the backlog forward chunk by chunk. Exists because
+  // arc survival on a weak model ≈ per-call success ^ n_calls: a 15-turn dev arc on
+  // a free model died 3/3 attempts while 2-turn slices of the SAME content landed
+  // (observed live 2026-07-10). Whole-range comprehension links better — when the
+  // model survives it; set this only for below-floor models (free/local), leave
+  // unset for flash-lite-class. Deliberately clamps EXPLICIT ranges too: the cap is
+  // a statement about the MODEL's capacity, not the caller's intent. endTurn shrinks
+  // with the clamp so the recorded range/watermark only covers consumed turns.
+  const maxArcTurns = Number(process.env.NODEDEX_ARC_MAX_TURNS ?? 0);
+  if (Number.isFinite(maxArcTurns) && maxArcTurns >= 2 && turnsInRange.length > maxArcTurns) {
+    turnsInRange = turnsInRange.slice(0, maxArcTurns);
+    endTurn = turnsInRange[turnsInRange.length - 1]!.turn_number;
+    console.log(`[arc-extract] range clamped to oldest ${maxArcTurns} turn(s) (NODEDEX_ARC_MAX_TURNS) — the rest extracts on later triggers`);
   }
 
   // ── Phase 8 guard 3: minimum range size ────────────────────────────────────
