@@ -103,11 +103,28 @@ function blockDupEmbedEnabled(): boolean {
 }
 function blockDupEmbedMin(): number {
   const v = parseFloat(process.env.NODEDEX_BLOCK_DUP_EMBED_MIN ?? "");
-  // Default 0.80: a real reworded restatement scored cosine 0.840 on live extraction
-  // (label+essence+concepts vector), while genuinely-different same-type claims sat at
-  // <=0.684 (worth-watch test, 2026-06-08) — a wide gap, so 0.80 catches drift with
-  // margin and false-flags nothing. Recall-biased on purpose: a false flag is filtered
-  // by the reviewer (cheap), a missed dup persists forever (expensive). Env-tunable.
+  // Default 0.78 (was 0.80; recalibrated 2026-07-11 on BOTH graphs — never tune on one).
+  // The 07-10 whole-graph audit's labeled paraphrase clusters (value-proposition,
+  // competitor-comparison, the reworded wake-decision pair) all scored 0.79-0.799 —
+  // just UNDER the old bar, which is exactly why they persisted. Measured cost of
+  // 0.78: +63 candidate pairs across DogfoodDemo+HermesTestextraction (tolerable
+  // one-time reviewer drain). 0.76 and below floods with genuinely-different claims
+  // ("session-1-complete" vs "session-2-complete" sits at 0.796 — the reviewer is the
+  // precision arm for that band; below 0.78 the false share dominates). Cluster pairs
+  // under ~0.70 are beyond bge-small's resolution — not chased (per the fix plan).
+  return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.78;
+}
+
+/** Cross-type twin fence (Fix 3b, 2026-07-11): fact↔insight ONLY, at a HIGHER bar.
+ *  The same-type gate made cross-type twins INVISIBLE — live example: the hard-zero
+ *  finding stored as BOTH a fact and an insight (cosine 0.970, never compared).
+ *  Weak models routinely emit the same claim in two epistemic wrappers; 0.80 keeps
+ *  the fence tight (both graphs' cross-type pairs at ≥0.80 read as genuine twins;
+ *  the labeled pair sits at 0.93-0.97). Other type pairs stay fenced — "different
+ *  types are almost never duplicates" still holds outside this one wrapper split. */
+const CROSS_TYPE_DUP_PAIRS = new Set(["fact|insight", "insight|fact"]);
+function blockDupCrossMin(): number {
+  const v = parseFloat(process.env.NODEDEX_BLOCK_DUP_CROSS_MIN ?? "");
   return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.80;
 }
 
@@ -228,8 +245,10 @@ export interface BlockDupJudgeOpts {
   claimMin: number;
   /** Whether the embedding-recall (drift) branch is active. */
   embedOn: boolean;
-  /** Min cosine for the embedding-recall branch (applied to SAME-TYPE pairs only). */
+  /** Min cosine for the embedding-recall branch on SAME-TYPE pairs. */
   embedMin: number;
+  /** Min cosine for the fact↔insight cross-type twin fence (higher bar than embedMin). */
+  crossMin: number;
 }
 
 export type BlockDupSignal = 'primary_value_exact' | 'primary_value_overlap' | 'essence_embedding';
@@ -252,7 +271,7 @@ export interface BlockDupVerdict {
  *  AUDIT uses, so the inline recognize-before-write path can never drift apart
  *  from the AUDIT scan. */
 export function blockDupJudgeOpts(): BlockDupJudgeOpts {
-  return { claimMin: blockDupClaimMin(), embedOn: blockDupEmbedEnabled(), embedMin: blockDupEmbedMin() };
+  return { claimMin: blockDupClaimMin(), embedOn: blockDupEmbedEnabled(), embedMin: blockDupEmbedMin(), crossMin: blockDupCrossMin() };
 }
 
 /**
@@ -286,9 +305,14 @@ export function judgeBlockDupPair(a: AuditBlock, b: AuditBlock, opts: BlockDupJu
   // Exact-identity (sameIdentity) stays type-agnostic: an identical primary_value is a
   // strong enough signal to flag regardless of type.
   const byClaim = claimTokens >= opts.claimMin && a.type === b.type;
-  const embedSim = (opts.embedOn && a.type === b.type && a.embedding && b.embedding)
+  // Embedding branch: same-type pairs at embedMin, plus the ONE sanctioned cross-type
+  // fence — fact↔insight at the higher crossMin bar (the same claim in two epistemic
+  // wrappers; every other cross-type pair stays invisible to this signal by design).
+  const sameType = a.type === b.type;
+  const crossPair = CROSS_TYPE_DUP_PAIRS.has(`${a.type}|${b.type}`);
+  const embedSim = (opts.embedOn && (sameType || crossPair) && a.embedding && b.embedding)
     ? cosineSim(a.embedding, b.embedding) : 0;
-  const byEmbedding = embedSim >= opts.embedMin && embedSim > 0;
+  const byEmbedding = embedSim > 0 && embedSim >= (sameType ? opts.embedMin : opts.crossMin);
   const isCandidate = sameIdentity || byClaim || byEmbedding;
   const signal: BlockDupSignal | null = !isCandidate ? null
     : sameIdentity ? 'primary_value_exact'
@@ -396,6 +420,7 @@ export function runStageAuditTick(opts: RunStageAuditOpts): StageAuditTickResult
   const blockDupOn = blockDupDetectEnabled();
   const blockDupEmbedOn = blockDupEmbedEnabled();
   const embedMin = blockDupEmbedMin();
+  const crossMin = blockDupCrossMin();
   const blockDupClaim = blockDupClaimMin();
   const n = blocks.length;
   const start = Math.min(opts.startOffset ?? 0, Math.max(0, n - 1));
@@ -503,7 +528,7 @@ export function runStageAuditTick(opts: RunStageAuditOpts): StageAuditTickResult
           // (cross-scope = scope_disagreement, handled above); identity is unique{}
           // primary_value, NOT essence (essence carries topic and over-flags). The
           // reviewer is the precision judge, so this stays recall-tuned.
-          const v = judgeBlockDupPair(a, b, { claimMin: blockDupClaim, embedOn: blockDupEmbedOn, embedMin });
+          const v = judgeBlockDupPair(a, b, { claimMin: blockDupClaim, embedOn: blockDupEmbedOn, embedMin, crossMin });
           if (v.isCandidate && !hasSupersedesBetween(raw, a.id, b.id)) {
             if (flagAlreadyExists(raw, 'block_dup_candidate', a.id, b.id)) {
               result.flags_skipped_already_pending += 1;

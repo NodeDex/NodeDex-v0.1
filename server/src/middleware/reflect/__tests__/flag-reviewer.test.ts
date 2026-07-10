@@ -583,6 +583,36 @@ describe("executeMerge — relation rewire", () => {
     assert.equal(executeMerge(db, b.id, b.id), "none");
   });
 
+  test("STATUS CARRY-FORWARD (Fix 3): merging a done twin into an open task carries done onto the survivor", () => {
+    // The live 07-10 shape: "task X (open)" + twin "task X marked complete (done)". If the
+    // reviewer picks the older/richer OPEN block as winner, archiving the done twin must
+    // not archive the completion — the survivor carries the most-advanced status.
+    const winner = mkBlock("cf_task_open", { type: "task", content: { unique: { status: "open", description: "wire the alert" } } });
+    const loser = mkBlock("cf_task_done-twin", { type: "task", content: { unique: { status: "done", description: "alert wired" } } });
+    const action = executeMerge(db, winner.id, loser.id);
+    assert.equal(action, "archived_loser_and_wired_superseded_by");
+    const c = JSON.parse(String(db.getBlock(winner.id)!.content));
+    assert.equal(c.unique.status, "done", "survivor carries the completed state");
+    assert.equal(c.has.status_carried_from, "cf_task_done-twin", "audit back-pointer to the twin");
+  });
+
+  test("carry-forward is one-directional: an open loser never downgrades a done winner", () => {
+    const winner = mkBlock("cf_task_already-done", { type: "task", content: { unique: { status: "done", description: "x" } } });
+    const loser = mkBlock("cf_task_stale-open", { type: "task", content: { unique: { status: "open", description: "x" } } });
+    executeMerge(db, winner.id, loser.id);
+    const c = JSON.parse(String(db.getBlock(winner.id)!.content));
+    assert.equal(c.unique.status, "done", "done never regresses");
+    assert.equal(c.has?.status_carried_from, undefined, "no carry happened");
+  });
+
+  test("carry-forward ignores non-stateful and cross-type merges", () => {
+    const factWinner = mkBlock("cf_fact_a", { type: "fact", content: { unique: { value: "v" } } });
+    const factLoser = mkBlock("cf_fact_b", { type: "fact", content: { unique: { value: "v2", status: "done" } } });
+    executeMerge(db, factWinner.id, factLoser.id);
+    const c = JSON.parse(String(db.getBlock(factWinner.id)!.content));
+    assert.equal(c.unique.status, undefined, "facts carry no work status — untouched");
+  });
+
   test("loser already linked to winner → no winner→winner self-loop", () => {
     const winner = mkBlock("sl_winner");
     const loser  = mkBlock("sl_loser");

@@ -46,6 +46,7 @@ import type {
   ReviewerConfidence,
 } from "./types.js";
 import { getPendingFlags, markFlagReviewed, markFlagPendingClarification } from "./pipeline-flags.js";
+import { normalizeWorkStatus } from "./resolution-heal.js";
 import { extractPrimaryValueFromUnique } from "./dedup-by-source-and-value.js";
 import { reflectTokenStats } from "./context.js";
 import { getThinkingBudget, modelOverride, intFromEnv } from "./config.js";
@@ -369,6 +370,18 @@ export function executeMerge(
     console.warn(`[flag-reviewer] merge skipped — one of winner=${winnerBlockId} loser=${loserBlockId} not found`);
     return 'none';
   }
+  // STATUS CARRY-FORWARD (Fix 3, 2026-07-11 — "update, don't dup"): when two STATEFUL
+  // twins merge (task/blueprint, same type), the surviving block must carry the most-
+  // ADVANCED work status of the pair. Without this, merging the "marked complete" twin
+  // into the older open task archives the completion and the survivor still reads
+  // open — the merge itself would re-create the zombie it was collapsing. Runs before
+  // the archive so both contents read live; mechanical, history-stamped, best-effort.
+  try {
+    carryForwardWorkStatus(db, winnerBlockId, loserBlockId);
+  } catch (e: any) {
+    console.warn(`[flag-reviewer] status carry-forward failed (merge proceeds): ${e?.message ?? e}`);
+  }
+
   // Collapse the duplicate: archive the loser regardless of block type. The
   // supersedes edge above is the durable audit pointer (winner supersedes
   // loser); this archive is what actually de-duplicates the graph.
@@ -379,6 +392,34 @@ export function executeMerge(
     return 'none';
   }
   return 'archived_loser_and_wired_superseded_by';
+}
+
+/** The most-advanced work status of a merging stateful pair survives. Exported for
+ *  tests; called only from executeMerge. done > in_progress > open. */
+export function carryForwardWorkStatus(db: WorkspaceDB, winnerId: string, loserId: string): boolean {
+  const STATEFUL = new Set(["task", "blueprint"]);
+  const RANK: Record<string, number> = { open: 0, in_progress: 1, done: 2 };
+  const winner = db.getBlock(winnerId);
+  const loser = db.getBlock(loserId);
+  if (!winner || !loser || winner.type !== loser.type || !STATEFUL.has(winner.type)) return false;
+
+  const parse = (raw: unknown): Record<string, any> => { try { return JSON.parse(String(raw ?? "{}")) ?? {}; } catch { return {}; } };
+  const wc = parse(winner.content);
+  const lc = parse(loser.content);
+  const wStatus = normalizeWorkStatus((wc.unique ?? {}).status).status;
+  const lStatus = normalizeWorkStatus((lc.unique ?? {}).status).status;
+  if (RANK[lStatus]! <= RANK[wStatus]!) return false; // winner already as/more advanced
+
+  wc.unique = { ...(wc.unique ?? {}), status: lStatus };
+  wc.has = { ...(wc.has ?? {}), status_carried_from: loser.label };
+  db.updateBlock(
+    winnerId,
+    { content: wc },
+    `status → ${lStatus}: carried from merged twin "${loser.label}"`,
+    "flag-reviewer-merge",
+  );
+  console.log(`[flag-reviewer] merge carried status "${lStatus}" from twin "${loser.label}" onto "${winner.label}"`);
+  return true;
 }
 
 // ─── Per-tick orchestrator ─────────────────────────────────────────────────────

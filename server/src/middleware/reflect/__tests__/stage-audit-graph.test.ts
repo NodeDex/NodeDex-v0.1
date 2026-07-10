@@ -147,7 +147,7 @@ describe("judgeBlockDupPair (shared recall judge)", () => {
     concepts: [], project_id: "p1", source_excerpt: null,
     primary_value: "", essence: "", embedding: null, ...over,
   });
-  const OPTS: BlockDupJudgeOpts = { claimMin: 3, embedOn: true, embedMin: 0.80 };
+  const OPTS: BlockDupJudgeOpts = { claimMin: 3, embedOn: true, embedMin: 0.78, crossMin: 0.80 };
 
   test("exact primary_value, same scope → candidate (primary_value_exact)", () => {
     const a = blk({ id: "a", primary_value: "fixed window" });
@@ -173,6 +173,41 @@ describe("judgeBlockDupPair (shared recall judge)", () => {
     const b = blk({ id: "b", type: "blueprint", primary_value: "sliding window logging algorithm" });
     const v = judgeBlockDupPair(a, b, OPTS);
     assert.equal(v.isCandidate, false);
+  });
+
+  test("fact↔insight twin at ≥crossMin → candidate (Fix 3b fence — the invisible-twin fix)", () => {
+    // The live example: the same finding stored as BOTH a fact and an insight
+    // (hard-zero-freezes-tilted, cosine 0.970) — never compared under the same-type gate.
+    const a = blk({ id: "a", type: "fact", primary_value: "hard zero freezes tilted blocks", embedding: [1, 1, 0] });
+    const b = blk({ id: "b", type: "insight", primary_value: "hardzero freezes tilt", embedding: [1, 1, 0.05] });
+    const v = judgeBlockDupPair(a, b, OPTS);
+    assert.equal(v.isCandidate, true);
+    assert.equal(v.signal, "essence_embedding");
+  });
+
+  test("fact↔insight below crossMin → NOT a candidate (the higher bar holds)", () => {
+    // cosine([1,0,0],[1,0.9,0]) ≈ 0.743 — above the same-type 0.78? no; and below cross 0.80 either way.
+    const a = blk({ id: "a", type: "fact", primary_value: "x", embedding: [1, 0, 0] });
+    const b = blk({ id: "b", type: "insight", primary_value: "y", embedding: [1, 0.9, 0] });
+    const v = judgeBlockDupPair(a, b, OPTS);
+    assert.equal(v.isCandidate, false);
+  });
+
+  test("other cross-type pairs stay fenced even at cosine ~1.0 (fence is fact↔insight ONLY)", () => {
+    const a = blk({ id: "a", type: "fact", primary_value: "same claim", embedding: [1, 1, 0] });
+    const b = blk({ id: "b", type: "decision", primary_value: "same claim reworded", embedding: [1, 1, 0] });
+    const v = judgeBlockDupPair(a, b, OPTS);
+    assert.equal(v.isCandidate, false, "fact↔decision must not enter via the embedding fence");
+  });
+
+  test("same-type in the recalibrated band [0.78, 0.80) → candidate now (catches the labeled clusters)", () => {
+    // Exact construction: cos([1,0], [0.79, 0.6131]) = 0.79 — the band the 07-10 audit's
+    // paraphrase clusters actually live in (0.79-0.799), invisible under the old 0.80 bar.
+    const a = blk({ id: "a", type: "fact", primary_value: "nav cost claim", embedding: [1, 0] });
+    const b = blk({ id: "b", type: "fact", primary_value: "navigation cost restated", embedding: [0.79, 0.6131] });
+    const v = judgeBlockDupPair(a, b, OPTS);
+    assert.equal(v.isCandidate, true, "pairs under the OLD 0.80 bar but over 0.78 must now flag");
+    assert.ok(v.embedSim < 0.80 && v.embedSim >= 0.78, `sim ${v.embedSim.toFixed(4)} must sit INSIDE the recalibrated band`);
   });
 
   test("drift: different wording, same-type, high cosine → candidate (essence_embedding)", () => {
