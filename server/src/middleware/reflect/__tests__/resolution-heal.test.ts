@@ -192,6 +192,23 @@ describe("sweepUnresolvedTasks — the low-confidence half (flags, never closes)
     assert.equal(getFlagsForBlock(rawDb, zombie.id).length, 1, "no flag stacking");
   });
 
+  test("supersede-twin (observed live 07-10): an open task with an incoming supersedes edge is flagged", () => {
+    const oldTask = db.createBlock({
+      label: "sweep_task_superseded-open", type: "task", essence: "add the export alert",
+      content: { unique: { status: "open", description: "add it" } }, ttl: "permanent", status: "active",
+    });
+    const twin = db.createBlock({
+      label: "sweep_task_alert-complete-twin", type: "task", essence: "export alert task marked complete",
+      content: { unique: { status: "done", what_happened: "alert complete" } }, ttl: "permanent", status: "active",
+    });
+    // same-timestamp is fine here — the supersedes edge is the EXPLICIT signal
+    db.createRelation({ source_id: twin.id, target_id: oldTask.id, type: "supersedes", bidirectional: false });
+    const r = sweepUnresolvedTasks(db);
+    const hit = r.flagged.find((f) => f.task_label === "sweep_task_superseded-open");
+    assert.ok(hit, "superseded-but-still-open must be caught without any created_at requirement");
+    assert.equal(hit!.candidate_label, "sweep_task_alert-complete-twin", "the superseder IS the candidate");
+  });
+
   test("exclude_labels protects fixtures; items with no newer completion neighbor stay silent", () => {
     const r = sweepUnresolvedTasks(db, { dry_run: true, exclude_labels: ["sweep_task_zombie"] });
     assert.ok(r.excluded >= 1);

@@ -170,15 +170,29 @@ export function sweepUnresolvedTasks(db: WorkspaceDB, opts: SweepOpts = {}): Swe
     if (exclude.has(item.label)) { result.excluded++; continue; }
     result.scanned_open_items++;
 
-    // Newest completion-shaped neighbor one causal hop away, created after the item.
+    // Signal 1 (STRONGEST, observed live 07-10 on hy3 — the "supersede-twin"): the open
+    // item was explicitly SUPERSEDED. Models often express completion as state-
+    // replacement ("task marked complete" supersedes the open task) rather than a
+    // resolves edge — current truth survives via the supersede chain, but the old
+    // item's own status still reads open and pollutes any naive open-items count.
     let candidate: (typeof all)[number] | null = null;
     for (const r of rels) {
-      const otherId = r.source_id === item.id ? r.target_id : r.target_id === item.id ? r.source_id : null;
-      if (!otherId) continue;
-      const other = byId.get(otherId);
-      if (!other || !COMPLETION_SHAPED_TYPES.has(other.type)) continue;
-      if (String(other.created_at) <= String(item.created_at)) continue;
-      if (!candidate || String(other.created_at) > String(candidate.created_at)) candidate = other;
+      if (r.type !== "supersedes" || r.target_id !== item.id) continue;
+      const superseder = byId.get(r.source_id);
+      if (superseder) { candidate = superseder; break; }
+    }
+
+    // Signal 2 (weaker, inferred): newest completion-shaped neighbor one causal hop
+    // away, created after the item — the based_on/related_to zombie shape.
+    if (!candidate) {
+      for (const r of rels) {
+        const otherId = r.source_id === item.id ? r.target_id : r.target_id === item.id ? r.source_id : null;
+        if (!otherId) continue;
+        const other = byId.get(otherId);
+        if (!other || !COMPLETION_SHAPED_TYPES.has(other.type)) continue;
+        if (String(other.created_at) <= String(item.created_at)) continue;
+        if (!candidate || String(other.created_at) > String(candidate.created_at)) candidate = other;
+      }
     }
     if (!candidate) continue;
 
