@@ -99,6 +99,44 @@ function applyConfigEnv() {
   // whole capture story silently dead on a headless install. Found the hard way in the
   // 2026-07-02 dogfood run: a bare `node dist/server.js` captured nothing.
   set("NODEDEX_ARC_EXTRACTION", "1");
+
+  // Extraction PARITY with the TUI launcher (tui/servers.ts): a headless `nodedex run`
+  // must behave like a TUI launch, or captured turns silently pile up pending forever
+  // (auto-turn + inactivity extraction default OFF in the bare server, ON in the TUI).
+  // Precedence trap: the server loads ~/.nodedex/.env fill-if-unset AFTER us, so a bare
+  // default here would SHADOW the user's saved settings — resolve home .env FIRST,
+  // exactly like the TUI does (servers.ts reads homeEnv before defaulting).
+  const homeEnv = readHomeEnv();
+  const setParity = (k, dflt) => set(k, homeEnv.get(k) ?? dflt);
+  setParity("NODEDEX_INACTIVITY_REFLECT", "0"); // legacy per-turn path stays off (arc supersedes it)
+  setParity("NODEDEX_ARC_INACTIVITY_ENABLED", "on");
+  setParity("NODEDEX_ARC_AUTO_TURNS", "4");
+  // Chunk cap defaults to the auto-turn threshold: after an outage a watcher re-delivers
+  // a BACKLOG, and without the cap the sweep extracts it as one giant arc — the exact
+  // multiplicative-failure shape weak models die on. Cap = drain in chunk-sized arcs.
+  // When auto is OFF (0) the cap must NOT follow it to 0 (the inactivity sweep would
+  // extract the whole backlog uncapped) — fall back to the default chunk size.
+  const autoTurns = Number(process.env.NODEDEX_ARC_AUTO_TURNS) || 0;
+  setParity("NODEDEX_ARC_MAX_TURNS", autoTurns > 0 ? String(autoTurns) : "4");
+}
+
+// Minimal mirror of server/src/home-env.ts parseEnvFile semantics (inline ` # comment`
+// stripped, first `=` splits, full-line # ignored) — keep in sync, same as the
+// providerEnv mapping above mirrors tui/config.ts.
+function readHomeEnv() {
+  const map = new Map();
+  try {
+    for (const line of readFileSync(join(homedir(), ".nodedex", ".env"), "utf8").split("\n")) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const eq = t.indexOf("=");
+      if (eq < 0) continue;
+      const raw = t.slice(eq + 1);
+      const m = raw.match(/\s#/);
+      map.set(t.slice(0, eq).trim(), (m ? raw.slice(0, m.index) : raw).trim());
+    }
+  } catch { /* no home .env yet — defaults apply */ }
+  return map;
 }
 
 // `nodedex demo` — serve a bundled synthetic graph so minute ONE shows what weeks
@@ -148,6 +186,16 @@ function startServer() {
       "[nodedex] dist/server.js not found — build the server first: `npm run build` (in server/)."
     );
     process.exit(1);
+  }
+  // Watchers find their capture target via NODEDEX_CAPTURE_URL first (nodedex-capture-
+  // core.mjs), else ~/.nodedex/tui-session.json — which only the TUI writes. A headless
+  // launch has neither, so every enabled watcher would start fine and then drop every
+  // turn as `skipped:no-server`. Point the children at THIS server (they inherit env).
+  if (!process.env.NODEDEX_CAPTURE_URL) {
+    process.env.NODEDEX_CAPTURE_URL = `http://127.0.0.1:${Number(process.env.PORT) || 3001}`;
+  }
+  if (process.env.NODEDEX_API_TOKEN && !process.env.NODEDEX_CAPTURE_TOKEN) {
+    process.env.NODEDEX_CAPTURE_TOKEN = process.env.NODEDEX_API_TOKEN;
   }
   writePidFile();
   // On Windows a bare absolute path ("C:\\...") is rejected by the ESM loader;

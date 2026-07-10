@@ -428,6 +428,11 @@ export function launchServer(opts: { port: number; dbPath: string; name?: string
       : ["dist/server.js"];
     if (existsSync(resolve(SERVER_DIR, ".env"))) nodeArgs.unshift("--env-file=.env");
     const homeEnv = readHomeEnv(); // persisted user settings (Settings → ~/.nodedex/.env)
+    // One chunk knob: the auto-turn threshold also sizes the arc cap below. When auto is
+    // OFF (0) the cap must NOT follow it to 0 — the inactivity sweep would then extract a
+    // whole backlog as one uncapped giant arc; fall back to the default chunk size.
+    const arcAutoTurns = process.env.NODEDEX_ARC_AUTO_TURNS ?? homeEnv.NODEDEX_ARC_AUTO_TURNS ?? "4";
+    const arcChunkCap  = Number(arcAutoTurns) > 0 ? arcAutoTurns : "4";
     const child = spawn(
       process.execPath, // the same node running the TUI
       nodeArgs,
@@ -462,7 +467,11 @@ export function launchServer(opts: { port: number; dbPath: string; name?: string
           // (the agent can still fire workspace_extract_arc sooner at its own task boundaries).
           NODEDEX_ARC_EXTRACTION:         process.env.NODEDEX_ARC_EXTRACTION         ?? homeEnv.NODEDEX_ARC_EXTRACTION         ?? "1",
           NODEDEX_ARC_INACTIVITY_ENABLED: process.env.NODEDEX_ARC_INACTIVITY_ENABLED ?? homeEnv.NODEDEX_ARC_INACTIVITY_ENABLED ?? "on",
-          NODEDEX_ARC_AUTO_TURNS:         process.env.NODEDEX_ARC_AUTO_TURNS         ?? homeEnv.NODEDEX_ARC_AUTO_TURNS         ?? "8",
+          NODEDEX_ARC_AUTO_TURNS:         arcAutoTurns,
+          // Chunk cap rides the auto-turn threshold (arcChunkCap above): after an outage the
+          // watcher re-delivers a backlog, and an uncapped sweep would extract it as ONE
+          // giant arc — the multiplicative-failure shape weak models die on.
+          NODEDEX_ARC_MAX_TURNS:          process.env.NODEDEX_ARC_MAX_TURNS          ?? homeEnv.NODEDEX_ARC_MAX_TURNS          ?? arcChunkCap,
         },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,

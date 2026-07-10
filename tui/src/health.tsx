@@ -186,7 +186,10 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
     // on relaunch, so a live-only change would silently revert at the next launch.
     if (id === "model")    { saveConfig({ model: v || undefined }); return save({ model: v }, v ? `model → ${v}` : "model cleared"); }
     if (id === "fallback") return save({ fallback_model: v }, v ? `fallback → ${v}` : "fallback cleared");
-    if (id === "autoturns") { if (v && (!Number.isInteger(Number(v)) || Number(v) < 0)) { setNotice("auto-turns must be a whole number ≥ 0"); return; } return save({ arc_auto_turns: v }, v && Number(v) > 0 ? `auto-extract every ${v} turns` : "auto-extract off"); }
+    // Ceiling 6: arc survival ≈ per-call success ^ n_calls — big arcs fail multiplicatively
+    // on weak models and delay freshness on any model. The chunk cap (ARC_MAX_TURNS)
+    // rides this value, so this one knob bounds both the trigger and the arc size.
+    if (id === "autoturns") { if (v && (!Number.isInteger(Number(v)) || Number(v) < 0 || Number(v) > 6)) { setNotice("auto-turns must be 0-6 (0 = off; small chunks survive, big arcs fail multiplicatively)"); return; } return save({ arc_auto_turns: v }, v && Number(v) > 0 ? `auto-extract every ${v} turns` : "auto-extract off"); }
     if (id === "sources")  { const arr = parseSources(v); setHermesCapture({ sources: arr }); setHc(loadHermesCapture()); setNotice(`hermes sources → ${arr.join(", ")}`); return; }
     if (id === "ccprojects") { const arr = parseSources(v); setClaudeCapture({ projects: arr }); setCc(loadClaudeCapture()); setNotice(`claude projects → ${arr.join(", ")}`); return; }
     if (id === "floor")    { if (v && !Number.isFinite(Number(v))) { setNotice("floor must be a number"); return; } return save({ min_credit_usd: v }, v ? `credit floor → $${v}` : "credit floor off"); }
