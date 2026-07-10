@@ -41,3 +41,7 @@ nothing on this; say that plainly instead of treating the nearest blocks as an a
 **Trust rule:** blocks carry `source_excerpt` (verbatim transcript evidence) — check it
 for load-bearing claims. If the graph conflicts with code you can verify directly,
 the code wins; flag the discrepancy.
+A `null` excerpt is normal on structural blocks (roots, chains, derived, manual saves) —
+their evidence lives in their members/inputs. A thin block from a thin moment is valid:
+the essence is the load-bearing part. Distrust an extracted block whose excerpt can't
+support its claim — not null, not thin.
