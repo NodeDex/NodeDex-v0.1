@@ -385,6 +385,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           <Text color={theme.value}>· An AI pipeline builds your agent's memory from your turns — it</Text>
           <Text color={theme.value}>  can be wrong or incomplete; the agent's notes, not ground truth.</Text>
           <Text color={theme.value}>· You bring your own model — a cloud key (billed to you) or a local one.</Text>
+          <Text color={theme.value}>· A cloud model means captured conversation content is SENT to that</Text>
+          <Text color={theme.value}>  provider for extraction; pick a local model to keep everything here.</Text>
+          <Text color={theme.value}>· The database is plaintext on disk unless you set NODEDEX_DB_ENCRYPTION_KEY.</Text>
         </Box>
         <Hint keys={[["Enter", "I understand & agree"], ["q", "quit"]]} />
       </Frame>
