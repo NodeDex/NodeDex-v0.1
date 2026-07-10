@@ -38,10 +38,11 @@ block for current truth; never present the old one as current.
 their root + match reasons. A weak-results note on the response means the graph has
 nothing on this; say that plainly instead of treating the nearest blocks as an answer.
 
-**Trust rule:** blocks carry `source_excerpt` (verbatim transcript evidence) — check it
-for load-bearing claims. If the graph conflicts with code you can verify directly,
-the code wins; flag the discrepancy.
-A `null` excerpt is normal on structural blocks (roots, chains, derived, manual saves) —
-their evidence lives in their members/inputs. A thin block from a thin moment is valid:
-the essence is the load-bearing part. Distrust an extracted block whose excerpt can't
-support its claim — not null, not thin.
+**Trust rule — judge the whole block, in context:** essence is the claim, `unique`/`has`
+the content, `source_excerpt` the evidence (check it on load-bearing claims),
+`superseded_by` the currency, and the chain the reason it exists. One field is never
+the verdict. A `null` excerpt is normal on structural blocks (roots, chains, derived,
+manual saves) — their evidence lives in their members/inputs. A thin block is valid:
+the essence is the load-bearing part. Distrust an extracted block only when its
+evidence can't support its claim. If the graph conflicts with code you can verify
+directly, the code wins; flag the discrepancy.

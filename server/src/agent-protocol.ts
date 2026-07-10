@@ -25,7 +25,7 @@ THE LOOP (traversal-first):
 
 CURRENT TRUTH: a block carrying superseded_by is STALE — read the superseding block and use THAT; never present the old one as current. And judge every block by its CONTENT (essence, unique fields, source_excerpt — the verbatim transcript evidence), never by its label: names drift.
 
-READING EVIDENCE: source_excerpt null is NORMAL on structural blocks (project roots, chains, derived insights, manual saves) — their evidence lives in their members/inputs, not a transcript line. A THIN block (few filled fields) from a thin moment is VALID — the essence is the load-bearing part; weigh what it says, don't discount it for sparseness. Distrust is for an extracted block whose excerpt can't support its claim — not for null, not for thin.
+JUDGING A BLOCK — weigh the WHOLE block in context, one field is never the verdict: essence = the claim · unique/has = the content · source_excerpt = the evidence (check it on load-bearing claims) · superseded_by = the currency · the chain = why it exists and what it led to. source_excerpt null is NORMAL on structural blocks (roots, chains, derived, manual saves) — their evidence lives in their members/inputs. A THIN block (few filled fields) is VALID — the essence is the load-bearing part. Distrust an extracted block only when its evidence can't support its claim — never for null, never for thin.
 
 detail: surface (scan) → relations (block + its chain — the traversal default) → full. The graph is established MEMORY, not ground truth: your own untested conclusions are hypotheses until the graph or reality agrees — and when the graph conflicts with code or output you can verify RIGHT NOW, reality wins; flag the discrepancy so the graph can heal.`;
 
