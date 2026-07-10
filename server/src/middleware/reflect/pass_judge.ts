@@ -203,20 +203,33 @@ export async function callPassJudgeLLM(
   if (includeUserTurn) judgePrompt += PASS_JUDGE_TWO_PARTY_SUFFIX;
   if (includeRole) judgePrompt += PASS_JUDGE_ROLE_SUFFIX;
 
-  const r = await provider.generateStructured<PassJudgeResult>(judgePrompt, userInput, PASS_JUDGE_SCHEMA, {
+  const callJudge = () => provider.generateStructured<PassJudgeResult>(judgePrompt, userInput, PASS_JUDGE_SCHEMA, {
     thinkingBudget,
     maxOutputTokens: 8192,
     modelOverride: modelForPass("judge"),
   });
+  const nullIfMalformed = (res: Awaited<ReturnType<typeof callJudge>>) => {
+    if (res.result && !Array.isArray((res.result as any).verdicts)) {
+      // SEAM contract: a judge result MUST carry verdicts[]. Provider variance can
+      // return a truthy object without it, and consuming that crashes every caller
+      // (.filter on undefined took down the whole v2 front-half, 2026-06-11).
+      // Malformed = failed → null it so the KEEP-ALL degrade below applies (a failed
+      // selector must never drop residue).
+      console.warn("Auto-Reflect JUDGE: malformed result (missing verdicts[]) — treating as failed");
+      res.result = null;
+    }
+    return res;
+  };
 
-  if (r.result && !Array.isArray((r.result as any).verdicts)) {
-    // SEAM contract: a judge result MUST carry verdicts[]. Provider variance can
-    // return a truthy object without it, and consuming that crashes every caller
-    // (.filter on undefined took down the whole v2 front-half, 2026-06-11).
-    // Malformed = failed → null it so the KEEP-ALL degrade below applies (a failed
-    // selector must never drop residue).
-    console.warn("Auto-Reflect JUDGE: malformed result (missing verdicts[]) — treating as failed");
-    r.result = null;
+  let r = nullIfMalformed(await callJudge());
+  if (!r.result && !r.rateLimited) {
+    // ONE bounded retry before the KEEP-ALL degrade: a failed judge floods the graph
+    // with unfiltered items, and malformed-JSON is provider variance a fresh draw often
+    // fixes. NOT retried on rateLimited (the provider layer already backed off — a
+    // retry would burn straight into the same limit). KEEP-ALL stays the final
+    // fail-safe either way.
+    console.warn("Auto-Reflect JUDGE: failed/malformed — retrying once before KEEP-ALL degrade");
+    r = nullIfMalformed(await callJudge());
   }
   if (r.result) {
     // Judge has its own token slot so cost_breakdown attributes it once, to the

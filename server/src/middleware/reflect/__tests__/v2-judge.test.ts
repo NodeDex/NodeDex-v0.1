@@ -167,4 +167,25 @@ describe("runV2Judge — per-group, parallel (stubbed judge)", () => {
     assert.equal(out.kept.length, 3);          // nothing dropped
     assert.equal(out.droppedCount, 0);
   });
+
+  test("MALFORMED first draw, valid second → the bounded retry restores precision (drops apply)", async () => {
+    // A failed judge floods the graph with unfiltered items; malformed JSON is provider
+    // variance a fresh draw often fixes. One retry before KEEP-ALL — verdicts from the
+    // second call must be APPLIED, not degraded past.
+    let n = 0;
+    const provider: any = {
+      isAvailable: () => true,
+      generateStructured: async (_sys: string, userInput: string) => {
+        n++;
+        if (n === 1) return { result: {}, rateLimited: false, usage: {}, attempts: [{ model: "m", outcome: "ok" }] };
+        const ids = [...userInput.matchAll(/"id":\s*"([^"]+)"/g)].map((m) => m[1]);
+        return { result: { verdicts: ids.map((id) => ({ item_id: id, verdict: id.includes("drop") ? "DROP" : "KEEP", reason_category: id.includes("drop") ? "general_knowledge" : "path_specific_residue" })) }, rateLimited: false, usage: {}, attempts: [{ model: "m", outcome: "ok" }] };
+      },
+    };
+    const items = [mkItem("g1::keep-a"), mkItem("g1::drop-b"), mkItem("g1::keep-c")];
+    const out = await runV2Judge(provider, items, "transcript");
+    assert.equal(n, 2, "exactly one retry");
+    assert.deepEqual(out.kept.map((i) => i.id).sort(), ["g1::keep-a", "g1::keep-c"]);
+    assert.equal(out.droppedCount, 1);
+  });
 });
