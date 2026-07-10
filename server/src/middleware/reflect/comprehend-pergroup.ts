@@ -607,12 +607,12 @@ export async function runComprehendPerGroup(
   // CALL 1 — SEGMENT
   const seg = await callSegmentLLM(provider, transcript);
   if (!seg.result) {
-    console.warn(`Auto-Reflect COMPREHEND (per-group): SEGMENT ${seg.rateLimited ? "rate limited" : "failed"} — degrade to v1`);
+    console.warn(`Auto-Reflect COMPREHEND (per-group): SEGMENT ${seg.rateLimited ? "rate limited" : "failed"} — returning null (arc path: bounded retry then fail-clean; v1 does NOT run)`);
     return { ...base, rateLimited: seg.rateLimited };
   }
   const segVal = validateSegmentResult(seg.result);
   if (!segVal.valid) {
-    console.warn(`Auto-Reflect COMPREHEND (per-group): SEAM 1.5 invalid (${segVal.errors.length} error(s)) — degrade to v1`);
+    console.warn(`Auto-Reflect COMPREHEND (per-group): SEAM 1.5 invalid (${segVal.errors.length} error(s)) — returning null (arc path: bounded retry then fail-clean; v1 does NOT run)`);
     return base;
   }
   const groups = seg.result.groups ?? [];
