@@ -256,9 +256,14 @@ async function feedLine(fileState, filePath, lineStartOffset, j) {
     // turn_number (same idempotency contract), and the opening user prompt is
     // carried into each section for context.
     const thinkChars = fileState.buf.thinking.reduce((n, s) => n + s.length, 0);
-    if (sawText && emitReady(fileState)
-        && ((SECTION_BYTES > 0 && lineStartOffset - fileState.buf.openedAt > SECTION_BYTES)
-         || (SECTION_THINKING_CHARS > 0 && thinkChars > SECTION_THINKING_CHARS))) {
+    // Cut points: the byte trigger waits for a narration beat (nicest seams); the
+    // thinking trigger may cut at any complete-THOUGHT boundary — validated on the
+    // real roguelite transcript, agents can deliberate 40k+ chars between beats,
+    // so waiting for narration blows the extraction budget. Both cuts require
+    // emitReady (output already in the section) — never a reasoning-only unit.
+    const bytesOver = SECTION_BYTES > 0 && lineStartOffset - fileState.buf.openedAt > SECTION_BYTES;
+    const thinkOver = SECTION_THINKING_CHARS > 0 && thinkChars > SECTION_THINKING_CHARS;
+    if (emitReady(fileState) && ((bytesOver && sawText) || thinkOver)) {
       const status = await emitTurn(fileState, filePath);
       if (isTransientCaptureStatus(status)) return "stall";
       const prompt = fileState.buf.user;
