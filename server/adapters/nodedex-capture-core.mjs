@@ -32,7 +32,7 @@ const TRIGGER_MIN_CHARS = 10; // mirror the server's combined-content floor (/ap
 // which forwards only its parity keys, so without this fallback a saved cap
 // would never reach the adapter. Minimal mirror of home-env.ts parseEnvFile
 // semantics (full-line # ignored, first `=` splits, inline ` # comment` stripped).
-function homeEnvGet(name) {
+export function homeEnvGet(name) {
   const live = process.env[name];
   if (live != null && live !== "") return live;
   try {
@@ -54,7 +54,12 @@ const capNum = (name, dflt) => {
 };
 const CAPS = {
   response: capNum("NODEDEX_CAPTURE_RESPONSE_MAX", 16000),
-  reasoning: capNum("NODEDEX_CAPTURE_REASONING_MAX", 8000),
+  // Default raised 8000→40000 (2026-07-12): consumption exists now
+  // (NODEDEX_COMPREHEND_USE_REASONING) and the watcher's section flush bounds the
+  // turn UNIT, so a generous per-turn reasoning bound no longer risks unbounded
+  // payloads — and 8000 was measurably eating builder sessions' deliberations.
+  // The extraction-side formatter caps model INPUT separately (21k chars/turn).
+  reasoning: capNum("NODEDEX_CAPTURE_REASONING_MAX", 40000),
   user: capNum("NODEDEX_CAPTURE_USER_MAX", 2000),
 };
 

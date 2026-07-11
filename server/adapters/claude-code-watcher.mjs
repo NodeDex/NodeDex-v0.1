@@ -53,11 +53,12 @@ import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
 import { pathToFileURL } from "node:url";
-import { captureTurn, isTransientCaptureStatus, resolveNodedexTarget } from "./nodedex-capture-core.mjs";
+import { captureTurn, isTransientCaptureStatus, resolveNodedexTarget, homeEnvGet } from "./nodedex-capture-core.mjs";
 
 const HOME = join(homedir(), ".nodedex");
 const CONFIG_FILE = join(HOME, "config.json");
 const CURSOR_FILE = join(HOME, "claude-code-capture-cursor.json");
+const WATCHER_BOOT_MS = Date.now(); // fresh-file discovery: files born after this start at 0
 
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has("--dry-run");
@@ -234,12 +235,56 @@ async function feedLine(fileState, filePath, lineStartOffset, j) {
   if (j.type === "assistant" && fileState.buf) {
     const c = j.message?.content;
     if (!Array.isArray(c)) return;
+    let sawText = false;
     for (const item of c) {
-      if (item?.type === "text" && item.text) fileState.buf.response.push(clean(item.text));
-      else if (item?.type === "thinking" && item.thinking) fileState.buf.thinking.push(truncate(clean(item.thinking), 2000));
+      if (item?.type === "text" && item.text) { fileState.buf.response.push(clean(item.text)); sawText = true; }
+      else if (item?.type === "thinking" && item.thinking) fileState.buf.thinking.push(clipThinking(clean(item.thinking)));
       else if (item?.type === "tool_use") fileState.buf.thinking.push(`[tool] ${item.name || "?"}(${truncate(JSON.stringify(item.input ?? {}), TOOL_PREVIEW)})`);
     }
+    // ── SECTION FLUSH: bound the UNIT, don't clip the content ─────────────────
+    // A one-shot agent can produce megabytes under ONE user prompt — unbounded
+    // turns were why thinking used to be clipped hard, and why long runs
+    // extracted nothing until they paused. When the buffered raw span exceeds
+    // the section size, emit what we have as a section-turn — but ONLY right
+    // after an assistant TEXT beat ("Tiles done. Now the sprites —"), so every
+    // section is a coherent unit, never a half-thought. The section's byte
+    // offset becomes its turn_number (same idempotency contract), and the
+    // opening user prompt is carried into each section for context.
+    if (sawText && emitReady(fileState) && SECTION_BYTES > 0
+        && lineStartOffset - fileState.buf.openedAt > SECTION_BYTES) {
+      const status = await emitTurn(fileState, filePath);
+      if (isTransientCaptureStatus(status)) return "stall";
+      const prompt = fileState.buf.user;
+      fileState.buf = newBuffer();
+      fileState.buf.user = [...prompt];      // same prompt, next slice of the work
+      // The flush-trigger line rode the EMITTED section; the next section opens at
+      // its offset. A restart-replay from this cursor re-reads that one line into
+      // the next section instead — same turn_number either way, so the server's
+      // (agent_id, turn_number) reuse keeps whichever version landed first.
+      fileState.buf.openedAt = lineStartOffset;
+      fileState.pendingStart = lineStartOffset;
+    }
   }
+}
+
+// Section size (bytes of raw transcript per emitted section). 0 disables
+// sectioning (old behavior: one turn per user prompt, however large).
+const SECTION_BYTES = (() => {
+  const n = Number(homeEnvGet("NODEDEX_CC_SECTION_BYTES"));
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 150000;
+})();
+
+// Per-THOUGHT bound (chars). Generous now that sections bound the unit — the
+// old hard 2000 head-clip lost the ENDINGS of long deliberations, which is
+// where conclusions live. Over the bound: head+tail keep with a visible cut.
+const THINKING_BLOCK_MAX = (() => {
+  const n = Number(homeEnvGet("NODEDEX_CAPTURE_THINKING_BLOCK_MAX"));
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 20000;
+})();
+function clipThinking(t) {
+  if (t.length <= THINKING_BLOCK_MAX) return t;
+  const head = Math.floor(THINKING_BLOCK_MAX * 0.6), tail = THINKING_BLOCK_MAX - head;
+  return `${t.slice(0, head)} […thought clipped…] ${t.slice(-tail)}`;
 }
 
 // While the server is unreachable, retry the stalled turn at this cadence instead of
@@ -327,7 +372,15 @@ async function pass(cfg) {
           startAt = await offsetOfNthLastPrompt(filePath, LAST);
           console.log(`[claude-code-watcher] ${basename(filePath)}: --last ${LAST} → starting at byte ${startAt}`);
         } else if (BACKFILL) startAt = 0;
-        else startAt = persisted?.offset ?? statSync(filePath).size;
+        else if (persisted?.offset != null) startAt = persisted.offset;
+        else {
+          // No cursor: forward-only is for PRE-EXISTING history. A file BORN after
+          // this watcher started is a live session we watched begin — start at 0,
+          // or discovery latency silently eats its first turn (cost a session's
+          // turn 1 on 2026-07-12: file appeared, first poll found it mid-turn).
+          const st = statSync(filePath);
+          startAt = st.birthtimeMs >= WATCHER_BOOT_MS ? 0 : st.size;
+        }
         fs_ = { offset: startAt, pendingStart: startAt, buf: newBuffer(), lastGrowth: Date.now(), sessionId: null, project: dir.name, stallUntil: 0 };
         state.set(filePath, fs_);
       }
@@ -376,4 +429,4 @@ const isDirectRun = (() => {
 })();
 if (isDirectRun) main().catch((e) => { console.error(`[claude-code-watcher] fatal: ${e?.message ?? e}`); process.exit(1); });
 
-export { passFile, newBuffer }; // for testing (watcher-cursor.test.mjs)
+export { passFile, newBuffer, clipThinking }; // for testing (watcher-cursor / section-flush tests)
