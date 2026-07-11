@@ -14,6 +14,7 @@ import { evaluateBudgetLive, writeSpendPauseFile, clearSpendPauseFile, creditExh
 import { isInsufficientCreditError } from "../engine/providers/failure-policy.js";
 import { resolveRoutedFlagsFromText } from "../middleware/reflect/nl-accept.js";
 import { arcAutoTurns } from "../middleware/reflect/config.js";
+import { formatComprehendTurn } from "../middleware/reflect/comprehend.js";
 
 // ─── Gemini Reflect Queue ─────────────────────────────────────────────────────
 // Sequential queue — every agent turn is compiled, no rate-limit gate.
@@ -463,8 +464,11 @@ export async function processReflectQueue(db: WorkspaceDB, embeddings?: Embeddin
         // truncate fix and, on a single turn's overlapping threads, blind-parallel
         // re-extracts shared claims → cross-group dups). Holistic prevents the dup at the
         // source; the MERGE_DUPS pass then stays a harmless no-op here (arc-mode net).
-        // Transcript = USER/AGENT only (matches the arc path; thinking is captured to
-        // conversation_turns but not fed to COMPREHEND — it amplified over-seg in testing).
+        // Transcript = USER/AGENT by default (matches the arc path). Raw thinking fed to
+        // COMPREHEND amplified over-seg in testing, so consumption is opt-in:
+        // NODEDEX_COMPREHEND_USE_REASONING=1 appends a capped THINKING section plus the
+        // REASONING_GUIDANCE prompt fragment (exploration-not-commitment) that mitigates
+        // the over-seg. formatComprehendTurn is byte-identical to the old shape when off.
         // Guards: !checkpoint (don't override a retry) · !job.turnNumber (arc mode keeps
         // its Pass 0-1 defer, so this NEVER runs in arc mode). V2-ONLY (2026-06-20): a v2
         // failure NO LONGER degrades to v1 — it REQUEUES (retry v2 with backoff) up to a
@@ -478,7 +482,7 @@ export async function processReflectQueue(db: WorkspaceDB, embeddings?: Embeddin
         if (!checkpoint && !job.turnNumber && job.agentResponse) {
           v2PerTurnAttempted = true;
           try {
-            const v2Transcript = `USER: ${job.userMessage ?? ""}\nAGENT: ${job.agentResponse}`;
+            const v2Transcript = formatComprehendTurn("", job.userMessage, job.agentResponse, job.agentThinking);
             // holistic by default (1 turn fits one call, no cross-group dup). Set
             // NODEDEX_V2_PER_TURN_PERGROUP=1 to instead run per-group + merge on the
             // per-turn path — under evaluation: per-group runs the cross-group LINKER

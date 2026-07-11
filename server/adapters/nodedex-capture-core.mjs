@@ -23,7 +23,19 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const TRIGGER_MIN_CHARS = 10; // mirror the server's combined-content floor (/api/reflect/trigger)
-const CAPS = { response: 16000, reasoning: 8000, user: 2000 };
+// Storage bounds per channel (chars), env-overridable. Head-keep slice. Raise
+// NODEDEX_CAPTURE_REASONING_MAX when the consumer reads thinking
+// (NODEDEX_COMPREHEND_USE_REASONING=1) — the default 8000 was sized for
+// storage-only days and truncates long builder sessions' thinking traces.
+const capNum = (name, dflt) => {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : dflt;
+};
+const CAPS = {
+  response: capNum("NODEDEX_CAPTURE_RESPONSE_MAX", 16000),
+  reasoning: capNum("NODEDEX_CAPTURE_REASONING_MAX", 8000),
+  user: capNum("NODEDEX_CAPTURE_USER_MAX", 2000),
+};
 
 /**
  * Resolve the live Nodedex server to capture into → { url, token } or null.

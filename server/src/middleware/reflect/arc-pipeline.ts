@@ -32,7 +32,7 @@ import { runAutoReflect } from "./pipeline.js";
 import type { Pass1Item, PipelineCheckpoint, ReflectResult, ArcEntityResolveResult } from "./types.js";
 import { getLLMProvider } from "../../engine/providers/index.js";
 import { runArcEntityResolve } from "./arc-entity-resolve.js";
-import { pipelineV2Enabled, v2LazyCaptureEnabled, arcMaxRetries } from "./comprehend.js";
+import { pipelineV2Enabled, v2LazyCaptureEnabled, arcMaxRetries, formatComprehendTurn } from "./comprehend.js";
 import { runComprehendFrontHalf } from "./v2-integrate.js";
 import { applyResolvesStatusEffects } from "./resolution-heal.js";
 import { isInsufficientCreditError } from "../../engine/providers/failure-policy.js";
@@ -275,7 +275,8 @@ export async function runArcExtraction(
       let tr: any = {};
       try { tr = JSON.parse(t.transcript_json); } catch { /* malformed — degrade to empty */ }
       const h = `[TURN ${t.turn_number}${t.turn_name ? ` — ${t.turn_name}` : ""}]`;
-      return `${h}\nUSER: ${tr.user_message ?? ""}\nAGENT: ${tr.agent_response ?? ""}`;
+      // THINKING rides along only when NODEDEX_COMPREHEND_USE_REASONING=1 (capped per turn)
+      return formatComprehendTurn(h, tr.user_message, tr.agent_response, tr.agent_thinking);
     }).join("\n\n");
     const maxRetries = arcMaxRetries();
     for (let attempt = 0; attempt <= maxRetries; attempt++) {

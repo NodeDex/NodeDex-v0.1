@@ -75,6 +75,79 @@ export function v2LazyCaptureEnabled(): boolean {
   return process.env.NODEDEX_V2_LAZY_CAPTURE !== "0";
 }
 
+// ─── Reasoning consumption (opt-in) ───────────────────────────────────────────
+// The CONSUME side of the thinking channel — capture always stores it; this flag
+// decides whether COMPREHEND reads it. Design agreed 2026-06-25 ("take it IF
+// present; response+user is the model-agnostic floor"), parked, unparked
+// 2026-07-11 for the builder-session case: autonomous builders bury
+// tried-and-abandoned approaches in thinking and report only outcomes, so
+// response-only extraction misses exactly the dead-ends the graph exists for.
+// Default OFF because raw deliberation amplified over-segmentation when measured
+// (see routes/state.ts per-turn note) — REASONING_GUIDANCE is the mitigation and
+// the flag keeps that risk opt-in per model.
+export function comprehendUseReasoningEnabled(): boolean {
+  return process.env.NODEDEX_COMPREHEND_USE_REASONING === "1";
+}
+
+// Model-input bound for ONE turn's THINKING section (chars). Distinct from the
+// capture-side storage bound (adapters/nodedex-capture-core.mjs CAPS): this one
+// protects the COMPREHEND context window when stored thinking is large. Head+tail
+// keep — the head carries the plan, the tail carries the final debugging; the
+// middle is the safest cut, and the marker keeps the cut visible to the reader.
+const REASONING_TURN_MAX = 21000;
+const REASONING_HEAD = 14000;
+const REASONING_TAIL = 6000;
+
+/**
+ * Format one transcript turn for COMPREHEND. THINKING rides along only when the
+ * flag is on AND the turn actually has it (graceful degradation — not all models
+ * expose reasoning). With an empty header and the flag off, output is
+ * byte-identical to the historical `USER: …\nAGENT: …` shape.
+ */
+export function formatComprehendTurn(
+  header: string,
+  userMessage: string | undefined,
+  agentResponse: string | undefined,
+  agentThinking?: string,
+): string {
+  const head = header ? `${header}\n` : "";
+  let out = `${head}USER: ${userMessage ?? ""}\nAGENT: ${agentResponse ?? ""}`;
+  const thinking = comprehendUseReasoningEnabled() ? String(agentThinking ?? "").trim() : "";
+  if (thinking) {
+    const t = thinking.length > REASONING_TURN_MAX
+      ? `${thinking.slice(0, REASONING_HEAD)}\n[…thinking truncated…]\n${thinking.slice(-REASONING_TAIL)}`
+      : thinking;
+    out += `\nTHINKING: ${t}`;
+  }
+  return out;
+}
+
+// Appended to the three COMPREHEND-family prompts (holistic, SEGMENT, PRODUCE)
+// when the flag is on — at CALL time, never baked into the constants, so the
+// default path stays byte-identical and the copies can't drift apart. The
+// measured failure mode of raw thinking is over-segmentation (deliberation reads
+// as ten half-decisions); this pins thinking to its epistemic role.
+export const REASONING_GUIDANCE = `
+── THINKING SECTIONS (agent's private reasoning — weigh it differently) ─────
+Some turns carry a THINKING section: the agent's private deliberation before its
+answer, including tool calls it ran ([tool]/[result] lines) and approaches it
+weighed. Treat THINKING as EXPLORATION, not commitment:
+  • The AGENT text remains the authority for what was decided, done, or
+    concluded. When THINKING and AGENT conflict, AGENT wins.
+  • Mine THINKING for the residue the polished answer drops: approaches genuinely
+    TRIED and abandoned (a real attempt with a failure and a reason — dead_end),
+    errors actually hit, constraints discovered, values measured.
+  • Do NOT emit blocks for options merely considered, plans mid-formation, or
+    self-corrections en route to the stated answer — deliberation itself is not
+    residue.
+  • Provenance rule unchanged: source_excerpt may quote THINKING verbatim when
+    the block's claim lives only there.`;
+
+/** Base prompt + reasoning guidance when the flag is on; byte-identical when off. */
+export function withReasoningGuidance(basePrompt: string): string {
+  return comprehendUseReasoningEnabled() ? `${basePrompt}\n${REASONING_GUIDANCE}` : basePrompt;
+}
+
 // ─── Within-group link relations COMPREHEND may emit ──────────────────────────
 // The subset of pipeline.ts ALLOWED_RELS that a holistic READ of the prose
 // produces. EXCLUDES: superseded_by (auto-inverse, written at WRITE), part_of /
@@ -799,7 +872,7 @@ export async function callComprehendLLM(
 ): Promise<ComprehendCallResult> {
   const userInput = `TRANSCRIPT (one work session — read all of it before writing):\n\n${transcript}`;
   const r = await provider.generateStructured<ComprehendResult>(
-    COMPREHEND_PROMPT,
+    withReasoningGuidance(COMPREHEND_PROMPT),
     userInput,
     COMPREHEND_SCHEMA,
     {

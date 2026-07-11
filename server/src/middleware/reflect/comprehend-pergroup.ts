@@ -24,6 +24,7 @@ import {
   validateComprehendResult,
   summarizeWarnings,
   comprehendModel,
+  withReasoningGuidance,
   type ComprehendResult,
   type ComprehendGroup,
   type ComprehendBlock,
@@ -170,7 +171,7 @@ export async function callSegmentLLM(
 ): Promise<SegmentCallResult> {
   const userInput = `TRANSCRIPT (one work session — read all of it, then list its threads):\n\n${transcript}`;
   const r = await provider.generateStructured<SegmentResult>(
-    SEGMENT_PROMPT, userInput, SEGMENT_SCHEMA,
+    withReasoningGuidance(SEGMENT_PROMPT), userInput, SEGMENT_SCHEMA,
     { thinkingBudget: getThinkingBudget(thinkingBudget), maxOutputTokens: 4096, modelOverride: comprehendModel() },
   );
   return { result: r.result ?? null, rateLimited: r.rateLimited, model: r.model, usage: r.usage };
@@ -457,7 +458,7 @@ export async function callProduceGroupLLM(
     `THREAD TO EXTRACT — topic: "${group.topic}"; project: "${group.provisional_project ?? ""}"${turns}\n\n` +
     `FULL TRANSCRIPT (context; extract ONLY the thread above):\n\n${transcript}`;
   const r = await provider.generateStructured<ProduceResult>(
-    PRODUCE_PROMPT, userInput, PRODUCE_SCHEMA,
+    withReasoningGuidance(PRODUCE_PROMPT), userInput, PRODUCE_SCHEMA,
     { thinkingBudget: getThinkingBudget(thinkingBudget), maxOutputTokens: 24576, modelOverride: comprehendModel() },
   );
   // truncated = the call failed specifically because output hit the token ceiling
