@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 
 process.env.NODEDEX_CC_SECTION_BYTES = "400";
+process.env.NODEDEX_CC_SECTION_THINKING_CHARS = "150";
 process.env.NODEDEX_CAPTURE_THINKING_BLOCK_MAX = "100";
 const { passFile, newBuffer, clipThinking } = await import("../claude-code-watcher.mjs");
 
@@ -76,6 +77,51 @@ test("section flush: one giant turn arrives as multiple coherent section-turns",
   assert.ok(allText.includes("Step 6 done"), "the residue after the last cut is emitted at the boundary");
   // thinking rides each section
   assert.ok(received.every((r) => r.agent_thinking.includes("deliberating")), "thinking present per section");
+});
+
+test("thinking-driven flush: heavy reasoning between few beats still chunks under the extraction budget", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "ndx-thinkflush-"));
+  const SID2 = "think567-abcd-efgh";
+  const file = join(dir, `${SID2}.jsonl`);
+  // beats are tiny (byte trigger ~never fires at 400 only after ~4 beats) but each
+  // carries ~90 chars of thinking → the 150-char thinking trigger must drive cuts.
+  const beat2 = (n) =>
+    JSON.stringify({ type: "assistant", sessionId: SID2, message: { content: [
+      { type: "thinking", thinking: `deep deliberation segment ${n} ` + "x".repeat(60) },
+      { type: "text", text: `Beat ${n}.` },
+    ] } });
+  const lines2 = [
+    JSON.stringify({ type: "user", sessionId: SID2, message: { role: "user", content: "think hard" } }),
+    beat2(1), beat2(2), beat2(3), beat2(4), beat2(5),
+    JSON.stringify({ type: "user", sessionId: SID2, message: { role: "user", content: "done" } }),
+  ];
+  writeFileSync(file, lines2.join("\n") + "\n");
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ } });
+
+  const received = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      received.push(JSON.parse(body));
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ triggered: true }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  process.env.NODEDEX_CAPTURE_URL = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => server.close());
+
+  await passFile({ offset: 0, pendingStart: 0, buf: newBuffer(), lastGrowth: Date.now(), sessionId: null, project: "test-project", stallUntil: 0 }, file, { idleFlushMs: 999_999 });
+
+  assert.ok(received.length >= 2, `thinking volume must force >1 section, got ${received.length}`);
+  for (const r of received) {
+    assert.ok(r.agent_thinking.length <= 150 + 120, `each section's thinking stays near the budget (got ${r.agent_thinking.length})`);
+    assert.ok(r.agent_response.length > 0, "every reasoning chunk carries its own slice of output (never reasoning-only)");
+  }
+  // the full trace survives across sections
+  const joined = received.map((r) => r.agent_thinking).join("\n");
+  for (let n = 1; n <= 5; n++) assert.ok(joined.includes(`deep deliberation segment ${n}`), `segment ${n} present`);
 });
 
 test("clipThinking: short thoughts untouched; long thoughts keep head AND tail with a visible cut", () => {

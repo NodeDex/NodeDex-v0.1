@@ -245,13 +245,20 @@ async function feedLine(fileState, filePath, lineStartOffset, j) {
     // A one-shot agent can produce megabytes under ONE user prompt — unbounded
     // turns were why thinking used to be clipped hard, and why long runs
     // extracted nothing until they paused. When the buffered raw span exceeds
-    // the section size, emit what we have as a section-turn — but ONLY right
+    // the section size, OR the buffered THINKING exceeds what one extraction
+    // call reads (so the whole trace reaches the extractor chunk by chunk,
+    // never clipped), emit what we have as a section-turn — but ONLY right
     // after an assistant TEXT beat ("Tiles done. Now the sprites —"), so every
-    // section is a coherent unit, never a half-thought. The section's byte
-    // offset becomes its turn_number (same idempotency contract), and the
-    // opening user prompt is carried into each section for context.
-    if (sawText && emitReady(fileState) && SECTION_BYTES > 0
-        && lineStartOffset - fileState.buf.openedAt > SECTION_BYTES) {
+    // section is a coherent unit pairing each reasoning chunk with ITS OWN
+    // slice of output (the extractor's "AGENT text wins" rule needs that
+    // authority in every unit; reasoning-only chunks would re-open the
+    // over-segmentation failure). The section's byte offset becomes its
+    // turn_number (same idempotency contract), and the opening user prompt is
+    // carried into each section for context.
+    const thinkChars = fileState.buf.thinking.reduce((n, s) => n + s.length, 0);
+    if (sawText && emitReady(fileState)
+        && ((SECTION_BYTES > 0 && lineStartOffset - fileState.buf.openedAt > SECTION_BYTES)
+         || (SECTION_THINKING_CHARS > 0 && thinkChars > SECTION_THINKING_CHARS))) {
       const status = await emitTurn(fileState, filePath);
       if (isTransientCaptureStatus(status)) return "stall";
       const prompt = fileState.buf.user;
@@ -272,6 +279,15 @@ async function feedLine(fileState, filePath, lineStartOffset, j) {
 const SECTION_BYTES = (() => {
   const n = Number(homeEnvGet("NODEDEX_CC_SECTION_BYTES"));
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 150000;
+})();
+
+// Thinking-driven flush (chars of buffered reasoning per section). Sized UNDER
+// the extraction side's per-turn reasoning budget (comprehend reads 21k chars
+// per turn) so every section's whole trace reaches the extractor — chunked,
+// never clipped. 0 disables this trigger.
+const SECTION_THINKING_CHARS = (() => {
+  const n = Number(homeEnvGet("NODEDEX_CC_SECTION_THINKING_CHARS"));
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 18000;
 })();
 
 // Per-THOUGHT bound (chars). Generous now that sections bound the unit — the
