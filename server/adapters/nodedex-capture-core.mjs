@@ -27,8 +27,29 @@ const TRIGGER_MIN_CHARS = 10; // mirror the server's combined-content floor (/ap
 // NODEDEX_CAPTURE_REASONING_MAX when the consumer reads thinking
 // (NODEDEX_COMPREHEND_USE_REASONING=1) — the default 8000 was sized for
 // storage-only days and truncates long builder sessions' thinking traces.
+// Process env wins; ~/.nodedex/.env is the fallback (same fill-if-unset contract
+// as the server's boot-env) — watcher processes are spawned by the entry/TUI,
+// which forwards only its parity keys, so without this fallback a saved cap
+// would never reach the adapter. Minimal mirror of home-env.ts parseEnvFile
+// semantics (full-line # ignored, first `=` splits, inline ` # comment` stripped).
+function homeEnvGet(name) {
+  const live = process.env[name];
+  if (live != null && live !== "") return live;
+  try {
+    for (const line of readFileSync(join(homedir(), ".nodedex", ".env"), "utf8").split("\n")) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const eq = t.indexOf("=");
+      if (eq < 0 || t.slice(0, eq).trim() !== name) continue;
+      const raw = t.slice(eq + 1);
+      const m = raw.match(/\s#/);
+      return (m ? raw.slice(0, m.index) : raw).trim();
+    }
+  } catch { /* no home .env — defaults apply */ }
+  return undefined;
+}
 const capNum = (name, dflt) => {
-  const n = Number(process.env[name]);
+  const n = Number(homeEnvGet(name));
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : dflt;
 };
 const CAPS = {
