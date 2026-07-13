@@ -6,6 +6,46 @@ export function ok(data: unknown) {
   };
 }
 
+/**
+ * THE CURRENCY FIELD — and it is not one meaning, it is two.
+ *
+ * A `supersedes` edge says opposite things depending on WHAT it points at:
+ *
+ *   → a decision  : the old block is STALE. Don't use it; use the new one.
+ *   → a DEAD_END  : the dead-end was RESOLVED. The door STAYS CLOSED. The new block is HOW the
+ *                   project got around it — it is not a licence to re-try the failed approach.
+ *
+ * A dead-end never expires. "ES modules break under file:// CORS" is permanently true, and the
+ * fix does not make the warning obsolete. But we shipped ONE field name for both, and told the
+ * agent "superseded_by ⇒ STALE, never present the old one as current" — so an agent asked
+ * "should we use ES modules?" would look at the dead-end, see superseded_by, call it obsolete,
+ * and re-open the very door the block exists to keep shut.
+ *
+ * So the NAME carries the instruction, because a name is what the model actually reads. Derived
+ * purely from the target's TYPE: no model, no extraction change, no judgment.
+ *
+ * ⚠ This is NOT the fix we tested and killed. That one REMOVED the supersede edge from
+ * dead-ends and made things worse — the marker is the only pointer to the resolution. This
+ * keeps the edge and fixes what it SAYS.
+ *
+ * (Still missing, and it needs real judgment: a dead-end genuinely REOPENED because the reason
+ * it was closed no longer holds — "we added a dev server, so ES modules work now". That is a
+ * claim in prose, not a graph shape. No such block exists yet; when extraction can mark one,
+ * it earns its own field.)
+ */
+export function currencyFields(blockType: string, supersedingLabel: string): Record<string, string> {
+  if (blockType === "dead_end") {
+    return {
+      resolved_by: supersedingLabel,
+      note: "RESOLVED, NOT STALE — this door stays CLOSED. `resolved_by` is how the project got around it. Do not re-try the failed approach unless something has explicitly changed.",
+    };
+  }
+  return {
+    superseded_by: supersedingLabel,
+    note: "SUPERSEDED — read the superseding block for current truth",
+  };
+}
+
 export function err(code: string, message: string, extra?: Record<string, unknown>) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: { code, message, ...extra } }) }],
@@ -313,13 +353,34 @@ function composeSign(db: WorkspaceDB, walk: ThreadWalk): ChainSummary | null {
   const LINEAGE_CAP = 8;
   if (ordered.length > LINEAGE_CAP) ordered = [ordered[0]!, ...ordered.slice(ordered.length - (LINEAGE_CAP - 1))];
 
-  // Destinations = leaves OTHER than the focal, ranked by how conclusive then how used, capped.
-  const rankedLeaves = walk.leaves
+  // Destinations = THE NEXT TURN, not the far end of the road.
+  //
+  // This used to be walk.leaves — the TERMINAL nodes of the walk. Which meant that for
+  // dead_end_enemy-spawns-solid the sign stepped straight over decision_enemy-spawns-walkable
+  // (the fix, ONE edge away) and reported whatever leaf the thread eventually bottomed out in —
+  // an unrelated blueprint about NodeDex traversal, because in a long session everything is
+  // transitively connected. The signpost pointed AWAY from the answer, at exactly the moment
+  // the agent needed it.
+  //
+  // A sign says "where do I go from HERE". You navigate one hop at a time; the leaves are
+  // reachable by walking. So: immediate downstream successors, ranked. If there is no next hop
+  // (a real terminal), fall back to the leaves so we never render an empty sign on a live thread.
+  const rank = (b: Block) => ({
+    label: b.label, type: b.type, essence: b.essence || "",
+    w: CONCLUSION_WEIGHT[b.type] ?? 1, a: b.access_count ?? 0,
+  });
+  const usable = (b: Block | null | undefined): b is Block => !!b && b.status !== "archived";
+  const nextHops = [...walk.depth.entries()]
+    .filter(([id, d]) => d === 1 && id !== walk.focalId)
+    .map(([id]) => get(id))
+    .filter(usable)
+    .map(rank);
+  const leafFallback = walk.leaves
     .filter((id) => id !== walk.focalId)
     .map((id) => get(id))
-    .filter((b): b is Block => !!b && b.status !== "archived")
-    .map((b) => ({ label: b.label, type: b.type, essence: b.essence || "", w: CONCLUSION_WEIGHT[b.type] ?? 1, a: b.access_count ?? 0 }))
-    .sort((x, y) => y.w - x.w || y.a - x.a);
+    .filter(usable)
+    .map(rank);
+  const rankedLeaves = (nextHops.length ? nextHops : leafFallback).sort((x, y) => y.w - x.w || y.a - x.a);
   const shown = rankedLeaves.slice(0, BRANCH_CAP);
   const moreLeaves = Math.max(0, rankedLeaves.length - BRANCH_CAP);
 

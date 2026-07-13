@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine, blockEmbeddingText } from "../engine/embeddings.js";
-import { ok, err, cosineSim, assembleBlockChains, assembleFullThread, filterRootsByConcepts } from "./helpers.js";
+import { ok, err, cosineSim, assembleBlockChains, assembleFullThread, filterRootsByConcepts , currencyFields } from "./helpers.js";
 import { searchBlocks, rootContextFor, allWeak, WEAK_NOTE } from "../engine/search-core.js";
 
 // ─── Keyword concept extractor ───────────────────────────────────
@@ -516,8 +516,14 @@ Tip: use "surface" first. If the essence tells you what you need, stop there. "r
             ...outgoing.map((r) => r.target_id),
             ...incoming.map((r) => r.source_id),
           ]);
-          const currency = (id: string) =>
-            staleNeighbors.has(id) ? { superseded_by: staleNeighbors.get(id) } : {};
+          // …and the field NAME depends on what the neighbor IS: on a dead_end, a supersedes
+          // edge means RESOLVED (the door stays closed), not STALE (ignore it). Same edge,
+          // opposite instruction — see currencyFields.
+          const currency = (id: string) => {
+            const label = staleNeighbors.get(id);
+            if (!label) return {};
+            return currencyFields(db.getBlock(id)?.type ?? "", label);
+          };
           base.outgoing = outgoing.map((r) => ({ type: r.type, to: r.target_label, id: r.target_id, essence: gist(r.target_id), ...currency(r.target_id) }));
           base.incoming = incoming.map((r) => ({ type: r.type, from: r.source_label, id: r.source_id, essence: gist(r.source_id), ...currency(r.source_id) }));
           // Surface the causal arc(s) this block sits on (chains) PLUS every chain
@@ -627,7 +633,7 @@ Three signals: semantic similarity, keyword match, and concept overlap. Concept 
             ? rootCtx.get(block.project_id)!
             : {}),
           ...(supersededBy.has(block.id)
-            ? { superseded_by: supersededBy.get(block.id), note: "SUPERSEDED — read the superseding block for current truth" }
+            ? currencyFields(block.type, supersededBy.get(block.id)!)
             : {}),
         }));
 
@@ -773,7 +779,11 @@ Results are HEADLINES (label, type, essence) — and most blocks mean little alo
         const supersededBy = db.getSupersededByLabels(sliced.map((b) => b.id));
         const results = sliced.map((b) => {
           const row: Record<string, any> = { label: b.label, type: b.type, essence: b.essence, on_chain: onChain((b as any).chain_id) };
-          if (supersededBy.has(b.id)) row.superseded_by = supersededBy.get(b.id);
+          // The field NAME is the instruction: `resolved_by` on a dead_end (door stays CLOSED,
+          // here is how we got around it) vs `superseded_by` elsewhere (stale, use the new one).
+          // workspace_list(type="dead_end") is where an agent MEETS the closed doors — labelling
+          // a permanent warning "superseded" here is precisely how it gets waved through.
+          if (supersededBy.has(b.id)) Object.assign(row, currencyFields(b.type, supersededBy.get(b.id)!));
           // For stateful items (task/blueprint), status is the headline ("what's still
           // open?") — surface it (+ priority) so the list IS the agent's task view
           // without opening each one. Pairs with workspace_task_update on the default
