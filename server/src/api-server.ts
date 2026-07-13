@@ -18,6 +18,7 @@ import { createBlocksRouter }      from "./routes/blocks.js";
 import { createRecallRouter }      from "./routes/recall.js";
 import { createReflectRouter }     from "./routes/reflect.js";
 import { createSessionRouter }     from "./routes/session.js";
+import { recordGraphRead }         from "./tools/setup-state.js";
 import { createWorkspaceRouter }   from "./routes/workspace.js";
 import { createAdminRouter }       from "./routes/admin.js";
 import { createInjectRouter }      from "./routes/inject.js";
@@ -91,6 +92,22 @@ export function startApiServer(
     const header = (req.headers["x-admin-token"] || "") as string;
     if (bearer === ADMIN_TOKEN || header === ADMIN_TOKEN) return next();
     res.status(401).json({ error: "Unauthorized — NODEDEX_ADMIN_TOKEN required" });
+  });
+
+  // ─── The READ CLOCK ───────────────────────────────────────────────────────
+  // Stamp when an agent last actually CONSULTED the graph. The gate (/api/gate/check)
+  // measures staleness from this, so it has to see reads on BOTH surfaces: an agent with
+  // its own loop reads over REST, never through MCP, and would otherwise be nagged forever
+  // no matter how diligently it looked. (The MCP tool wrapper stamps the same clock.)
+  //
+  // Only reads that put project KNOWLEDGE in front of the agent count. /api/session,
+  // /api/health and /api/stats are telemetry — calling them says nothing about whether the
+  // agent knows what this project already ruled out, and counting them would let the gate
+  // be silenced by a heartbeat.
+  const GRAPH_READ_PATHS = /^\/api\/(tree|search|blocks|roots|chains|recall|filter)(\/|$)/;
+  app.use((req, _res, next) => {
+    if (req.method === "GET" && GRAPH_READ_PATHS.test(req.path)) recordGraphRead(db);
+    next();
   });
 
   // ─── Mount all route modules ──────────────────────────────────────────────

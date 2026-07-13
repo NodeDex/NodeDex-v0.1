@@ -7,7 +7,7 @@ import { ok, err, cosineSim } from "./helpers.js";
 import { buildAgentFlagSurface } from "./flag-surface.js";
 import { runArcExtraction } from "../middleware/reflect/arc-pipeline.js";
 import { protocolBlock } from "../agent-protocol.js";
-import { markReflexOnboarded } from "./onboarding-state.js";
+import { markDeclined, verifyReflexWrite } from "./setup-state.js";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -32,34 +32,46 @@ export function registerSystemTools(server: McpServer, db: WorkspaceDB, embeddin
   server.tool(
     "workspace_onboard",
     `ONE-TIME setup, and the single highest-value call you can make here. It makes the memory reflex PERMANENT in this project rather than relying on these per-connect instructions — which are gone from your context by the time you're deep in a task and actually about to commit to an approach. Call this ONCE on your first connect in a project.
-The result gives you a 4-step contract: (1) CHECK where YOUR standing instructions come from — a file/config re-read into context EVERY TURN, not just at startup; (2) if you have one and can write to it, EXPLAIN to the user why a memory tool wants to touch their config, and ASK permission; (3) on yes, write reflex_block VERBATIM (marked block — replace in place if markers already exist, never duplicate); (4) if you have no per-turn channel or they decline, do nothing — these session instructions still apply.`,
-    {},
-    async () => {
+Call with NO arguments to get the contract: (1) CHECK where YOUR standing instructions come from — a file/config re-read into context EVERY TURN (or a system prompt loaded on every run), not something delivered once mid-session; (2) EXPLAIN to the user why a memory tool wants to touch their config, and ASK permission; (3) on yes, write reflex_block VERBATIM (marked block — replace in place if markers already exist, never duplicate); (4) CALL THIS AGAIN with written_to=<the absolute path you wrote> so the server can READ IT BACK and confirm — the setup notice only stops once the write is VERIFIED, never merely claimed. If the user declines, call with declined=true instead and it stops for good.`,
+    {
+      written_to: z.string().optional().describe("Absolute path of the standing-instructions file you just wrote the reflex block into. The server reads it back and verifies the marker block is present."),
+      declined: z.boolean().optional().describe("The user said no. Records the decision and stops the notice permanently."),
+    },
+    async (params: { written_to?: string; declined?: boolean }) => {
       try {
-        // The CALL is the extinguishing event for the setup notice that rides every other
-        // tool result — not the write. We cannot see the user's config file, so we cannot
-        // verify the write; and a DECLINE is a decision we must respect rather than nag
-        // past. Either way the agent has now been told, once, in full. Fail-open: if this
-        // throws, the notice simply keeps showing, which is the safe direction.
-        markReflexOnboarded(db);
+        // VERIFY, NEVER TRUST. The first version of this tool marked setup complete the
+        // moment it was CALLED — so an agent could call it, write nothing, and silence the
+        // nag forever. That is precisely the failure this whole mechanism exists to cure
+        // (the model says it did a thing and didn't), reproduced inside the cure. Now the
+        // agent WRITES (it alone knows its host, and can read the file without clobbering
+        // what is already there) and the SERVER READS IT BACK.
+        if (params.declined) {
+          markDeclined(db, "reflex");
+          return ok({ status: "declined", note: "Recorded. The reflex notice will not appear again. The per-connect instructions still apply for this session." });
+        }
+        if (params.written_to) {
+          const v = verifyReflexWrite(db, params.written_to);
+          if (!v.ok) return ok({ status: "not_verified", problem: v.reason, next: "Fix the write and call again with written_to — or if the file is genuinely unreachable from this server, just proceed; the block still works where you wrote it." });
+          return ok({ status: "verified", file: params.written_to, note: "Confirmed the marked block is present. The reflex is now re-read into your context on every turn, and the setup notice stops." });
+        }
         return ok({
           reason_for_user:
             "NodeDex records what this project already tried, ruled out, and constrained. That only helps if I actually check it at the moment I'm about to make a decision — but the instruction to check arrives once when I connect, and it's long gone from my context by the time I'm hours into a task. I can save a short, clearly-marked note into this project's agent instructions file so the reflex is in front of me on every turn instead. It contains no project data — just the habit. You can delete the block anytime. Want me to?",
 
           step_1_find_your_standing_channel:
-            "Where do YOUR standing instructions come from? Not any particular filename — the property that matters is: a file or config whose contents are re-read into your context on EVERY TURN, not just at startup. (An instruction delivered once at startup has the exact decay problem we're fixing.) If you have such a channel AND a file-write tool → step 2. If you have NO per-turn channel → step 4.",
+            "Where do YOUR standing instructions come from? Not any particular filename — the property that matters is: text that is in your context on EVERY TURN. That is usually a file the host re-reads each turn (AGENTS.md, CLAUDE.md, a rules file), but a SYSTEM PROMPT loaded from a file at every run qualifies too — it may only take effect on your next session, which is fine: this is a standing habit, not a hotfix. What does NOT qualify is anything delivered once, mid-session (like these instructions). You know your own host; we deliberately do not guess.",
 
           where_to_write:
-            "Prefer AGENTS.md at the repo root when your host reads it — it is the cross-tool standard (Linux Foundation / Agentic AI Foundation, read by Codex, Claude Code, Copilot, Cursor, Aider, Windsurf, Zed, Gemini CLI and others), so the reflex carries to every agent that works in this repo, not just you. If your host does not read AGENTS.md, use its native per-turn channel instead (e.g. CLAUDE.md, .cursor/rules/, .clinerules, a system-prompt file). Write it in ONE place — do not duplicate it across files.",
+            "Prefer AGENTS.md at the repo root when your host reads it — it is the cross-tool standard (Linux Foundation / Agentic AI Foundation; read by Codex, Claude Code, Copilot, Cursor, Aider, Windsurf, Zed, Gemini CLI and others), so the reflex carries to every agent that works in this repo, not just you. Otherwise use your host's native per-turn channel (CLAUDE.md, .cursor/rules/, .clinerules, your system-prompt file). Write it in ONE place — never duplicate it across files.",
 
           step_2_explain_and_ask:
-            "Tell the user `reason_for_user` verbatim-in-spirit (so an MCP tool editing their config isn't alarming), name the exact file you intend to write, and ASK permission. Wait for a clear yes. Never write without it.",
+            "Tell the user `reason_for_user` verbatim-in-spirit (so an MCP tool editing their config isn't alarming), name the exact file you intend to write, and ASK permission. Wait for a clear yes. Never write without it. If they say no → call workspace_onboard(declined=true) and stop.",
 
           step_3_persist:
-            "On yes: append `reflex_block` VERBATIM to that file. It is wrapped in nodedex:protocol markers — if those markers already exist there, REPLACE that block in place (never duplicate, never nest). Then tell the user which file you wrote and that deleting the marked block removes it. Do this ONCE; no need to call workspace_onboard again in this project.",
+            "On yes: append `reflex_block` VERBATIM to that file. READ THE FILE FIRST — it is the user's, it already has content, and you must not clobber or contradict it; place the block cleanly at the end. It is wrapped in nodedex:protocol markers — if those markers already exist, REPLACE that block in place (never duplicate, never nest).",
 
-          step_4_fallback:
-            "If you have no per-turn standing channel, or the user declines: do nothing further, and do not ask again. These per-connect instructions still cover you for this session — just proceed normally, and check the graph before you commit to an approach.",
+          step_4_verify:
+            "Then call workspace_onboard AGAIN with written_to=<the absolute path>. The server reads the file back and confirms the marker block is really there. THIS is what stops the setup notice — not the claim, the verified fact. (If the server can't see your disk because you run in a container or on another machine, it will say so; just proceed — your write still works.)",
 
           reflex_block: protocolBlock(),
           // kept under the old key too — an agent that learned the previous contract
@@ -95,14 +107,35 @@ The result gives you a 4-step contract: (1) CHECK where YOUR standing instructio
     throw new Error(`capture adapter not found (looked in: ${candidates.join(" | ")})`);
   };
 
+  // Same single-source-of-truth trick for the gate script (adapters/nodedex-gate.mjs).
+  const readGateScript = (): { filename: string; source: string } => {
+    const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+    const candidates = [
+      path.resolve(moduleDir, "../../adapters/nodedex-gate.mjs"),
+      path.resolve(process.cwd(), "adapters/nodedex-gate.mjs"),
+      path.resolve(process.cwd(), "Nodedex/server/adapters/nodedex-gate.mjs"),
+    ];
+    for (const p of candidates) {
+      try { if (fs.existsSync(p)) return { filename: "nodedex-gate.mjs", source: fs.readFileSync(p, "utf8") }; }
+      catch { /* try next */ }
+    }
+    throw new Error(`gate script not found (looked in: ${candidates.join(" | ")})`);
+  };
+
   server.tool(
     "workspace_install_capture",
     `Deploy Nodedex's capture adapter into THIS host so each finished turn is fed to the memory pipeline. Without it, nothing is ever stored — the MCP server is passive and can't read your output itself. Call this ONCE per host during setup, after the user agrees.
 The adapter is a NON-INTRUSIVE tee: it sends a COPY of {user_message, agent_response, reasoning} to POST /api/reflect/trigger, fire-and-forget, OUT of your LLM's path — your own model call is never touched or slowed. You choose which fields to capture (response/user/reasoning).
-The result gives you adapter_source (write it to a file) + wiring_examples (call it in your host's post-turn seam) + a 4-step contract: (1) CHECK you can write a file AND have a post-turn seam to call it from; (2) EXPLAIN reason_for_user + ASK permission (an MCP tool wiring capture into their agent shouldn't surprise them); (3) on yes, WRITE adapter_filename verbatim + add the one-line call in the post-turn seam + (optional) set NODEDEX_CAPTURE_* env to scope fields; (4) if you can't, do nothing — capture just won't run on this host.`,
-    {},
-    async () => {
+The result gives you adapter_source (write it to a file) + wiring_examples (call it in your host's post-turn seam) + a 4-step contract: (1) CHECK you can write a file AND have a post-turn seam to call it from; (2) EXPLAIN reason_for_user + ASK permission (an MCP tool wiring capture into their agent shouldn't surprise them); (3) on yes, WRITE adapter_filename verbatim + add the one-line call in the post-turn seam + (optional) set NODEDEX_CAPTURE_* env to scope fields; (4) if you can't or they decline, call with declined=true.`,
+    {
+      declined: z.boolean().optional().describe("The user said no, or this host has no post-turn seam. Records the decision and stops the notice permanently."),
+    },
+    async (params: { declined?: boolean }) => {
       try {
+        if (params.declined) {
+          markDeclined(db, "capture");
+          return ok({ status: "declined", note: "Recorded. We won't ask again. Note the graph will stay empty unless turns reach it another way (e.g. a transcript watcher on the NodeDex side)." });
+        }
         const { filename, source } = readCaptureAdapter();
         return ok({
           reason_for_user:
@@ -137,10 +170,71 @@ The result gives you adapter_source (write it to a file) + wiring_examples (call
           step_3_deploy:
             "On yes: (a) write `adapter_source` to `adapter_filename` next to your agent code; (b) add the matching one-liner from wiring_examples in your post-turn seam; (c) OPTIONAL: set NODEDEX_CAPTURE_* env to scope which fields are sent. Do this ONCE per host.",
           step_4_fallback:
-            "If you can't write files / have no post-turn seam, or the user declines: do nothing. Capture simply won't run here — reads still work; the graph just won't grow from this host.",
+            "If you can't write files / have no post-turn seam, or the user declines: call workspace_install_capture(declined=true) so we stop asking. Reads still work; the graph just won't grow from this host. (Some hosts don't expose a post-turn seam at all — those are covered by a transcript watcher on the NodeDex side instead; tell the user to enable it in the NodeDex TUI.)",
+          verification:
+            "We do NOT take your word for it. Capture counts as wired only when a real turn LANDS in the graph — until then the setup notice keeps saying capture is unproven. That is the honest signal: a graph nobody feeds is worse than no graph, because the reflex will point at nothing.",
         });
       } catch (error) {
         return err("INSTALL_CAPTURE_FAILED", String(error));
+      }
+    }
+  );
+
+  // ─── Tool: workspace_install_gate ────────────────────────────────
+  // The THIRD wire, and the only one that does not depend on the model remembering.
+  //
+  // The reflex is a persistent PROMPT — better than a per-connect one, but still a request.
+  // This is a GUARANTEE: it runs on the HOST's schedule (before an edit / every turn), asks
+  // the server whether the agent's view of the graph is STALE, and puts the answer back in
+  // front of the agent at the moment it is choosing an approach. That is the exact moment
+  // measured to fail: read the dead-ends at 12:17, ship the bug they warned about at 16:45.
+  //
+  // Universal by CAPABILITY, not by host list: we ask "what fires before you edit a file, or
+  // on every turn?" and the agent — which knows its own host — installs there. We never guess
+  // at thirty hook conventions.
+  server.tool(
+    "workspace_install_gate",
+    `Install the memory GATE: a check that fires at the MOMENT YOU EDIT — not once at session start — and reminds you to consult the graph when your view of it has gone stale. This is the only NodeDex wire that doesn't depend on you remembering anything, which is why it's the strongest one. Call this ONCE per host during setup, after the user agrees.
+It is a WARNING, never a block, and it FAILS OPEN — if NodeDex is down it says nothing and stops nothing. Measured: an agent read this project's dead-ends at 12:17, wrote the code at 16:44, and shipped the exact bug they warned about. A gate at the edit would have caught it; a prompt at connect did not.
+The result gives you gate_source (a tiny script) + a 4-step contract: (1) CHECK you have a seam that runs before a file edit, or on every turn (a pre-tool hook, middleware, the line before your write call) — you know your host, we don't; (2) EXPLAIN reason_for_user + ASK permission, and READ their config before touching it — MERGE, never overwrite: it is their file and it may already have hooks in it; (3) on yes, write gate_source and wire it in so its stdout reaches your context; (4) if you have no such seam or they decline, call with declined=true.`,
+    {
+      declined: z.boolean().optional().describe("The user said no, or this host has no pre-edit/per-turn seam. Records the decision and stops the notice permanently."),
+    },
+    async (params: { declined?: boolean }) => {
+      try {
+        if (params.declined) {
+          markDeclined(db, "gate");
+          return ok({ status: "declined", note: "Recorded. We won't ask again. The reflex (if persisted) is still your floor — check the graph before you commit to an approach." });
+        }
+        const { filename, source } = readGateScript();
+        const base = (process.env.NODEDEX_URL || "http://localhost:3001").replace(/\/$/, "");
+        return ok({
+          reason_for_user:
+            "The memory graph only helps if I look at it at the moment I'm deciding something — and that's exactly when I'm most likely not to, because I feel confident and I'm hours deep in the work. This installs a small check that runs right before I edit a file: if I haven't consulted the graph recently, it reminds me. It never blocks anything, and if NodeDex isn't running it does nothing at all. It's the difference between me being asked to remember and me actually being reminded. Want me to set it up?",
+          what_it_does: `Calls GET ${base}/api/gate/check before an edit. The server answers 'remind' only when this graph hasn't been read recently (stale view); otherwise it stays silent. Whatever the script prints should reach your context.`,
+          why_time_not_session:
+            "The check is about STALENESS, not 'did I read it this session'. The measured failure read the graph and shipped the bug FOUR HOURS LATER in the same session — session-scoped would have said 'already read' and stayed quiet.",
+          gate_filename: filename,
+          gate_source: source,
+          wiring_examples: {
+            pre_edit_hook: "// In your host's pre-file-edit hook: run `node nodedex-gate.mjs`. Anything it prints to stdout should be fed back into your context. Exit code is always 0.",
+            per_turn: "// No pre-edit seam? A per-turn hook works too — slightly noisier, same effect.",
+            custom_loop: "import { execFileSync } from 'node:child_process';\n// right before you apply a file edit:\nconst hint = execFileSync('node', ['nodedex-gate.mjs'], { encoding: 'utf8' });\nif (hint.trim()) messages.push({ role: 'user', content: hint });",
+            envelope_note: "If your host requires a specific JSON envelope for hook output, wrap the script — the part that matters is the endpoint call, not the plumbing.",
+          },
+          step_1_check_capability:
+            "Do you have a seam that runs BEFORE a file edit (best), or on every turn (acceptable)? A pre-tool hook, a middleware, or simply the line before your write call in your own loop. If not → step_4.",
+          step_2_explain_and_ask:
+            "Tell the user `reason_for_user` and ASK permission. If wiring it means touching a config file of theirs (e.g. a settings/hooks file): READ IT FIRST and MERGE — never overwrite. They may already have hooks there, and clobbering them is unforgivable.",
+          step_3_deploy:
+            "On yes: write `gate_source` to `gate_filename`, wire it into that seam, and make sure its stdout reaches your context. Keep the fail-open behaviour intact — a memory tool must never block someone's editor.",
+          step_4_fallback:
+            "No seam, or they decline → call workspace_install_gate(declined=true). The persisted reflex remains your floor.",
+          verification:
+            "We do NOT take your word for it. The gate counts as installed only when a real check HITS the endpoint. Until then the setup notice keeps saying so.",
+        });
+      } catch (error) {
+        return err("INSTALL_GATE_FAILED", String(error));
       }
     }
   );

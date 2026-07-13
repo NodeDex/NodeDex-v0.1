@@ -17,7 +17,7 @@ import { registerProjectTools } from "./tools/projects.js";
 import { registerTaskTools } from "./tools/tasks.js";
 import { registerSystemTools } from "./tools/system.js";
 import { appendFlagNudge } from "./tools/flag-surface.js";
-import { appendSetupNotice } from "./tools/onboarding-state.js";
+import { appendSetupNotice, recordGraphRead } from "./tools/setup-state.js";
 import { AGENT_PROTOCOL } from "./agent-protocol.js";
 
 // The MCP `instructions` field — the advisory FLOOR the host injects on connect. Installs
@@ -37,9 +37,18 @@ First time connecting in this project? Call workspace_onboard ONCE — it offers
 const READ_TOOLS_BASE = [
   "workspace_get", "workspace_thread", "workspace_search", "workspace_filter", "workspace_tree",
   "workspace_list", "workspace_stats", "workspace_history", "workspace_find_skill",
-  "workspace_onboard", "workspace_install_capture",
+  "workspace_onboard", "workspace_install_capture", "workspace_install_gate",
   "workspace_task_update",
 ];
+
+// Tools that count as CONSULTING THE GRAPH. The gate measures staleness from the last one
+// of these — so it must be the reads that actually put project knowledge in front of the
+// agent. workspace_stats (a count) and the setup tools do NOT qualify: calling them tells
+// us nothing about whether the agent knows what this project already ruled out.
+const GRAPH_READ_TOOLS = new Set([
+  "workspace_get", "workspace_thread", "workspace_search", "workspace_filter",
+  "workspace_tree", "workspace_list", "workspace_history",
+]);
 // Task claiming/creation stay opt-in (a host often has its own task system).
 const TASK_TOOLS = ["workspace_task_next", "workspace_task_create"];
 
@@ -89,8 +98,14 @@ export function buildWorkspaceServer(db: WorkspaceDB, embeddings: EmbeddingEngin
       const handler = args[args.length - 1];
       if (typeof handler === "function") {
         const orig = handler as (...h: unknown[]) => unknown;
-        args[args.length - 1] = async (...h: unknown[]) =>
-          appendSetupNotice(appendFlagNudge((await orig(...h)) as never, db, name) as never, db, name);
+        args[args.length - 1] = async (...h: unknown[]) => {
+          const result = await orig(...h);
+          // 4. READ CLOCK — stamp when the agent last actually LOOKED at the graph. The
+          //    gate reads this to decide whether its view has gone stale. Only genuine
+          //    graph reads count: stats/setup calls are not "consulting the graph".
+          if (GRAPH_READ_TOOLS.has(name)) recordGraphRead(db);
+          return appendSetupNotice(appendFlagNudge(result as never, db, name) as never, db, name);
+        };
       }
       return registerTool(...args);
     };

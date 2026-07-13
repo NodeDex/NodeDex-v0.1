@@ -6,6 +6,7 @@ import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine, blockEmbeddingText } from "../engine/embeddings.js";
 import { getLLMProvider, getEmbeddingProvider, resetProviders } from "../engine/providers/index.js";
 import { protocolBlock } from "../agent-protocol.js";
+import { markGateSeen, gateShouldRemind } from "../tools/setup-state.js";
 import type { SchedulerJobStatus } from "../server.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
@@ -128,6 +129,37 @@ export function createAdminRouter(
         "is STATIC (set once at launch — most autonomous agents and custom loops), paste this block into that " +
         "system prompt yourself. Either way it must be present on EVERY turn: delivered once at startup, it is " +
         "gone from context by the time the agent is deep in a task and actually choosing an approach.",
+    });
+  });
+
+  // ─── The GATE check ────────────────────────────────────────────────────────
+  // Called by adapters/nodedex-gate.mjs from the agent's pre-edit (or per-turn) seam.
+  // This is the moment the whole system exists to reach: the agent is ABOUT TO COMMIT to
+  // an approach. We answer one question — is its view of this graph stale? — and if so we
+  // hand back a short reminder that the host feeds into its context.
+  //
+  // Staleness is measured in TIME, not sessions. The failure we measured stayed inside one
+  // session: read the dead-ends at 12:17, shipped the bug they warned about at 16:45. A
+  // session-scoped check would have said "already read" and stayed silent.
+  //
+  // A GET with no arguments, on purpose: it must be callable from a 20-line script in any
+  // language, from any host, with no state to thread through.
+  router.get("/api/gate/check", (_req, res) => {
+    // The call itself is the proof the gate is wired — the only honest verification, since
+    // the wiring lives in the user's host where we cannot see it.
+    markGateSeen(db);
+    if (!gateShouldRemind(db)) {
+      res.json({ remind: false });
+      return;
+    }
+    res.json({
+      remind: true,
+      message:
+        "⚠ NODEDEX: you are about to change code, and you have not consulted this project's memory graph recently. " +
+        "It records what was already DECIDED, TRIED-AND-ABANDONED, and CONSTRAINED here — reasoning the code does " +
+        "not carry. Your confidence is not evidence: what makes an approach right or wrong IN THIS PROJECT is in " +
+        "neither your training nor your context unless you read it. Check before you commit to this approach — " +
+        "workspace_filter(concepts), then workspace_list(type=\"dead_end\") and workspace_list(type=\"constraint\").",
     });
   });
 

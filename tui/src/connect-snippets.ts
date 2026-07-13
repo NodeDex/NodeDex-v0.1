@@ -126,36 +126,44 @@ Docker'd agent on this machine? Use http://host.docker.internal:<port>/mcp inste
 
 ---
 
-# 3 · The memory reflex — the wire people forget
+# 3 · Wiring NodeDex INTO the agent — the step people skip
 
-Connecting the tools is not enough. The instruction to CHECK the graph reaches the agent
-ONCE, when it connects — and it is gone from context hours later, which is exactly when
-the agent is deep in a task and actually choosing an approach. Measured: an agent read
-the recorded dead-ends at 12:17, wrote the code at 14:00, and shipped the bug the graph
-had warned about.
+Connecting the tools is not enough, and this is the part that decides whether NodeDex
+actually helps you. Measured: an agent read this project's recorded dead-ends at 12:17,
+wrote the code at 16:44, and shipped the exact bug those dead-ends warned about. It
+understood them perfectly. It just no longer had them — the instruction to look arrived
+once, at connect, and was long gone from its context by the time it chose an approach.
 
-So the reflex has to live where the agent re-reads it EVERY turn.
+So there are THREE wires, each with a different lifetime. Your agent installs them itself.
+Say this to it, once:
 
-## If your agent has a standing instructions file (Claude Code, Cursor, Codex, Copilot…)
+    Set up NodeDex
 
-It can install the reflex itself. Say this to it, once:
+It will be nagged on every tool result until all three are done, so it is hard to skip:
 
-    Run workspace_onboard
+  · **CAPTURE**  — feeds finished turns to the graph. Without it the graph stays EMPTY.
+  · **REFLEX**   — a short marked block in AGENTS.md (or CLAUDE.md / your rules file), so
+                   the habit is re-read into its context on EVERY turn, not just at connect.
+  · **GATE**     — a check that fires right before it edits a file, and reminds it to
+                   consult the graph if it hasn't looked recently. Warns; never blocks;
+                   does nothing at all if NodeDex isn't running.
 
-It will check its own config channel, ask your permission, and write a short marked block
-into AGENTS.md (or CLAUDE.md / its rules file). No project data — just the habit. Delete
-the marked block to opt out. You will also see the agent nudged to do this on every tool
-result until it does.
+It asks your permission for each, and it reads your files before touching them (it appends
+a marked block; it does not overwrite what's already there). Delete the block to opt out.
 
-## If your agent's system prompt is STATIC (most autonomous agents + custom loops)
+**None of it is taken on trust.** NodeDex verifies each wire by what actually HAPPENS —
+it reads the file back, waits for a real turn to land, waits for a real check to arrive.
+An agent that says it did the setup and didn't will keep being nagged.
 
-There is no per-turn file for it to write, so it cannot install anything — YOU have to
-paste it. Get the block:
+## If your agent has no file-write tool
+
+Then it can't install anything, and you wire it yourself. The reflex block:
 
     curl ${p.mcpUrl.replace(/\/mcp$/, "")}/api/agent-reflex?format=text
 
-Paste it into that agent's system prompt. It must be present on EVERY turn — an
-instruction delivered once at launch has the exact decay problem this fixes.
+Paste it into that agent's system prompt — it must be present on EVERY turn. For capture,
+POST each finished turn to \`/api/reflect/trigger\`; for the gate, call
+\`GET /api/gate/check\` before a file edit and feed anything it returns back into context.
 
 ---
 
