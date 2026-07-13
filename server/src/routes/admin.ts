@@ -6,7 +6,7 @@ import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine, blockEmbeddingText } from "../engine/embeddings.js";
 import { getLLMProvider, getEmbeddingProvider, resetProviders } from "../engine/providers/index.js";
 import { protocolBlock } from "../agent-protocol.js";
-import { markGateSeen, gateShouldRemind, setupStatus, normalizeClient } from "../tools/setup-state.js";
+import { markGateSeen, gateShouldRemind, setupStatus, normalizeClient, forgetAgent } from "../tools/setup-state.js";
 import type { SchedulerJobStatus } from "../server.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
@@ -140,6 +140,18 @@ export function createAdminRouter(
   // observed effect, never from configured intent.
   router.get("/api/setup", (_req, res) => {
     res.json(setupStatus(db));
+  });
+
+  // Forget one agent's RECORDED wire state — a reset, not an uninstall. The reflex block and the
+  // gate script live in the USER's own files; we cannot un-write them, and do not pretend to.
+  // After this the agent is nagged again and re-installs itself (the user tells it to, or it
+  // bumps into the notice). Lets the panel be corrected when a block is deleted or a host retired
+  // — a status surface that cannot be reset eventually lies.
+  router.post("/api/setup/forget", (req, res) => {
+    const agent = normalizeClient((req.body?.agent as string) || (req.query.agent as string) || "");
+    if (!agent || agent === "unknown-agent") { res.status(400).json({ error: "agent required" }); return; }
+    forgetAgent(db, agent);
+    res.json({ ok: true, forgot: agent, note: "Recorded wires cleared. This agent will be re-prompted; ask it to run workspace_onboard to wire itself back in." });
   });
 
   // ─── The GATE check ────────────────────────────────────────────────────────

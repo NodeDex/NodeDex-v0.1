@@ -293,6 +293,23 @@ export async function fetchSetup(): Promise<SetupStatus | null> {
   return getJSON<SetupStatus>("/api/setup", 6000);
 }
 
+/** Clear an agent's RECORDED wire state — a reset, not an uninstall. The reflex/gate live in the
+ *  user's own files; the agent must re-install (say "Set up NodeDex" to it). Lets the panel be
+ *  corrected after a block is deleted or a host retired. */
+export async function forgetAgent(agent: string): Promise<boolean> {
+  try {
+    const r = await fetch(`${currentBase}/api/setup/forget`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ agent }),
+      signal: AbortSignal.timeout(6000),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Persist a config patch (model/fallback/breaker). Applies live + writes .env. */
 export async function postConfig(patch: Record<string, string | number>): Promise<boolean> {
   try {

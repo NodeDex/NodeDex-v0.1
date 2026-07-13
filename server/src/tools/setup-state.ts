@@ -163,6 +163,32 @@ export function knownAgents(db: WorkspaceDB): string[] {
   return (get(db, K.agents) ?? "").split(",").filter(Boolean);
 }
 
+/**
+ * FORGET an agent's wire state. Clears what we RECORDED — it does not, and cannot, un-write
+ * anything: the reflex block sits in the user's own file and the gate script in the user's own
+ * seam. Only the agent can put those there, and only the user can delete them.
+ *
+ * So this is a RESET, not an uninstall. After it, that agent is nagged again on its next tool
+ * call and re-installs itself (the user says "Set up NodeDex" to it, or it simply bumps into the
+ * notice). Exists because the record otherwise goes stale and lies:
+ *   · the user deletes the marked block from AGENTS.md → we still report reflex ✓, forever
+ *   · they retire an agent / switch hosts → a dead agent sits in the panel claiming to be wired
+ * A status surface that cannot be corrected is a status surface that will eventually be wrong.
+ */
+export function forgetAgent(db: WorkspaceDB, client: string): void {
+  const k = KEYS(client);
+  try {
+    const raw2 = raw(db);
+    ensure(raw2);
+    const del = raw2.prepare(`DELETE FROM maintenance_state WHERE key = ?`);
+    for (const key of Object.values(k)) del.run(key);
+    del.run(`${K.lastRead}::${client}`);
+    del.run(`${K.readEpoch}::${client}`);
+    raw2.prepare(`DELETE FROM maintenance_state WHERE key LIKE ?`).run(`gate_seen_file::${client}::%`);
+  } catch { /* best-effort */ }
+  set(db, K.agents, knownAgents(db).filter((a) => a !== client).join(","));
+}
+
 // A turn ARRIVING is the proof of capture — and it must be recorded INDEPENDENTLY of what the
 // pipeline later does with it. conversation_turns looked like the natural place to check, but
 // that table is only written in ARC mode (NODEDEX_ARC_EXTRACTION=1 *and* the adapter chose to

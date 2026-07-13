@@ -11,7 +11,7 @@ import { Box, Text, useInput } from "ink";
 import { Section, Row, Keys, Panel } from "./components.js";
 import { theme, glyph, trunc, fmtMoney } from "./theme.js";
 import {
-  fetchConfig, postConfig, setReflectPausedRemote, getBase, setBase, fetchSetup,
+  fetchConfig, postConfig, setReflectPausedRemote, getBase, setBase, fetchSetup, forgetAgent,
   type AdminConfig, type Dashboard, type Balance, type SetupStatus,
 } from "./api.js";
 import {
@@ -108,6 +108,17 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
     return () => clearTimeout(id);
   }, [notice]);
 
+  // Navigation runs over a DYNAMIC list: the static config rows with one selectable `w-agent:<name>`
+  // row per wired agent spliced in where they render (between the pipeline rows and the capture
+  // watchers). Selecting one and pressing enter FORGETS that agent's recorded wires — a reset, not
+  // an uninstall (the reflex/gate live in the agent's own files; it must re-install itself). The
+  // pure-status rows (turns, gate checks, last consulted) stay non-selectable: nothing to do to a fact.
+  const agentRowIds = (setup?.agents ?? []).map((a) => `w-agent:${a?.agent ?? "?"}`);
+  const navRows: string[] = (() => {
+    const capIdx = ROWS.indexOf("cap");
+    return [...ROWS.slice(0, capIdx + 1), ...agentRowIds, ...ROWS.slice(capIdx + 1)];
+  })();
+
   // Auto-scan local model servers when the provider overlay enters the scan step
   // (same probe onboarding uses); [r] bumps the nonce to rescan.
   useEffect(() => {
@@ -149,7 +160,18 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
     if (ok) load();
   }, [load]);
 
-  const act = useCallback((id: RowId) => {
+  const act = useCallback((id: string) => {
+    // Forget a wired agent — clears our RECORD only. The agent must re-install (say "Set up
+    // NodeDex" to it); we cannot touch the reflex block or gate script in its own files.
+    if (id.startsWith("w-agent:")) {
+      const agent = id.slice("w-agent:".length);
+      setNotice(`forgetting ${agent}…`);
+      void forgetAgent(agent).then((ok) => {
+        setNotice(ok ? `${agent} reset — ask it to run workspace_onboard to wire back in` : "forget failed");
+        if (ok) void fetchSetup().then(setSetup).catch(() => {});
+      });
+      return;
+    }
     if (id === "server") {
       setBusy(true);
       void discover().then((s) => { setServers(s); setSrvSel(0); setBusy(false); setOverlay("servers"); });
@@ -187,7 +209,7 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
       id === "floor" ? (floor != null ? String(floor) : "") :
       cap != null ? String(cap) : "",
     );
-    setEditing(id);
+    setEditing(id as RowId); // only editable config rows reach here (agent rows returned early)
   }, [paused, cfg, floor, cap, hc, cc]);
 
   // Persist the provider choice to ~/.nodedex/config.json (what launchServer injects).
@@ -384,9 +406,9 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
       else if (input && !key.ctrl && !key.meta) setBuf((b) => b + input);
       return;
     }
-    if (key.downArrow || input === "j") { setSel((i) => Math.min(i + 1, ROWS.length - 1)); return; }
+    if (key.downArrow || input === "j") { setSel((i) => Math.min(i + 1, navRows.length - 1)); return; }
     if (key.upArrow || input === "k")   { setSel((i) => Math.max(i - 1, 0)); return; }
-    if (key.return)                     { act(ROWS[Math.min(sel, ROWS.length - 1)]!); return; }
+    if (key.return)                     { act(navRows[Math.min(sel, navRows.length - 1)]!); return; }
     if (input.toLowerCase() === "r")    { load(); setHc(loadHermesCapture()); setCc(loadClaudeCapture()); setNotice("refreshed"); return; }
   }, { isActive });
 
@@ -403,7 +425,7 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
     );
   }
 
-  const selId = ROWS[Math.min(sel, ROWS.length - 1)];
+  const selId = navRows[Math.min(sel, navRows.length - 1)];
   const cfgFile = loadConfig();
   const providerValue =
     cfgFile.provider === "local" ? `local · ${trunc(cfgFile.base_url ?? "?", 36)}` :
@@ -417,7 +439,7 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
     editing === "floor" ? "credit floor USD (blank = off):" :
     editing === "cap" ? "daily cap USD (blank = off):" : "";
 
-  const R = ({ id, label, value, color, hint }: { id: RowId; label: string; value: string; color?: string; hint: string }) => (
+  const R = ({ id, label, value, color, hint }: { id: string; label: string; value: string; color?: string; hint: string }) => (
     <Row selected={selId === id} focused>
       <Box width={13}><Text color={selId === id ? theme.accent : theme.label}>{label}</Text></Box>
       <Text color={color ?? theme.value}>{value}</Text>
@@ -456,17 +478,22 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
           throw. (Same rule as UNKNOWN ≠ BROKEN below: missing data is not a fault to report,
           and it is certainly not a reason to take the process down.) */}
       <Section title="wired into your agent">
+        {/* This counts turns that have REACHED THE GRAPH — from any source (a watcher, the
+            adapter, a raw POST). It is NOT the same as "an agent wired itself in": a watcher
+            feeds the graph with zero agent cooperation, which is exactly why you can see turns
+            here while `agents` below reads "none set up". Naming it "captured" (not "agents")
+            keeps those two facts from looking like a contradiction. */}
         <R
-          id="w-capture" label="turns in graph"
+          id="w-capture" label="turns captured"
           value={
             !setup?.capture ? "— (server not reporting)"
               : (setup.capture.turns ?? 0) > 0
-                ? `${setup.capture.turns} from ${(setup.capture.sources ?? []).map((s) => s.agent_id).join(", ")}`
+                ? `${setup.capture.turns} · via ${(setup.capture.sources ?? []).map((s) => s.agent_id).join(", ")}`
                 : setup.capture.arrived ? "arrived, not yet stored as turns (arc mode off)"
                 : `${glyph.flag} none — nothing has ever been captured`
           }
           color={!setup?.capture ? theme.dim : (setup.capture.turns ?? 0) > 0 || setup.capture.arrived ? theme.value : theme.warn}
-          hint="whatever fed them: a watcher, the adapter, or your own POST"
+          hint="turns that reached the graph (watcher / adapter / your POST) — not the same as an agent wiring itself in"
         />
         {/* PER-AGENT — ALL THREE WIRES. The reflex sits in a file ONE agent reads, the gate in
             a seam ONE agent runs, and capture in that agent's OWN post-turn seam (or the
@@ -482,14 +509,14 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
           const file = (reflex as { file?: string | null }).file;
           return (
             <R
-              key={a?.agent ?? Math.random()} id="w-reflex" label={`  ${trunc(a?.agent ?? "?", 14)}`}
+              key={a?.agent ?? Math.random()} id={`w-agent:${a?.agent ?? "?"}`} label={`  ${trunc(a?.agent ?? "?", 14)}`}
               value={
                 `capture ${mark(capture)}${how ? ` (${how})` : ""}` +
                 ` · reflex ${mark(reflex)}${file ? ` ${trunc(file.split(/[\\/]/).pop() ?? "", 16)}` : ""}` +
                 ` · gate ${mark(gate)}`
               }
               color={allGood ? theme.ok : theme.warn}
-              hint="each agent wires ITSELF — nothing is inherited"
+              hint="enter = forget (reset its wires; the agent must re-install) — nothing is inherited"
             />
           );
         })}
