@@ -10,7 +10,7 @@ Give your agent your project's **decision history**: it checks what was already 
 
 [![npm: nodedex](https://img.shields.io/npm/v/nodedex.svg?label=npm&color=cb3837)](https://www.npmjs.com/package/nodedex)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![tests: 1304 passing](https://img.shields.io/badge/tests-1313%20passing-brightgreen.svg)](#evidence-it-works)
+[![tests: 1313 passing](https://img.shields.io/badge/tests-1313%20passing-brightgreen.svg)](#evidence-it-works)
 [![status: early & solo-built](https://img.shields.io/badge/status-early%20%26%20solo--built-orange.svg)](#)
 [![MCP: stdio + HTTP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7b5cff.svg)](#connect-your-agent)
 
