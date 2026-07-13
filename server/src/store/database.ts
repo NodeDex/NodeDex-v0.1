@@ -5,6 +5,21 @@ import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import CryptoJS from "crypto-js";
 
+// Words that carry no retrieval signal. keywordSearch OR-s its terms into LIKE '%term%', so a
+// single filler token matches the whole graph — see the note in keywordSearch for the measured
+// damage. Agents search in natural language ("how do I…", "why did we…"), so this list has to
+// cover question-shaped queries, not just articles.
+const KEYWORD_STOPWORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "from", "how", "why", "what", "when", "where",
+  "who", "which", "does", "did", "was", "were", "are", "you", "your", "our", "its", "their",
+  "have", "has", "had", "can", "could", "would", "should", "will", "shall", "may", "might",
+  "must", "not", "but", "any", "all", "some", "get", "got", "use", "used", "using", "make",
+  "made", "there", "here", "them", "they", "she", "him", "her", "his", "hers", "into", "onto",
+  "out", "off", "over", "under", "about", "than", "then", "too", "very", "just", "only",
+  "configure", "configured", "setup", "set", "fix", "fixed", "issue", "issues", "problem",
+  "problems", "bug", "bugs", "help", "need", "want", "like", "know", "tell", "show", "give",
+]);
+
 // ─── Types ───────────────────────────────────────────────────────
 export interface Block {
   [key: string]: string | number | boolean | null;
@@ -1132,7 +1147,24 @@ export class WorkspaceDB {
   keywordSearch(query: string, limit: number = 10, type?: string, status?: string): Block[] {
     if (!this.db) throw new Error("Database not initialized");
 
-    const terms = query.toLowerCase().split(/\s+/);
+    // FILLER WORDS ARE NOT KEYWORDS. The terms are OR-ed and each becomes LIKE '%term%', so a
+    // single junk token poisons the whole query — `%i%` matches EVERY block in the graph.
+    //
+    // Measured 2026-07-13, and it was quietly wrecking the one safety net we have:
+    //   "kubernetes"                              → [semantic] 0.29 → "weak matches only" FIRES
+    //   "how do I configure the kubernetes ingress" → [semantic,KEYWORD] 0.58 → SILENT
+    // Same absent topic. The second is how an agent actually searches, and the filler words
+    // ("how", "do", "i", "the") keyword-matched the entire graph — which both inflated the
+    // score past the weak threshold AND added a non-semantic match type, and allWeak() requires
+    // semantic-ONLY. So the net only worked for queries nobody types, and a question about
+    // Kubernetes came back with a confident ES-modules dead-end and no caveat.
+    //
+    // No surviving terms ⇒ NO keyword signal (return nothing). That is the honest answer: there
+    // were no keywords. Semantic alone then carries it, and the weak note can do its job.
+    const raw = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const terms = raw.filter((w) => w.length > 2 && !KEYWORD_STOPWORDS.has(w));
+    if (terms.length === 0) return [];
+
     const statusFilter = status === "all" ? "" : (status ? `AND status = '${status}'` : `AND status IN ('active', 'created')`);
     const typeFilter = type ? `AND type = '${type}'` : "";
 
