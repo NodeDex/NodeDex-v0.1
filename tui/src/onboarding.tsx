@@ -607,24 +607,27 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             <Text color={theme.dim}>{`   Hermes        MCP server url → ${mcpUrl}`}</Text>
             <Text color={theme.dim}>{`   Other hosts   any MCP client → that URL (Streamable HTTP)`}</Text>
           </Box>
+          {/* The trigger, and the ONE thing the user must actually do. The agent wires
+              NodeDex into ITSELF: it knows its own host — where its standing instructions
+              live, what runs after a turn, what fires before an edit — far better than we
+              could guess across thirty conventions. So we ask a CAPABILITY question, not
+              "do you have CLAUDE.md".
+
+              Why the user has to say anything at all: the setup tools have always existed
+              and agents never called them, because a tool the model must REMEMBER to invoke
+              has the very decay problem it is meant to cure. A user pasting one line does
+              not. (Every tool result also nags until the wires are VERIFIED — so even a
+              user who skips this screen is covered.) */}
           <Box marginTop={1} flexDirection="column">
-            <Text color={theme.value}>2 · Wire CAPTURE — without it the graph stays empty:</Text>
-            <Text color={theme.dim}>{`   Hermes → automatic (watcher) · other hosts → README "capture"`}</Text>
-          </Box>
-          {/* The trigger. workspace_onboard persists the memory reflex into the agent's
-              OWN standing instructions (AGENTS.md / CLAUDE.md / rules file) so it is
-              re-read EVERY turn — the per-connect instructions are gone from context by
-              the time the agent is deep in a task and actually deciding something.
-              It has always existed and agents never call it on their own: a tool the
-              model must REMEMBER to invoke has the same decay problem it is meant to
-              fix. A user pasting one line does not. */}
-          <Box marginTop={1} flexDirection="column">
-            <Text color={theme.value}>3 · Make the memory reflex PERMANENT — paste this to your agent, once:</Text>
-            <Text color={theme.accent}>{`   "Run workspace_onboard"`}</Text>
-            <Text color={theme.dim}>{`   It asks your permission, then writes a short marked block into this`}</Text>
-            <Text color={theme.dim}>{`   project's agent instructions (AGENTS.md / CLAUDE.md). No project data —`}</Text>
-            <Text color={theme.dim}>{`   just the habit of checking the graph. Delete the block to opt out.`}</Text>
-            <Text color={theme.dim}>{`   Skip this and the agent forgets to look, hours into a long task.`}</Text>
+            <Text color={theme.value}>2 · Wire NodeDex INTO the agent — say this to it, once:</Text>
+            <Text color={theme.accent}>{`   "Set up NodeDex"`}</Text>
+            <Text color={theme.dim}>{`   It installs the three wires itself, asking your permission for each:`}</Text>
+            <Text color={theme.dim}>{`     CAPTURE  feeds turns to the graph — without it the graph stays EMPTY`}</Text>
+            <Text color={theme.dim}>{`     REFLEX   the habit, in the file it re-reads EVERY turn (AGENTS.md…)`}</Text>
+            <Text color={theme.dim}>{`     GATE     a check right before it edits — warns, never blocks`}</Text>
+            <Text color={theme.dim}>{`   NodeDex verifies each one actually happened — an agent that says it did`}</Text>
+            <Text color={theme.dim}>{`   the setup and didn't keeps getting nagged. Skip this and the agent`}</Text>
+            <Text color={theme.dim}>{`   forgets to look, hours into a long task — which is the whole failure.`}</Text>
           </Box>
           <Box marginTop={1}><Text color={theme.dim}>Copy-paste snippets for every host (incl. auth) saved to:</Text></Box>
           <Text color={theme.accent}>~/.nodedex/connect-snippets.md</Text>

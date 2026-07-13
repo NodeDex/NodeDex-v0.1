@@ -89,6 +89,48 @@ export interface ClaudeCaptureConfig {
   projectsDir?: string;    // override the transcripts dir (default ~/.claude/projects)
 }
 
+// ── Claude Code project slugs: never make the user type one ─────────────────────────
+//
+// Claude Code names each transcript directory by MANGLING the project path — every
+// non-alphanumeric character becomes a '-'. So c:\Users\me\Project_NodeDex becomes
+// c--Users-me-Project-NodeDex.
+//
+// This mangling is NOT REVERSIBLE: '-', '_', '.', '/', '\' and ':' all collapse to the same
+// '-', so `Project-NodeDex` could have been `Project_NodeDex` (and here, it was). Any code
+// that "decodes" a slug back into a path is guessing, and will sometimes be confidently wrong.
+//
+// It is also the source of a SILENT failure that cost us a whole captured session: the
+// `projects` allow-list wants SLUGS, and a user who naturally pastes a PATH gets no error,
+// no warning — just a watcher that quietly captures nothing, forever.
+//
+// So: slugging is CODE's job, and displaying is done from GROUND TRUTH. The transcripts
+// carry the real `cwd`, so we read it rather than trying to invert the mangle.
+const CC_PROJECTS_DIR = (): string => resolve(homedir(), ".claude", "projects");
+
+/** Path → the directory name Claude Code actually uses. Accepts a slug unchanged. */
+export function claudeProjectSlug(input: string): string {
+  const s = input.trim();
+  if (s === "*" || !/[\\/:]/.test(s)) return s; // already a slug (or the wildcard)
+  return s.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+/** Slug → the REAL project path, read out of the transcript itself (never decoded). */
+export function claudeProjectPath(slug: string): string {
+  if (slug === "*") return "* (all projects)";
+  try {
+    const dir = resolve(CC_PROJECTS_DIR(), slug);
+    const files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+    for (const f of files) {
+      // `cwd` appears on the message lines; the first one is enough and the files are big,
+      // so read a slice rather than the whole transcript.
+      const head = readFileSync(resolve(dir, f), "utf8").slice(0, 200_000);
+      const m = head.match(/"cwd"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      if (m) return JSON.parse(`"${m[1]}"`);
+    }
+  } catch { /* fall through */ }
+  return slug; // unknown project → show what we have rather than invent a path
+}
+
 export interface NodedexConfig {
   provider?: Provider;
   openrouter_key?: string;       // openrouter path only
