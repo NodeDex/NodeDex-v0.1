@@ -17,7 +17,7 @@ import { registerProjectTools } from "./tools/projects.js";
 import { registerTaskTools } from "./tools/tasks.js";
 import { registerSystemTools } from "./tools/system.js";
 import { appendFlagNudge } from "./tools/flag-surface.js";
-import { appendSetupNotice, recordGraphRead } from "./tools/setup-state.js";
+import { appendSetupNotice, recordGraphRead, normalizeClient } from "./tools/setup-state.js";
 import { AGENT_PROTOCOL } from "./agent-protocol.js";
 
 // The MCP `instructions` field — the advisory FLOOR the host injects on connect. Installs
@@ -51,6 +51,18 @@ const GRAPH_READ_TOOLS = new Set([
 ]);
 // Task claiming/creation stay opt-in (a host often has its own task system).
 const TASK_TOOLS = ["workspace_task_next", "workspace_task_create"];
+
+/** Who is connected? MCP carries the client's identity on initialize, so the setup wires can
+ *  be tracked PER AGENT — the second host to connect to a graph must not inherit the first
+ *  host's "✓ wired" and go un-nagged, which is the whole point of one-graph-many-hosts. */
+export function connectedClient(server: McpServer): string {
+  try {
+    return normalizeClient((server as unknown as { server: { getClientVersion(): { name?: string } | undefined } })
+      .server.getClientVersion()?.name);
+  } catch {
+    return normalizeClient(null);
+  }
+}
 
 /** Whether write/admin/maintenance tools are exposed (default off → read-only surface). */
 export function writesExposed(): boolean {
@@ -104,7 +116,10 @@ export function buildWorkspaceServer(db: WorkspaceDB, embeddings: EmbeddingEngin
           //    gate reads this to decide whether its view has gone stale. Only genuine
           //    graph reads count: stats/setup calls are not "consulting the graph".
           if (GRAPH_READ_TOOLS.has(name)) recordGraphRead(db);
-          return appendSetupNotice(appendFlagNudge(result as never, db, name) as never, db, name);
+          // The setup notice is PER-AGENT: the reflex lives in a file THIS agent reads and
+          // the gate in a seam THIS agent runs, so another agent's setup does nothing for it.
+          // MCP gives us the connecting client on initialize — that is the identity we key on.
+          return appendSetupNotice(appendFlagNudge(result as never, db, name) as never, db, name, connectedClient(server));
         };
       }
       return registerTool(...args);

@@ -26,6 +26,13 @@
 
 const URL_BASE = (process.env.NODEDEX_URL || "http://localhost:3001").replace(/\/$/, "");
 const TIMEOUT_MS = Number(process.env.NODEDEX_GATE_TIMEOUT_MS || 800);
+// WHICH agent this gate is wired into. The gate lives in ONE agent's seam, so one host having
+// it proves nothing about the next — set NODEDEX_AGENT (or pass --agent=<name>) and the status
+// surface can show you, per agent, what is actually wired.
+const AGENT =
+  process.argv.find((a) => a.startsWith("--agent="))?.slice(8) ||
+  process.env.NODEDEX_AGENT ||
+  "";
 
 async function main() {
   // Drain stdin if the host pipes us a payload — we do not need it, but leaving the pipe
@@ -39,7 +46,8 @@ async function main() {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(`${URL_BASE}/api/gate/check`, { signal: ctrl.signal });
+    const q = AGENT ? `?agent=${encodeURIComponent(AGENT)}` : "";
+    const res = await fetch(`${URL_BASE}/api/gate/check${q}`, { signal: ctrl.signal });
     if (!res.ok) return;
     const body = await res.json();
     if (body?.remind && body?.message) process.stdout.write(String(body.message) + "\n");

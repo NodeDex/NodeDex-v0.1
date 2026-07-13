@@ -8,6 +8,7 @@ import { buildAgentFlagSurface } from "./flag-surface.js";
 import { runArcExtraction } from "../middleware/reflect/arc-pipeline.js";
 import { protocolBlock } from "../agent-protocol.js";
 import { markDeclined, verifyReflexWrite } from "./setup-state.js";
+import { connectedClient } from "../mcp-server.js";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -46,11 +47,11 @@ Call with NO arguments to get the contract: (1) CHECK where YOUR standing instru
         // agent WRITES (it alone knows its host, and can read the file without clobbering
         // what is already there) and the SERVER READS IT BACK.
         if (params.declined) {
-          markDeclined(db, "reflex");
+          markDeclined(db, "reflex", connectedClient(server));
           return ok({ status: "declined", note: "Recorded. The reflex notice will not appear again. The per-connect instructions still apply for this session." });
         }
         if (params.written_to) {
-          const v = verifyReflexWrite(db, params.written_to);
+          const v = verifyReflexWrite(db, params.written_to, connectedClient(server));
           if (!v.ok) return ok({ status: "not_verified", problem: v.reason, next: "Fix the write and call again with written_to — or if the file is genuinely unreachable from this server, just proceed; the block still works where you wrote it." });
           return ok({ status: "verified", file: params.written_to, note: "Confirmed the marked block is present. The reflex is now re-read into your context on every turn, and the setup notice stops." });
         }
@@ -133,7 +134,7 @@ The result gives you adapter_source (write it to a file) + wiring_examples (call
     async (params: { declined?: boolean }) => {
       try {
         if (params.declined) {
-          markDeclined(db, "capture");
+          markDeclined(db, "capture", connectedClient(server));
           return ok({ status: "declined", note: "Recorded. We won't ask again. Note the graph will stay empty unless turns reach it another way (e.g. a transcript watcher on the NodeDex side)." });
         }
         const { filename, source } = readCaptureAdapter();
@@ -203,7 +204,7 @@ The result gives you gate_source (a tiny script) + a 4-step contract: (1) CHECK 
     async (params: { declined?: boolean }) => {
       try {
         if (params.declined) {
-          markDeclined(db, "gate");
+          markDeclined(db, "gate", connectedClient(server));
           return ok({ status: "declined", note: "Recorded. We won't ask again. The reflex (if persisted) is still your floor — check the graph before you commit to an approach." });
         }
         const { filename, source } = readGateScript();

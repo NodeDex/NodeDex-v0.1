@@ -444,40 +444,54 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
 
       {/* WIRED INTO YOUR AGENT — the three wires, reported from observed effect.
           Source-agnostic on purpose: a user running their own loop has every watcher below
-          switched OFF and is capturing perfectly. This section is true for them too. */}
+          switched OFF and is capturing perfectly. This section is true for them too.
+
+          UNKNOWN ≠ BROKEN. If the server is old or down, /api/setup does not answer and we
+          show "—", never "nothing has ever arrived". Raising a false alarm from missing data
+          is the same confidently-wrong-display failure the c-- slug taught us to refuse. */}
       <Section title="wired into your agent">
         <R
           id="w-capture" label="capture"
           value={
-            setup?.capture.done
-              ? `${glyph.up} ${setup.capture.turns} turns · ${setup.capture.sources.map((s) => s.agent_id).join(", ") || "—"}`
-              : setup?.capture.declined ? "declined"
+            !setup ? "— (server not reporting)"
+              : setup.capture.done
+                ? `${glyph.up} ${setup.capture.turns} turns · ${setup.capture.sources.map((s) => s.agent_id).join(", ")}`
+              : setup.capture.declined ? "declined"
               : `${glyph.flag} nothing has ever arrived — the graph cannot grow`
           }
-          color={setup?.capture.done ? theme.ok : setup?.capture.declined ? theme.dim : theme.warn}
+          color={!setup ? theme.dim : setup.capture.done ? theme.ok : setup.capture.declined ? theme.dim : theme.warn}
           hint="whatever feeds it: a watcher, the adapter, or your own POST"
         />
+        {/* PER-AGENT. The reflex sits in a file ONE agent reads, the gate in a seam ONE agent
+            runs — so every new agent must wire ITSELF in, and inherits nothing. Showing this
+            per agent is the only way a user switching hosts can SEE that the new one is blind
+            rather than assume it inherited the last one's setup. */}
+        {(setup?.agents ?? []).map((a) => (
+          <R
+            key={a.agent} id="w-reflex" label={`  ${trunc(a.agent, 14)}`}
+            value={
+              `reflex ${a.reflex.done ? `${glyph.up} ${trunc(a.reflex.file ?? "", 30)}` : a.reflex.declined ? "declined" : `${glyph.flag} none`}` +
+              ` · gate ${a.gate.done ? glyph.up : a.gate.declined ? "declined" : `${glyph.flag} none`}`
+            }
+            color={a.reflex.done && a.gate.done ? theme.ok : theme.warn}
+            hint="each agent wires itself — nothing is inherited"
+          />
+        ))}
+        {setup && setup.agents.length === 0 ? (
+          <R id="w-reflex" label="  agents" value={`${glyph.flag} none set up — say "Set up NodeDex" to your agent`} color={theme.warn} hint="every agent needs its own reflex + gate" />
+        ) : null}
         <R
-          id="w-reflex" label="reflex"
-          value={
-            setup?.reflex.done ? `${glyph.up} ${trunc(setup.reflex.file ?? "", 44)}`
-              : setup?.reflex.declined ? "declined"
-              : `${glyph.flag} not persisted — the habit dies with the context`
-          }
-          color={setup?.reflex.done ? theme.ok : setup?.reflex.declined ? theme.dim : theme.warn}
-          hint={'say "Set up NodeDex" to your agent'}
-        />
-        <R
-          id="w-gate" label="gate"
-          value={
-            setup?.gate.done ? `${glyph.up} ${setup.gate.checks} checks · last ${ago(setup.gate.last_check_at)}`
-              : setup?.gate.declined ? "declined"
-              : `${glyph.flag} never fired — nothing checks at the edit`
-          }
-          color={setup?.gate.done ? theme.ok : setup?.gate.declined ? theme.dim : theme.warn}
+          id="w-gate" label="gate checks"
+          value={!setup ? "—" : setup.gate.checks > 0 ? `${glyph.up} ${setup.gate.checks} · last ${ago(setup.gate.last_check_at)}` : `${glyph.flag} never fired — nothing checks at the edit`}
+          color={!setup ? theme.dim : setup.gate.checks > 0 ? theme.ok : theme.warn}
           hint="fires before your agent edits a file"
         />
-        <R id="w-read" label="last consulted" value={setup?.last_graph_read_at ? ago(setup.last_graph_read_at) : "never"} color={setup?.last_graph_read_at ? theme.value : theme.warn} hint="what the gate measures staleness against" />
+        <R
+          id="w-read" label="last consulted"
+          value={!setup ? "—" : setup.last_graph_read_at ? ago(setup.last_graph_read_at) : "never"}
+          color={!setup ? theme.dim : setup.last_graph_read_at ? theme.value : theme.warn}
+          hint="what the gate measures staleness against"
+        />
       </Section>
 
       {/* Watchers are ONE way to feed capture above — for hosts that keep their own

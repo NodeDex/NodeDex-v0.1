@@ -36,6 +36,8 @@ import { wireState, buildSetupNotice, gateShouldRemind, recordGraphRead, markGat
 import { protocolBlock } from "../../agent-protocol.js";
 
 const TEST_DB = "/tmp/wmcs_setup_gate_test.db";
+// The MCP client name the test connects with — the identity the wires are keyed on.
+const CLIENT = "setup-gate-test";
 let db: WorkspaceDB;
 
 /** Fresh client+server pair — the HTTP path builds one server per session, so this
@@ -74,7 +76,7 @@ describe("setup gate — the wiring notice rides every tool result", () => {
   test("the notice states the CONSEQUENCE, not just the instruction", () => {
     // "call this tool" with no reason is exactly what an agent deprioritises under
     // momentum — which is the behaviour that caused the failure in the first place.
-    const notice = buildSetupNotice(db) ?? "";
+    const notice = buildSetupNotice(db, CLIENT) ?? "";
     assert.match(notice, /gone from your context/i);
     assert.match(notice, /exactly when this graph matters/i);
     assert.match(notice, /VERIFIED/i, "and it must say it will not take the agent's word for it");
@@ -88,7 +90,7 @@ describe("setup gate — the wiring notice rides every tool result", () => {
     assert.ok(!onboardText.includes("NOT FULLY WIRED"), "onboard must not nag about itself");
     assert.ok(onboardText.includes("reflex_block"), "onboard hands over the block to persist");
 
-    assert.equal(wireState(db).reflex, false, "calling the tool proves NOTHING was written");
+    assert.equal(wireState(db, CLIENT).reflex, false, "calling the tool proves NOTHING was written");
     const after: any = await client.callTool({ name: "workspace_tree", arguments: {} });
     assert.ok(textOf(after).includes("NOT FULLY WIRED"), "so the notice must keep nagging");
     await client.close();
@@ -104,7 +106,7 @@ describe("setup gate — the wiring notice rides every tool result", () => {
       arguments: { written_to: path.join(os.tmpdir(), "does-not-exist-at-all.md") },
     });
     assert.ok(textOf(lie).includes("not_verified"), "an unreadable path is not a verified write");
-    assert.equal(wireState(db).reflex, false);
+    assert.equal(wireState(db, CLIENT).reflex, false);
 
     // The agent writes the block into a file that already has content (the real case —
     // it is the USER's file), then reports it.
@@ -112,7 +114,7 @@ describe("setup gate — the wiring notice rides every tool result", () => {
     fs.appendFileSync(file, "\n" + protocolBlock() + "\n", "utf8");
     const real: any = await client.callTool({ name: "workspace_onboard", arguments: { written_to: file } });
     assert.ok(textOf(real).includes("verified"), "a real marked block verifies");
-    assert.equal(wireState(db).reflex, true);
+    assert.equal(wireState(db, CLIENT).reflex, true);
 
     // …and the user's existing content is untouched (the agent appended, never clobbered).
     assert.ok(fs.readFileSync(file, "utf8").includes("Do not break these."));
@@ -135,7 +137,7 @@ describe("setup gate — the wiring notice rides every tool result", () => {
     const client = await connect();
     await client.callTool({ name: "workspace_install_capture", arguments: { declined: true } });
     await client.callTool({ name: "workspace_install_gate", arguments: { declined: true } });
-    const s = wireState(db);
+    const s = wireState(db, CLIENT);
     assert.equal(s.capture, true, "a decline settles the wire (a 'no' is a decision)");
     assert.equal(s.gate, true);
 
@@ -149,6 +151,52 @@ describe("setup gate — the wiring notice rides every tool result", () => {
     const later: any = await client2.callTool({ name: "workspace_stats", arguments: {} });
     assert.ok(!textOf(later).includes("NOT FULLY WIRED"), "notice gone in every later session");
     await client2.close();
+  });
+});
+
+describe("the wires are PER-AGENT — one graph, many hosts", () => {
+  /** Connect under a DIFFERENT client name — a second agent on the SAME graph. */
+  async function connectAs(name: string) {
+    const server = buildWorkspaceServer(db, new EmbeddingEngine());
+    const client = new Client({ name, version: "0.0.0" });
+    const [c, s] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(s), client.connect(c)]);
+    return client;
+  }
+
+  test("a NEW agent does NOT inherit the first agent's setup — it gets nagged", async () => {
+    // The bug this pins: wires stored per-GRAPH meant the second host to connect inherited a
+    // "✓ wired" it never earned, was never nagged, and was exactly as blind as the agent whose
+    // failure started all of this. The reflex lives in a file THIS agent reads; the gate in a
+    // seam THIS agent runs. Another agent's setup does nothing for it.
+    //
+    // (By now `db` has CLIENT's reflex verified + gate declined from the tests above.)
+    assert.equal(wireState(db, CLIENT).reflex, true, "precondition: the first agent IS wired");
+
+    const other = await connectAs("some-other-agent");
+    const res: any = await other.callTool({ name: "workspace_tree", arguments: {} });
+    const text = textOf(res);
+    assert.ok(text.includes("NOT FULLY WIRED"), "the new agent must still be nagged");
+    assert.ok(text.includes("workspace_onboard"), "…to persist ITS OWN reflex");
+    assert.equal(wireState(db, "some-other-agent").reflex, false, "and its wire state is its own");
+    await other.close();
+  });
+
+  test("the new agent is TOLD another agent is set up, and how to confirm cheaply", async () => {
+    // A shared file (AGENTS.md is picked for exactly this) may already contain the block —
+    // in which case the new agent should verify, not rewrite. Say so, or it will duplicate.
+    const notice = buildSetupNotice(db, "some-other-agent") ?? "";
+    assert.match(notice, /another agent \(.*\) is already set up/i);
+    assert.match(notice, /does NOT wire YOU/i);
+    assert.match(notice, /AGENTS\.md/i, "and point at the shared file that makes it one call");
+  });
+
+  test("capture stays GLOBAL — a landed turn proves the pipeline, whoever sent it", () => {
+    // Deliberate: agent_id on a turn comes from the watcher/adapter, NOT the MCP client name.
+    // Assuming they match would manufacture a false "capture broken" alarm out of a naming
+    // mismatch — so capture is proven graph-wide, and the per-agent notice tells a new agent
+    // to check capture itself if its OWN turns aren't landing.
+    assert.equal(wireState(db, CLIENT).capture, wireState(db, "some-other-agent").capture);
   });
 });
 
@@ -186,9 +234,9 @@ describe("the gate — staleness is TIME, not session", () => {
   test("the gate wire is proven by a check ARRIVING, not by a claim", () => {
     const fresh = new WorkspaceDB("/tmp/wmcs_gate_seen.db");
     fresh.init();
-    assert.equal(wireState(fresh).gate, false);
-    markGateSeen(fresh); // what /api/gate/check does on a real hit
-    assert.equal(wireState(fresh).gate, true, "an actual check reaching us is the only proof it is wired");
+    assert.equal(wireState(fresh, CLIENT).gate, false);
+    markGateSeen(fresh, CLIENT); // what /api/gate/check does on a real hit
+    assert.equal(wireState(fresh, CLIENT).gate, true, "an actual check reaching us is the only proof it is wired");
     fresh.close();
     try { fs.unlinkSync("/tmp/wmcs_gate_seen.db"); } catch { /* best-effort */ }
   });

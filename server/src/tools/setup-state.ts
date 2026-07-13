@@ -38,16 +38,42 @@ import fs from "fs";
 
 export type Wire = "reflex" | "capture" | "gate";
 
+// ── PER-AGENT, not per-graph ─────────────────────────────────────────────────────────
+//
+// The REFLEX lives in one agent's standing-instructions file; the GATE lives in one agent's
+// pre-edit seam. Neither is a property of the GRAPH — they are properties of an AGENT. Store
+// them per-graph and the second agent to connect (the whole "one graph, many hosts" premise)
+// inherits a silent "✓ wired" it never earned, gets no nag, and is exactly as blind as the
+// agent we spent this week diagnosing.
+//
+// MCP hands us the connecting client's identity on initialize, so we key on it.
+//
+// CAPTURE stays GLOBAL, deliberately. It is proven by turns LANDING, and the agent_id on a
+// turn comes from the watcher/adapter — it is not the MCP client name, and quietly assuming
+// the two match would invent a false alarm out of a naming mismatch. So: zero turns anywhere
+// ⇒ nag everyone; turns arriving ⇒ the pipeline is fed, and the per-agent notice tells a new
+// agent to check capture too if its own turns aren't reaching the graph.
+const KEYS = (client: string) => ({
+  reflexPath: `setup_reflex_verified_path::${client}`,
+  reflexDeclined: `setup_reflex_declined::${client}`,
+  gateSeen: `setup_gate_seen::${client}`,
+  gateDeclined: `setup_gate_declined::${client}`,
+});
+
 const K = {
-  reflexPath: "setup_reflex_verified_path",
-  reflexDeclined: "setup_reflex_declined",
   captureDeclined: "setup_capture_declined",
-  gateSeen: "setup_gate_seen",
-  gateDeclined: "setup_gate_declined",
   gateLast: "setup_gate_last_check_at",
   gateCount: "setup_gate_check_count",
   lastRead: "last_graph_read_at",
+  agents: "setup_known_agents",
 } as const;
+
+/** The connecting agent, normalised. Unknown clients share one bucket — safe, and it still
+ *  nags (an agent we cannot identify is an agent we cannot assume is wired). */
+export function normalizeClient(name?: string | null): string {
+  const s = (name ?? "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  return s || "unknown-agent";
+}
 
 function raw(db: WorkspaceDB): any {
   return (db as any).db;
@@ -91,7 +117,7 @@ function set(db: WorkspaceDB, key: string, value: string): void {
  * what is already in that file needs reasoning the server does not have. The agent writes;
  * the code checks. Returns why it failed so the agent can fix it rather than guess.
  */
-export function verifyReflexWrite(db: WorkspaceDB, filePath: string): { ok: boolean; reason?: string } {
+export function verifyReflexWrite(db: WorkspaceDB, filePath: string, client: string): { ok: boolean; reason?: string } {
   let text: string;
   try {
     text = fs.readFileSync(filePath, "utf8");
@@ -109,8 +135,18 @@ export function verifyReflexWrite(db: WorkspaceDB, filePath: string): { ok: bool
   if (!text.includes(NODEDEX_BEGIN)) {
     return { ok: false, reason: `Read ${filePath}, but the nodedex marker block is not in it. Was it written verbatim?` };
   }
-  set(db, K.reflexPath, filePath);
+  set(db, KEYS(client).reflexPath, filePath);
+  rememberAgent(db, client);
   return { ok: true };
+}
+
+/** Track which agents we have seen, so the status surface can show each one's wires. */
+function rememberAgent(db: WorkspaceDB, client: string): void {
+  const seen = (get(db, K.agents) ?? "").split(",").filter(Boolean);
+  if (!seen.includes(client)) set(db, K.agents, [...seen, client].join(","));
+}
+export function knownAgents(db: WorkspaceDB): string[] {
+  return (get(db, K.agents) ?? "").split(",").filter(Boolean);
 }
 
 /** CAPTURE — did a turn ever actually land? The only honest proof that capture is wired. */
@@ -124,16 +160,22 @@ export function captureWired(db: WorkspaceDB): boolean {
   }
 }
 
-/** GATE — did a check ever actually reach us? Set by the /api/gate/check route. */
-export function markGateSeen(db: WorkspaceDB): void {
-  set(db, K.gateSeen, "1");
+/** GATE — did a check ever actually reach us? Set by the /api/gate/check route.
+ *  The gate script runs in the AGENT's host, so it names the agent it fired for (?agent=…);
+ *  without that we can only record that *something* is gated, which is better than nothing. */
+export function markGateSeen(db: WorkspaceDB, client?: string): void {
+  if (client) { set(db, KEYS(client).gateSeen, "1"); rememberAgent(db, client); }
   set(db, K.gateLast, String(Date.now()));
   set(db, K.gateCount, String(Number(get(db, K.gateCount) ?? 0) + 1));
 }
 
-/** The user said no. A decline is a decision — record it and never nag past it. */
-export function markDeclined(db: WorkspaceDB, wire: Wire): void {
-  set(db, wire === "reflex" ? K.reflexDeclined : wire === "capture" ? K.captureDeclined : K.gateDeclined, "1");
+/** The user said no. A decline is a decision — record it and never nag past it.
+ *  Reflex/gate declines are per-agent (this agent's files); capture is global. */
+export function markDeclined(db: WorkspaceDB, wire: Wire, client: string): void {
+  if (wire === "capture") { set(db, K.captureDeclined, "1"); return; }
+  const k = KEYS(client);
+  set(db, wire === "reflex" ? k.reflexDeclined : k.gateDeclined, "1");
+  rememberAgent(db, client);
 }
 
 /** Every graph read stamps the clock the GATE reads. See gateShouldRemind. */
@@ -165,12 +207,14 @@ export interface WireState {
   gate: boolean;
 }
 
-/** Which wires are done (verified) or deliberately declined — i.e. which we stay quiet about. */
-export function wireState(db: WorkspaceDB): WireState {
+/** Which wires are settled FOR THIS AGENT (verified or declined) — i.e. what we stay quiet
+ *  about. A different agent connecting to the same graph has its own answer. */
+export function wireState(db: WorkspaceDB, client: string): WireState {
+  const k = KEYS(client);
   return {
-    reflex: !!get(db, K.reflexPath) || get(db, K.reflexDeclined) === "1",
+    reflex: !!get(db, k.reflexPath) || get(db, k.reflexDeclined) === "1",
     capture: captureWired(db) || get(db, K.captureDeclined) === "1",
-    gate: get(db, K.gateSeen) === "1" || get(db, K.gateDeclined) === "1",
+    gate: get(db, k.gateSeen) === "1" || get(db, k.gateDeclined) === "1",
   };
 }
 
@@ -180,8 +224,8 @@ export function wireState(db: WorkspaceDB): WireState {
  * just the instruction ("call this tool" with no reason is exactly what an agent
  * deprioritises under momentum).
  */
-export function buildSetupNotice(db: WorkspaceDB): string | null {
-  const s = wireState(db);
+export function buildSetupNotice(db: WorkspaceDB, client: string): string | null {
+  const s = wireState(db, client);
   if (s.reflex && s.capture && s.gate) return null;
 
   const lines: string[] = ["⚠ NODEDEX IS NOT FULLY WIRED INTO YOU YET — and unwired, it cannot help you."];
@@ -201,6 +245,17 @@ export function buildSetupNotice(db: WorkspaceDB): string | null {
   if (!s.gate) {
     lines.push(
       "· GATE is not installed: nothing checks the graph at the moment you edit. Call workspace_install_gate.",
+    );
+  }
+  // Another agent may already have wired ITSELF in — that does nothing for YOU. The reflex
+  // lives in a file YOUR host reads; the gate lives in YOUR seam. If it was written to a
+  // shared file (AGENTS.md) that you also read, verifying is a single call, not a rewrite.
+  if (knownAgents(db).some((a) => a !== client)) {
+    const other = knownAgents(db).filter((a) => a !== client).join(", ");
+    lines.push(
+      `· NOTE: another agent (${other}) is already set up here, but that does NOT wire YOU — the reflex sits in a file ` +
+        "and the gate in a seam that belong to it, not to you. If the block is already in a file you ALSO read (AGENTS.md " +
+        "is chosen for exactly this), just confirm: workspace_onboard(written_to=<that file>).",
     );
   }
   lines.push("Each asks the user's permission first, and each goes quiet once it is VERIFIED (not merely claimed).");
@@ -223,13 +278,32 @@ export interface CaptureSource {
   last_turn_at: string | null;
 }
 
-export interface SetupStatus {
-  wired: boolean;
+/** One agent's wires. EVERY agent that connects needs its own — the reflex is in a file IT
+ *  reads, the gate is in a seam IT runs. This is the thing the TUI must show per-agent, so a
+ *  user switching hosts can SEE that the new one is unwired instead of assuming it inherited. */
+export interface AgentWires {
+  agent: string;
   reflex: { done: boolean; declined: boolean; file: string | null };
+  gate: { done: boolean; declined: boolean };
+}
+
+export interface SetupStatus {
+  /** True only if at least one agent is fully wired AND capture is proven. */
+  wired: boolean;
+  agents: AgentWires[];
   capture: { done: boolean; declined: boolean; turns: number; sources: CaptureSource[] };
-  gate: { done: boolean; declined: boolean; checks: number; last_check_at: string | null };
+  gate: { checks: number; last_check_at: string | null };
   /** When the graph was last actually consulted — what the gate measures staleness against. */
   last_graph_read_at: string | null;
+}
+
+function agentWires(db: WorkspaceDB, agent: string): AgentWires {
+  const k = KEYS(agent);
+  return {
+    agent,
+    reflex: { done: !!get(db, k.reflexPath), declined: get(db, k.reflexDeclined) === "1", file: get(db, k.reflexPath) },
+    gate: { done: get(db, k.gateSeen) === "1", declined: get(db, k.gateDeclined) === "1" },
+  };
 }
 
 export function setupStatus(db: WorkspaceDB): SetupStatus {
@@ -249,17 +323,13 @@ export function setupStatus(db: WorkspaceDB): SetupStatus {
     const v = Number(get(db, key) ?? 0);
     return v ? new Date(v).toISOString() : null;
   };
-  const s = wireState(db);
+  const agents = knownAgents(db).map((a) => agentWires(db, a));
+  const captureOk = turns > 0 || get(db, K.captureDeclined) === "1";
   return {
-    wired: s.reflex && s.capture && s.gate,
-    reflex: { done: !!get(db, K.reflexPath), declined: get(db, K.reflexDeclined) === "1", file: get(db, K.reflexPath) },
+    wired: captureOk && agents.some((a) => (a.reflex.done || a.reflex.declined) && (a.gate.done || a.gate.declined)),
+    agents,
     capture: { done: turns > 0, declined: get(db, K.captureDeclined) === "1", turns, sources },
-    gate: {
-      done: get(db, K.gateSeen) === "1",
-      declined: get(db, K.gateDeclined) === "1",
-      checks: Number(get(db, K.gateCount) ?? 0),
-      last_check_at: iso(K.gateLast),
-    },
+    gate: { checks: Number(get(db, K.gateCount) ?? 0), last_check_at: iso(K.gateLast) },
     last_graph_read_at: iso(K.lastRead),
   };
 }
@@ -274,11 +344,11 @@ const SETUP_TOOLS = new Set(["workspace_onboard", "workspace_install_capture", "
  * every MCP host shows the model, and that needs no hook or host-specific code.
  * Best-effort: a failure here must never break a tool.
  */
-export function appendSetupNotice(result: ToolResult, db: WorkspaceDB, toolName?: string): ToolResult {
+export function appendSetupNotice(result: ToolResult, db: WorkspaceDB, toolName: string | undefined, client: string): ToolResult {
   try {
     if (toolName && SETUP_TOOLS.has(toolName)) return result;
     if (!result || !Array.isArray(result.content)) return result;
-    const notice = buildSetupNotice(db);
+    const notice = buildSetupNotice(db, client);
     if (!notice) return result;
     result.content.push({ type: "text", text: notice });
   } catch {

@@ -6,7 +6,7 @@ import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine, blockEmbeddingText } from "../engine/embeddings.js";
 import { getLLMProvider, getEmbeddingProvider, resetProviders } from "../engine/providers/index.js";
 import { protocolBlock } from "../agent-protocol.js";
-import { markGateSeen, gateShouldRemind, setupStatus } from "../tools/setup-state.js";
+import { markGateSeen, gateShouldRemind, setupStatus, normalizeClient } from "../tools/setup-state.js";
 import type { SchedulerJobStatus } from "../server.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
@@ -154,10 +154,13 @@ export function createAdminRouter(
   //
   // A GET with no arguments, on purpose: it must be callable from a 20-line script in any
   // language, from any host, with no state to thread through.
-  router.get("/api/gate/check", (_req, res) => {
+  router.get("/api/gate/check", (req, res) => {
     // The call itself is the proof the gate is wired — the only honest verification, since
-    // the wiring lives in the user's host where we cannot see it.
-    markGateSeen(db);
+    // the wiring lives in the user's host where we cannot see it. `agent` names WHICH agent
+    // it is wired into: the gate is per-agent (it lives in that agent's seam), so one host's
+    // gate proves nothing about the next host's.
+    const agent = typeof req.query.agent === "string" ? normalizeClient(req.query.agent) : undefined;
+    markGateSeen(db, agent);
     if (!gateShouldRemind(db)) {
       res.json({ remind: false });
       return;

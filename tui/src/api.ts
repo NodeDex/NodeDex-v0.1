@@ -272,11 +272,18 @@ export async function fetchConfig(): Promise<AdminConfig | null> {
  *  only listed OUR watchers would tell a custom-workflow user that nothing works while their
  *  graph fills up perfectly. */
 export interface CaptureSource { agent_id: string; turns: number; last_turn_at: string | null }
+/** The reflex lives in a file ONE agent reads; the gate in a seam ONE agent runs. So they are
+ *  per-AGENT, and EVERY new agent has to wire itself in — it inherits nothing. */
+export interface AgentWires {
+  agent: string;
+  reflex: { done: boolean; declined: boolean; file: string | null };
+  gate:   { done: boolean; declined: boolean };
+}
 export interface SetupStatus {
   wired: boolean;
-  reflex:  { done: boolean; declined: boolean; file: string | null };
+  agents:  AgentWires[];
   capture: { done: boolean; declined: boolean; turns: number; sources: CaptureSource[] };
-  gate:    { done: boolean; declined: boolean; checks: number; last_check_at: string | null };
+  gate:    { checks: number; last_check_at: string | null };
   last_graph_read_at: string | null;
 }
 export async function fetchSetup(): Promise<SetupStatus | null> {
