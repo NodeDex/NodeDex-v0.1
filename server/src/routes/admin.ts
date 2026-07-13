@@ -5,6 +5,7 @@ import { Router } from "express";
 import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine, blockEmbeddingText } from "../engine/embeddings.js";
 import { getLLMProvider, getEmbeddingProvider, resetProviders } from "../engine/providers/index.js";
+import { protocolBlock } from "../agent-protocol.js";
 import type { SchedulerJobStatus } from "../server.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
@@ -101,6 +102,34 @@ export function createAdminRouter(
   embeddings?: EmbeddingEngine,
 ): Router {
   const router = Router();
+
+  // ─── The memory reflex, for hosts that can't self-install ──────────────────
+  // workspace_onboard lets an AGENT persist the reflex into a standing config the host
+  // re-reads every turn (AGENTS.md / CLAUDE.md / rules file). That covers the IDE coding
+  // agents — but NOT a host whose system prompt is STATIC, set by the operator at launch
+  // (an autonomous agent, a custom API loop). Those agents have no per-turn file to write,
+  // so onboard correctly does nothing — and until this endpoint existed, the operator had
+  // NO WAY to get the text at all: it was locked inside an MCP tool only an agent can call.
+  //
+  // So: expose it. `?format=text` returns the raw block to paste into a system prompt.
+  // The reflex carries no graph data and never changes per project — it is the discipline,
+  // not the content, so it is safe to hand out and safe to paste anywhere.
+  router.get("/api/agent-reflex", (req, res) => {
+    if ((req.query.format as string) === "text") {
+      res.type("text/plain").send(protocolBlock());
+      return;
+    }
+    res.json({
+      reflex_block: protocolBlock(),
+      chars: protocolBlock().length,
+      how_to_use:
+        "If your agent has a standing config it re-reads EVERY turn (AGENTS.md, CLAUDE.md, a rules file), " +
+        "let it install this itself — just tell it: \"Run workspace_onboard\". If your agent's system prompt " +
+        "is STATIC (set once at launch — most autonomous agents and custom loops), paste this block into that " +
+        "system prompt yourself. Either way it must be present on EVERY turn: delivered once at startup, it is " +
+        "gone from context by the time the agent is deep in a task and actually choosing an approach.",
+    });
+  });
 
   // ─── Health check ──────────────────────────────────────────────────────────
   router.get("/api/health", (_req, res) => {

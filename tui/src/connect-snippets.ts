@@ -126,6 +126,39 @@ Docker'd agent on this machine? Use http://host.docker.internal:<port>/mcp inste
 
 ---
 
+# 3 · The memory reflex — the wire people forget
+
+Connecting the tools is not enough. The instruction to CHECK the graph reaches the agent
+ONCE, when it connects — and it is gone from context hours later, which is exactly when
+the agent is deep in a task and actually choosing an approach. Measured: an agent read
+the recorded dead-ends at 12:17, wrote the code at 14:00, and shipped the bug the graph
+had warned about.
+
+So the reflex has to live where the agent re-reads it EVERY turn.
+
+## If your agent has a standing instructions file (Claude Code, Cursor, Codex, Copilot…)
+
+It can install the reflex itself. Say this to it, once:
+
+    Run workspace_onboard
+
+It will check its own config channel, ask your permission, and write a short marked block
+into AGENTS.md (or CLAUDE.md / its rules file). No project data — just the habit. Delete
+the marked block to opt out. You will also see the agent nudged to do this on every tool
+result until it does.
+
+## If your agent's system prompt is STATIC (most autonomous agents + custom loops)
+
+There is no per-turn file for it to write, so it cannot install anything — YOU have to
+paste it. Get the block:
+
+    curl ${p.mcpUrl.replace(/\/mcp$/, "")}/api/agent-reflex?format=text
+
+Paste it into that agent's system prompt. It must be present on EVERY turn — an
+instruction delivered once at launch has the exact decay problem this fixes.
+
+---
+
 Full connect + capture reference: ${p.readmeUrl}
 `;
 }
