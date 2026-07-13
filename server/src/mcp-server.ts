@@ -17,6 +17,7 @@ import { registerProjectTools } from "./tools/projects.js";
 import { registerTaskTools } from "./tools/tasks.js";
 import { registerSystemTools } from "./tools/system.js";
 import { appendFlagNudge } from "./tools/flag-surface.js";
+import { appendSetupNotice } from "./tools/onboarding-state.js";
 import { AGENT_PROTOCOL } from "./agent-protocol.js";
 
 // The MCP `instructions` field — the advisory FLOOR the host injects on connect. Installs
@@ -65,13 +66,20 @@ export function buildWorkspaceServer(db: WorkspaceDB, embeddings: EmbeddingEngin
     { instructions: WORKSPACE_INSTRUCTIONS },
   );
 
-  // Wrap server.tool BEFORE the register calls so two cross-cutting concerns apply to
+  // Wrap server.tool BEFORE the register calls so three cross-cutting concerns apply to
   // every tool without touching a single handler:
   //   1. read-only gating  — skip tools not in the allowlist (unless writes exposed).
   //   2. flag nudge        — append a passive "N items need your input" note to each
   //      result when self-maintenance routed work to the agent. A passive MCP tool
   //      can't push, so the agent discovers pending flags by bumping into this on a
   //      call it was already making. Best-effort, never breaks the tool.
+  //   3. SETUP GATE        — until workspace_onboard has run, append the "persist your
+  //      reflex" notice. Same trick, load-bearing reason: the `instructions` field is
+  //      delivered ONCE at connect and is gone from context hours later, which is exactly
+  //      when the agent decides something (measured 2026-07-12 — see tools/onboarding-
+  //      state.ts). The tool RESULT is the only channel that cannot decay, because it is
+  //      re-sent on every call. Self-extinguishing: the onboard call ends it, whether the
+  //      user consents or declines. Nothing for the user to remember, no host-specific hook.
   {
     const allow = writesExposed() ? null : agentToolAllowlist();
     const registerTool = server.tool.bind(server) as (...a: unknown[]) => unknown;
@@ -82,7 +90,7 @@ export function buildWorkspaceServer(db: WorkspaceDB, embeddings: EmbeddingEngin
       if (typeof handler === "function") {
         const orig = handler as (...h: unknown[]) => unknown;
         args[args.length - 1] = async (...h: unknown[]) =>
-          appendFlagNudge((await orig(...h)) as never, db, name);
+          appendSetupNotice(appendFlagNudge((await orig(...h)) as never, db, name) as never, db, name);
       }
       return registerTool(...args);
     };

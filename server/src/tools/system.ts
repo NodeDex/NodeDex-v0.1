@@ -7,6 +7,7 @@ import { ok, err, cosineSim } from "./helpers.js";
 import { buildAgentFlagSurface } from "./flag-surface.js";
 import { runArcExtraction } from "../middleware/reflect/arc-pipeline.js";
 import { protocolBlock } from "../agent-protocol.js";
+import { markReflexOnboarded } from "./onboarding-state.js";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -35,6 +36,12 @@ The result gives you a 4-step contract: (1) CHECK where YOUR standing instructio
     {},
     async () => {
       try {
+        // The CALL is the extinguishing event for the setup notice that rides every other
+        // tool result — not the write. We cannot see the user's config file, so we cannot
+        // verify the write; and a DECLINE is a decision we must respect rather than nag
+        // past. Either way the agent has now been told, once, in full. Fail-open: if this
+        // throws, the notice simply keeps showing, which is the safe direction.
+        markReflexOnboarded(db);
         return ok({
           reason_for_user:
             "NodeDex records what this project already tried, ruled out, and constrained. That only helps if I actually check it at the moment I'm about to make a decision — but the instruction to check arrives once when I connect, and it's long gone from my context by the time I'm hours into a task. I can save a short, clearly-marked note into this project's agent instructions file so the reflex is in front of me on every turn instead. It contains no project data — just the habit. You can delete the block anytime. Want me to?",
