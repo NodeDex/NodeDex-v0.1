@@ -862,12 +862,35 @@ Results are HEADLINES (label, type, essence) — and a block means little alone.
         if (params.project) {
           const root = db.getBlock(params.project);
           if (root && root.type === "project") {
-            const scope = new Set<string>([root.id]);
+            // SUB-ROOTS ARE IN SCOPE — and this walk was reading the wrong link.
+            //
+            // It descended via the `project_id` COLUMN, which is NULL on every root in every
+            // real graph. Root containment is recorded by the pipeline as `part_of` EDGES
+            // between root blocks. So the walk found no sub-roots, and this — THE DEAD-END
+            // CHECK, the core promise — silently returned only what one root happened to hold:
+            //
+            //   workspace_list(project="nodedex", type="dead_end") → 2
+            //   dead-ends actually under nodedex + its 25 sub-roots → far more
+            //
+            // A dead-end check that quietly returns a SUBSET is worse than no check: the agent
+            // reads "2 closed doors", believes it has looked, and walks into the other 37.
             const projs = all.filter((b) => b.type === "project");
+            const projIds = new Set(projs.map((p) => p.id));
+            const parentOfRoot = new Map<string, string>();
+            for (const p of projs) {
+              const partOf = db.getRelations(p.id)
+                .find((r) => r.direction === "outgoing" && r.type === "part_of" && projIds.has(r.target_id));
+              const parentId = partOf?.target_id ?? (p.project_id as string | null);
+              if (parentId && projIds.has(parentId) && parentId !== p.id) parentOfRoot.set(p.id, parentId);
+            }
+            const scope = new Set<string>([root.id]);
             let grew = true;
             while (grew) {
               grew = false;
-              for (const p of projs) if (p.project_id && scope.has(p.project_id) && !scope.has(p.id)) { scope.add(p.id); grew = true; }
+              for (const p of projs) {
+                const parent = parentOfRoot.get(p.id);
+                if (parent && scope.has(parent) && !scope.has(p.id)) { scope.add(p.id); grew = true; }
+              }
             }
             const prefix = root.label + "_";
             blocks = blocks.filter((b) => scope.has(b.id) || (b.project_id != null && scope.has(b.project_id)) || b.label.startsWith(prefix));
@@ -930,9 +953,54 @@ Results are HEADLINES (label, type, essence) — and a block means little alone.
           }
           return row;
         });
+        // ELSEWHERE — what your scope does NOT contain, and why you should care.
+        //
+        // Containment (above) now pulls in sub-roots properly. But a long project also forks into
+        // SIBLING roots that are causally entangled without being contained (measured: 24 of the
+        // 32 orphan top-level roots are tied to the `nodedex` family; one of them,
+        // nodedex-competitor-comparison, has 33 edges into it). Their dead-ends bind on the same
+        // work and sit completely outside a scoped query.
+        //
+        // We do NOT silently widen the scope — a dead-end check must have zero false positives,
+        // and merging roots on a causal guess would poison exactly the tool that must not lie.
+        // We REPORT: "N more of this type live in roots entangled with yours." The count is a
+        // fact; what to do about it is the agent's call. Silence here is the dangerous option —
+        // the agent reads "2 closed doors", believes it has looked, and ships the bug.
+        let elsewhere: Record<string, number> | undefined;
+        if (params.project && params.type) {
+          try {
+            const root = db.getBlock(params.project);
+            if (root?.type === "project") {
+              const inScope = new Set(blocks.map((b) => b.id));
+              const rel = deriveRootRelatedness(db);
+              const near = new Set<string>();
+              for (const p of rel.pairs) {
+                if (p.root_a === root.label) near.add(p.root_b);
+                if (p.root_b === root.label) near.add(p.root_a);
+              }
+              const counts: Record<string, number> = {};
+              for (const label of near) {
+                const r = db.getBlock(label);
+                if (!r) continue;
+                const n = all.filter(
+                  (b) => b.type === params.type && !inScope.has(b.id) &&
+                         (b.project_id === r.id || b.label.startsWith(r.label + "_")),
+                ).length;
+                if (n > 0) counts[label] = n;
+              }
+              if (Object.keys(counts).length) elsewhere = counts;
+            }
+          } catch { /* best-effort — never break the list */ }
+        }
+
         return ok({
           total: blocks.length, returned: results.length, results,
-          hint: "Headlines only — a block means little alone. Open one with workspace_get(label, \"relations\") for its causal sign: what it came from, and the very next thing it led to.",
+          ...(elsewhere ? { elsewhere_in_entangled_roots: elsewhere } : {}),
+          hint:
+            "Headlines only — a block means little alone. Open one with workspace_get(label, \"relations\") for its causal sign: what it came from, and the very next thing it led to." +
+            (elsewhere
+              ? ` ⚠ This scope is NOT the whole story: ${Object.values(elsewhere).reduce((a, b) => a + b, 0)} more ${params.type} block(s) live in roots causally entangled with this one (listed in elsewhere_in_entangled_roots). A long project forks into sibling roots, and their ${params.type}s bind on the same work. Check them before you conclude you have looked.`
+              : ""),
         });
       } catch (error) {
         return err("LIST_FAILED", String(error));
