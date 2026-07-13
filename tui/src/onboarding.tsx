@@ -611,6 +611,21 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             <Text color={theme.value}>2 · Wire CAPTURE — without it the graph stays empty:</Text>
             <Text color={theme.dim}>{`   Hermes → automatic (watcher) · other hosts → README "capture"`}</Text>
           </Box>
+          {/* The trigger. workspace_onboard persists the memory reflex into the agent's
+              OWN standing instructions (AGENTS.md / CLAUDE.md / rules file) so it is
+              re-read EVERY turn — the per-connect instructions are gone from context by
+              the time the agent is deep in a task and actually deciding something.
+              It has always existed and agents never call it on their own: a tool the
+              model must REMEMBER to invoke has the same decay problem it is meant to
+              fix. A user pasting one line does not. */}
+          <Box marginTop={1} flexDirection="column">
+            <Text color={theme.value}>3 · Make the memory reflex PERMANENT — paste this to your agent, once:</Text>
+            <Text color={theme.accent}>{`   "Run workspace_onboard"`}</Text>
+            <Text color={theme.dim}>{`   It asks your permission, then writes a short marked block into this`}</Text>
+            <Text color={theme.dim}>{`   project's agent instructions (AGENTS.md / CLAUDE.md). No project data —`}</Text>
+            <Text color={theme.dim}>{`   just the habit of checking the graph. Delete the block to opt out.`}</Text>
+            <Text color={theme.dim}>{`   Skip this and the agent forgets to look, hours into a long task.`}</Text>
+          </Box>
           <Box marginTop={1}><Text color={theme.dim}>Copy-paste snippets for every host (incl. auth) saved to:</Text></Box>
           <Text color={theme.accent}>~/.nodedex/connect-snippets.md</Text>
           <Text color={theme.accent}>{README_URL}</Text>

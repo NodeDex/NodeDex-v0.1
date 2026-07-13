@@ -1,28 +1,65 @@
 // agent-protocol.ts — the ONE source of truth for what an agent must know to use
-// Nodedex well. Consumed by BOTH:
-//   • the MCP `instructions` field (server.ts) — the advisory FLOOR, every host,
-//     re-sent each connect, may or may not be surfaced.
-//   • workspace_onboard (tools/system.ts) — the persistent UPGRADE: on a capable
-//     host the agent writes this into its OWN standing config (CLAUDE.md / rules
-//     file) so the reflexes survive and are reliably followed.
-// We can't reprogram the agent (we're a tool), so this is how the reflexes reach it.
-// Keep it tight — it costs context tokens on every connect.
+// Nodedex well. It is delivered on TWO channels with DIFFERENT lifetimes, and the
+// split between them is the whole point:
+//
+//   • AGENT_REFLEX — the BEHAVIOUR. Persisted by workspace_onboard into the agent's
+//     OWN standing config (AGENTS.md / CLAUDE.md / rules file) → re-read into context
+//     on EVERY TURN. Survives compaction. Present at hour four, at the line where the
+//     decision is actually made.
+//   • AGENT_PROTOCOL — the reflex PLUS the reference manual (how to judge a block,
+//     detail levels, label construction). Delivered on the MCP `instructions` field,
+//     ONCE per connect → it DECAYS. Fine for reference; useless as a reflex.
+//
+// WHY THE SPLIT (measured, 2026-07-12): an agent read the dead_end list at 12:17,
+// authored the room data at 14:00, and shipped the exact bug the list warned about.
+// It did not fail to understand — in isolation it uses the same list perfectly (two
+// controlled tests). It failed because the instruction to LOOK was delivered in a
+// channel that had scrolled out of context four hours earlier. So the reflex must be
+// SMALL (it is paid on every turn) and PERSISTENT; the manual can be big and transient.
+//
+// The reflex carries NO graph data — only the discipline. Data would not scale (a
+// 500-block project cannot ride in every turn); traversal scales, so the reflex's job
+// is to make the agent WALK, and nothing more.
 
-export const AGENT_PROTOCOL = `Nodedex is your persistent memory — a graph of what was decided, tried, ABANDONED, and constrained across sessions. You did NOT write it — a background pipeline extracts it from your conversation, so DON'T call save/write tools in normal work (they're for fixing graph errors only). READ before you act.
+/** The persisted BEHAVIOUR. Small on purpose — every token here is paid on every turn. */
+export const AGENT_REFLEX = `This project has a NodeDex memory graph: what was DECIDED, TRIED-AND-ABANDONED, and
+CONSTRAINED here — the reasoning the code does not carry. It is NOT in your context.
+You have to ask for it.
 
-REACH THE GRAPH ONLY THROUGH THESE TOOLS. Don't go hunting the filesystem or shell — never read Nodedex's database, log, or config files directly, and don't run raw SQL: you'd get rows stripped of the chains that carry the meaning, and you'd miss the dedup/heal the tools apply. NAVIGATE (traverse), don't blindly query. Touch the underlying DB/files ONLY if you genuinely need something no tool can reach — that's the rare exception, not the default.
+CHECK IT AT THE MOMENT YOU COMMIT TO AN APPROACH — not once at session start:
+  · before your first edit to a file you have not touched this session
+  · when asked to change / replace / improve / fix existing behaviour
+  · when choosing between implementation options
+  · WHEN THE ANSWER FEELS OBVIOUS — that feeling is exactly when a recorded dead-end
+    is most likely to be the thing you are about to re-run
 
-THREE REFLEXES — do these unprompted:
-1. BEFORE proposing ANY approach, check what already failed — suggesting something abandoned, or that breaks a constraint, is the worst outcome. → workspace_filter the approach's concepts (or workspace_get a dead_end label); read the dead_ends + constraints FIRST.
-2. When you need context, TRAVERSE — don't keyword-search. A block is a headline; the causal CHAIN it sits on is the story. Anchor on a block, then walk.
-3. YOUR TASKS ARE YOURS TO MAINTAIN — the ONE thing you write. The pipeline records knowledge, but only YOU know when work is actually finished. At a task boundary: workspace_list(type="task") to see what's open; when you completed or abandoned one, workspace_task_update(id, "done"|"blocked", note). An open task you finished but never closed misleads every later session.
+    workspace_filter(concepts)                  → the relevant project + entry blocks
+    workspace_list(project, type="dead_end")    → what is already closed
+    workspace_list(project, type="constraint")  → what must not break
+
+Then TRAVERSE: workspace_get(label, detail="relations") returns the block WITH its
+causal chain. A block is the headline; the chain is the story.
+
+If a dead-end matches your idea: cite it to the user and propose differently — or say
+what has changed that makes it worth re-trying.
+
+You do not write knowledge — a background pipeline extracts it from this conversation.
+The ONE thing you maintain is your own work-state: at a task boundary,
+workspace_task_update(id, "done"|"blocked", note). Only you know when work is finished.`;
+
+/** The reflex + the reference manual. Sent on the MCP `instructions` field each connect. */
+export const AGENT_PROTOCOL = `${AGENT_REFLEX}
+
+── REFERENCE ────────────────────────────────────────────────────────────────
+
+REACH THE GRAPH ONLY THROUGH THESE TOOLS. Don't go hunting the filesystem or shell — never read Nodedex's database, log, or config files directly, and don't run raw SQL: you'd get rows stripped of the chains that carry the meaning, and you'd miss the dedup/heal the tools apply. Touch the underlying DB/files ONLY if you genuinely need something no tool can reach — the rare exception, not the default.
 
 THE LOOP (traversal-first):
 - Cold start? → workspace_tree — every project root with a one-line description. Pick your root by DESCRIPTION, not by name.
 - New task, no anchor? → workspace_filter(concepts) — first-principle terms of your task (technologies, mechanisms, failure-modes; NOT "fix"/"issue"). Returns relevant project ROOTS + entry blocks.
 - Know it exists but not the label? → workspace_search (fuzzy — the LAST resort; isolated matches). A weak-results note means the graph has NOTHING on this — say so plainly instead of stretching the nearest hits.
 - Know exactly what you want? → CONSTRUCT the label and get it directly: {project}_{entity}_{type}_{concept} ('_' between dimensions, '-' within a concept, entity optional).
-- Have a block? → workspace_get(label, detail="relations") — returns the block PLUS the chain(s) it sits on AND the chains they lead to / rest on (the connected story). That is the unit of meaning; read it, open the next block, keep walking.
+- Have a block? → workspace_get(label, detail="relations") — the block PLUS the chain(s) it sits on AND the chains they lead to / rest on (the connected story). That is the unit of meaning; read it, open the next block, keep walking.
 
 CURRENT TRUTH: a block carrying superseded_by is STALE — read the superseding block and use THAT; never present the old one as current. And judge every block by its CONTENT (essence, unique fields, source_excerpt — the verbatim transcript evidence), never by its label: names drift.
 
@@ -35,12 +72,15 @@ detail: surface (scan) → relations (block + its chain — the traversal defaul
 export const NODEDEX_BEGIN = "<!-- nodedex:protocol:begin -->";
 export const NODEDEX_END = "<!-- nodedex:protocol:end -->";
 
-/** The protocol as a marked, removable block for the agent to persist into its own
- *  standing config — only ever with explicit user permission (workspace_onboard). */
+/** The REFLEX as a marked, removable block for the agent to persist into its own
+ *  standing config — only ever with explicit user permission (workspace_onboard).
+ *  Deliberately the reflex and NOT the full protocol: this text is re-read on every
+ *  turn for the life of the project, so it must stay small. The reference manual
+ *  rides the per-connect instructions instead. */
 export function protocolBlock(): string {
   return `${NODEDEX_BEGIN}
-# Nodedex memory protocol — added with your permission. Delete this whole block to opt out.
+## Project memory (NodeDex) — added with your permission. Delete this whole block to opt out.
 
-${AGENT_PROTOCOL}
+${AGENT_REFLEX}
 ${NODEDEX_END}`;
 }

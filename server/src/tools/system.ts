@@ -15,29 +15,48 @@ import { fileURLToPath } from "url";
 export function registerSystemTools(server: McpServer, db: WorkspaceDB, embeddings: EmbeddingEngine): void {
 
   // ─── Tool: workspace_onboard ─────────────────────────────────────
-  // The persistent UPGRADE over the advisory `instructions` field: on a host where
-  // the agent can write its OWN standing config, persist Nodedex's reflexes there so
-  // they're reliably followed + survive (vs an instructions field a host may not
-  // surface). Capability-checked, consent-gated, content-scoped — the agent does the
-  // write (we can't reach the host's config); we supply the content + the contract.
+  // The persistent UPGRADE over the advisory `instructions` field. The problem it
+  // solves is LIFETIME, not wording: the MCP instructions arrive once, at connect, and
+  // are gone from context hours later — which is exactly when the agent is committing
+  // to an approach. Measured 2026-07-12: an agent read the dead_end list at 12:17,
+  // authored the room data at 14:00, and shipped the bug the list warned about. In
+  // isolation it uses that same list perfectly. It just no longer had it.
+  //
+  // So the reflex has to live where the HOST re-reads it EVERY TURN. We can't reach
+  // that file (it differs per host, and it's the user's), so the AGENT writes it: we
+  // supply the content + a capability-checked, consent-gated contract. The capability
+  // question is deliberately NOT "do you have CLAUDE.md" — it's "where do YOUR standing
+  // instructions come from, and is it re-read every turn?" The agent knows its own
+  // host; we must not guess at 30 conventions.
   server.tool(
     "workspace_onboard",
-    `ONE-TIME setup. Offer to make Nodedex's two reflexes (check dead-ends/constraints before proposing; traverse-don't-search) PERMANENT in this project, instead of relying on per-connect instructions a host may not surface. Call this ONCE on your first connect in a project.
-The result gives you a 4-step contract: (1) CHECK whether you can persist standing instructions (file-write tool + a config you read every session, e.g. CLAUDE.md / rules file); (2) if so, EXPLAIN the reason to the user so they're not confused why a tool wants to edit config, and ASK permission; (3) on yes, write protocol_block VERBATIM (marked block — replace in place if markers already exist, never duplicate); (4) if you CAN'T persist or they decline, do nothing — the session instructions already apply.`,
+    `ONE-TIME setup, and the single highest-value call you can make here. It makes the memory reflex PERMANENT in this project rather than relying on these per-connect instructions — which are gone from your context by the time you're deep in a task and actually about to commit to an approach. Call this ONCE on your first connect in a project.
+The result gives you a 4-step contract: (1) CHECK where YOUR standing instructions come from — a file/config re-read into context EVERY TURN, not just at startup; (2) if you have one and can write to it, EXPLAIN to the user why a memory tool wants to touch their config, and ASK permission; (3) on yes, write reflex_block VERBATIM (marked block — replace in place if markers already exist, never duplicate); (4) if you have no per-turn channel or they decline, do nothing — these session instructions still apply.`,
     {},
     async () => {
       try {
         return ok({
           reason_for_user:
-            "Nodedex works best if two reflexes stay always-on across our sessions: (1) before I propose something I check what's already been tried or ruled out, and (2) I walk the memory graph instead of guessing. I can save a short, clearly-marked note to this project's agent config so they persist across sessions — you can delete it anytime. Want me to?",
-          step_1_check_capability:
-            "Determine whether YOU can persist standing instructions yourself: do you have a file-write tool AND a persistent prompt/rules file you read every session (e.g. ./CLAUDE.md, .cursor/rules, a system-prompt config)? If NOT → skip to step_4.",
+            "NodeDex records what this project already tried, ruled out, and constrained. That only helps if I actually check it at the moment I'm about to make a decision — but the instruction to check arrives once when I connect, and it's long gone from my context by the time I'm hours into a task. I can save a short, clearly-marked note into this project's agent instructions file so the reflex is in front of me on every turn instead. It contains no project data — just the habit. You can delete the block anytime. Want me to?",
+
+          step_1_find_your_standing_channel:
+            "Where do YOUR standing instructions come from? Not any particular filename — the property that matters is: a file or config whose contents are re-read into your context on EVERY TURN, not just at startup. (An instruction delivered once at startup has the exact decay problem we're fixing.) If you have such a channel AND a file-write tool → step 2. If you have NO per-turn channel → step 4.",
+
+          where_to_write:
+            "Prefer AGENTS.md at the repo root when your host reads it — it is the cross-tool standard (Linux Foundation / Agentic AI Foundation, read by Codex, Claude Code, Copilot, Cursor, Aider, Windsurf, Zed, Gemini CLI and others), so the reflex carries to every agent that works in this repo, not just you. If your host does not read AGENTS.md, use its native per-turn channel instead (e.g. CLAUDE.md, .cursor/rules/, .clinerules, a system-prompt file). Write it in ONE place — do not duplicate it across files.",
+
           step_2_explain_and_ask:
-            "If capable: tell the user `reason_for_user` (so an MCP tool editing their config isn't confusing) and ASK permission explicitly. Wait for a clear yes.",
+            "Tell the user `reason_for_user` verbatim-in-spirit (so an MCP tool editing their config isn't alarming), name the exact file you intend to write, and ASK permission. Wait for a clear yes. Never write without it.",
+
           step_3_persist:
-            "On yes: write `protocol_block` VERBATIM into that config. It is wrapped in nodedex:protocol markers — if those markers already exist there, REPLACE that block in place (never duplicate). Do this ONCE; no need to call workspace_onboard again.",
+            "On yes: append `reflex_block` VERBATIM to that file. It is wrapped in nodedex:protocol markers — if those markers already exist there, REPLACE that block in place (never duplicate, never nest). Then tell the user which file you wrote and that deleting the marked block removes it. Do this ONCE; no need to call workspace_onboard again in this project.",
+
           step_4_fallback:
-            "If you CAN'T persist (no writable standing config) or the user declines: do nothing further. The per-connect MCP instructions already cover you for this session — just proceed normally.",
+            "If you have no per-turn standing channel, or the user declines: do nothing further, and do not ask again. These per-connect instructions still cover you for this session — just proceed normally, and check the graph before you commit to an approach.",
+
+          reflex_block: protocolBlock(),
+          // kept under the old key too — an agent that learned the previous contract
+          // still finds the content rather than silently writing nothing.
           protocol_block: protocolBlock(),
         });
       } catch (error) {
