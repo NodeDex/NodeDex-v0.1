@@ -862,38 +862,26 @@ Results are HEADLINES (label, type, essence) — and a block means little alone.
         if (params.project) {
           const root = db.getBlock(params.project);
           if (root && root.type === "project") {
-            // SUB-ROOTS ARE IN SCOPE — and this walk was reading the wrong link.
+            // SCOPE MEANS SCOPE. This returns THIS root's blocks — not its children's.
             //
-            // It descended via the `project_id` COLUMN, which is NULL on every root in every
-            // real graph. Root containment is recorded by the pipeline as `part_of` EDGES
-            // between root blocks. So the walk found no sub-roots, and this — THE DEAD-END
-            // CHECK, the core promise — silently returned only what one root happened to hold:
+            // A sub-root exists precisely BECAUSE its topic was big enough to deserve its own
+            // root. Its dead-ends are about ITS topic. Merging 25 sub-roots into the parent's
+            // answer turns a 2-item check into a 17-item one where the two that matter are
+            // buried under capture, extraction and market-positioning — and it puts FALSE
+            // POSITIVES into the one tool that must have none.
             //
-            //   workspace_list(project="nodedex", type="dead_end") → 2
-            //   dead-ends actually under nodedex + its 25 sub-roots → far more
+            // (I made exactly that mistake one commit ago: "fixed" 2 → 17 by widening the scope.
+            // That trades a silent-omission bug for a noise bug. The answer to a scoped question
+            // is the scoped answer.)
             //
-            // A dead-end check that quietly returns a SUBSET is worse than no check: the agent
-            // reads "2 closed doors", believes it has looked, and walks into the other 37.
-            const projs = all.filter((b) => b.type === "project");
-            const projIds = new Set(projs.map((p) => p.id));
-            const parentOfRoot = new Map<string, string>();
-            for (const p of projs) {
-              const partOf = db.getRelations(p.id)
-                .find((r) => r.direction === "outgoing" && r.type === "part_of" && projIds.has(r.target_id));
-              const parentId = partOf?.target_id ?? (p.project_id as string | null);
-              if (parentId && projIds.has(parentId) && parentId !== p.id) parentOfRoot.set(p.id, parentId);
-            }
-            const scope = new Set<string>([root.id]);
-            let grew = true;
-            while (grew) {
-              grew = false;
-              for (const p of projs) {
-                const parent = parentOfRoot.get(p.id);
-                if (parent && scope.has(parent) && !scope.has(p.id)) { scope.add(p.id); grew = true; }
-              }
-            }
+            // The omission was still real, though — the agent had NO WAY to know the children
+            // held more. So: NARROW ANSWER, FULL DISCLOSURE. What lives outside this scope is
+            // REPORTED below (also_in_sub_roots / elsewhere_in_entangled_roots), never merged
+            // into the result. The agent decides where to look; the check never lies.
             const prefix = root.label + "_";
-            blocks = blocks.filter((b) => scope.has(b.id) || (b.project_id != null && scope.has(b.project_id)) || b.label.startsWith(prefix));
+            blocks = blocks.filter(
+              (b) => b.id === root.id || b.project_id === root.id || b.label.startsWith(prefix),
+            );
           } else {
             // FAIL LOUD — a silent [] here would poison a dead-end check.
             const matched = blocks.filter((b) => b.label.startsWith(params.project + "_") || b.label === params.project);
@@ -978,6 +966,7 @@ Results are HEADLINES (label, type, essence) — and a block means little alone.
         // quietly make it false. We ask only what we need: which roots share an edge with THIS
         // one. Same answer, scoped.
         let elsewhere: Record<string, number> | undefined;
+        let subRoots: Record<string, number> | undefined;
         if (params.project && params.type) {
           try {
             const root = db.getBlock(params.project);
@@ -1005,27 +994,58 @@ Results are HEADLINES (label, type, essence) — and a block means little alone.
                 if (inScope.has(e.source_id)) noteRoot(e.target_id);
                 if (inScope.has(e.target_id)) noteRoot(e.source_id);
               }
-              const counts: Record<string, number> = {};
-              for (const rid of near) {
+              // SUB-ROOTS are reported apart from ENTANGLED siblings, because they are not the
+              // same thing and the agent should not treat them alike:
+              //   sub-root  = PART OF this project, but its own topic (it earned its own root).
+              //               Likely relevant. Narrow further, do not assume.
+              //   entangled = a SIBLING that shares causal edges. Linked, not owned.
+              const projIds = new Set([...rootById.keys()]);
+              const childRootIds = new Set<string>();
+              for (const rid of projIds) {
+                const partOf = db.getRelations(rid)
+                  .find((r) => r.direction === "outgoing" && r.type === "part_of" && r.target_id === root.id);
+                if (partOf) childRootIds.add(rid);
+              }
+              const countIn = (rid: string): number => {
                 const rl = rootById.get(rid)!;
-                const n = all.filter(
+                return all.filter(
                   (b) => b.type === params.type && !inScope.has(b.id) &&
                          (b.project_id === rid || b.label.startsWith(rl + "_")),
                 ).length;
-                if (n > 0) counts[rl] = n;
+              };
+              const subs: Record<string, number> = {};
+              for (const rid of childRootIds) { const n = countIn(rid); if (n > 0) subs[rootById.get(rid)!] = n; }
+              const sibs: Record<string, number> = {};
+              for (const rid of near) {
+                if (childRootIds.has(rid)) continue; // already reported as a sub-root
+                const n = countIn(rid); if (n > 0) sibs[rootById.get(rid)!] = n;
               }
-              if (Object.keys(counts).length) elsewhere = counts;
+              if (Object.keys(subs).length) subRoots = subs;
+              if (Object.keys(sibs).length) elsewhere = sibs;
             }
           } catch { /* best-effort — never break the list */ }
         }
 
+        const sum = (o?: Record<string, number>) => Object.values(o ?? {}).reduce((a, b) => a + b, 0);
+        const nSub = sum(subRoots), nSib = sum(elsewhere);
         return ok({
           total: blocks.length, returned: results.length, results,
+          ...(subRoots ? { also_in_sub_roots: subRoots } : {}),
           ...(elsewhere ? { elsewhere_in_entangled_roots: elsewhere } : {}),
           hint:
             "Headlines only — a block means little alone. Open one with workspace_get(label, \"relations\") for its causal sign: what it came from, and the very next thing it led to." +
-            (elsewhere
-              ? ` ⚠ This scope is NOT the whole story: ${Object.values(elsewhere).reduce((a, b) => a + b, 0)} more ${params.type} block(s) live in roots causally entangled with this one (listed in elsewhere_in_entangled_roots). A long project forks into sibling roots, and their ${params.type}s bind on the same work. Check them before you conclude you have looked.`
+            // NARROW ANSWER, FULL DISCLOSURE. The results are exactly this root's — merging the
+            // children in would bury the two that matter under twenty that don't, and put false
+            // positives in the one tool that must have none. But the agent must never be able to
+            // believe it has looked when it hasn't, so what lies outside is COUNTED here.
+            (nSub > 0
+              ? ` This root has SUB-ROOTS holding ${nSub} more ${params.type} block(s) (also_in_sub_roots) — each is PART OF this project but its own topic; open the one you are working in rather than assuming.`
+              : "") +
+            (nSib > 0
+              ? ` ⚠ ${nSib} more ${params.type} block(s) sit in roots causally ENTANGLED with this one (elsewhere_in_entangled_roots) — siblings of the same long project, linked but not owned. Their ${params.type}s can still bind on your work.`
+              : "") +
+            (nSub + nSib > 0
+              ? " These are NOT merged into the results above: a scoped question gets the scoped answer. Widen deliberately."
               : ""),
         });
       } catch (error) {
