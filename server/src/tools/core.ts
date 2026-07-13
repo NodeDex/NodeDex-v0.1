@@ -414,17 +414,24 @@ DETAIL LEVELS (default: "surface" — start here, drill down only if needed):
 
 Tip: use "surface" first. If the essence tells you what you need, stop there. "relations" to orient; then workspace_thread(id) to read the WHOLE arc in one call.`,
     {
-      id:     z.string().describe("Block ID (blk_xxx) or label"),
+      id:     z.string().optional().describe("Block ID (blk_xxx) or label"),
+      // `label` is an ALIAS, and it exists because WE taught it. Every doc, the reflex, and
+      // the protocol all say workspace_get(label, detail="relations") — so an agent following
+      // our own instruction emits {label: …} and gets a validation error. Accepting both is
+      // one line; making the model guess which key we meant is friction we authored.
+      label:  z.string().optional().describe("The block's label (alias for `id` — either works)"),
       detail: z.enum(["surface", "content", "relations", "full"]).optional()
                .describe("Level of detail to return. Default: 'surface'"),
     },
     async (params) => {
       try {
+        const key = params.id ?? params.label;
+        if (!key) return err("MISSING_ID", "Pass the block's label (or id) as `id` or `label`.");
         // touch: the agent consuming THIS block is exactly what access telemetry means.
         // Neighbor essences below read pure — a preview is not a consumption.
-        const block = db.getBlock(params.id, { touch: true });
+        const block = db.getBlock(key, { touch: true });
         if (!block) {
-          return err("BLOCK_NOT_FOUND", `No block found with id or label '${params.id}'`,
+          return err("BLOCK_NOT_FOUND", `No block found with id or label '${key}'`,
             { suggestion: "Try workspace_search to find the block." });
         }
 

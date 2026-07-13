@@ -160,8 +160,13 @@ export function createAdminRouter(
     // it is wired into: the gate is per-agent (it lives in that agent's seam), so one host's
     // gate proves nothing about the next host's.
     const agent = typeof req.query.agent === "string" ? normalizeClient(req.query.agent) : undefined;
+    // `file` = what is about to be edited. A fresh read is not the same as a RELEVANT one: an
+    // agent that consulted the graph about the font system four minutes ago knows nothing about
+    // enemy placement. A NEW TASK SHOWS UP AS NEW FILES, so the first touch of a file is worth
+    // a check even when the clock says "recent".
+    const file = typeof req.query.file === "string" ? req.query.file : undefined;
     markGateSeen(db, agent);
-    if (!gateShouldRemind(db, agent)) {
+    if (!gateShouldRemind(db, agent, file)) {
       res.json({ remind: false });
       return;
     }

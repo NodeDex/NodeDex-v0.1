@@ -78,6 +78,7 @@ const K = {
   gateLast: "setup_gate_last_check_at",
   gateCount: "setup_gate_check_count",
   lastRead: "last_graph_read_at",
+  readEpoch: "graph_read_epoch",
   agents: "setup_known_agents",
 } as const;
 
@@ -255,25 +256,62 @@ export function markDeclined(db: WorkspaceDB, wire: Wire, client: string): void 
 export function recordGraphRead(db: WorkspaceDB, client?: string): void {
   const now = String(Date.now());
   set(db, K.lastRead, now);                                  // graph-wide (shown in the TUI)
-  if (client) set(db, `${K.lastRead}::${client}`, now);      // what the gate actually reads
+  if (client) {
+    set(db, `${K.lastRead}::${client}`, now);                // the staleness clock
+    // A monotonic READ EPOCH, because "has this file been touched since the last read?" must
+    // not be answered by comparing wall-clock stamps: both can land in the same millisecond and
+    // the comparison silently flips. The epoch is exact by construction.
+    const e = Number(get(db, `${K.readEpoch}::${client}`) ?? 0);
+    set(db, `${K.readEpoch}::${client}`, String(e + 1));
+  }
 }
 
 /**
- * Should the pre-edit gate speak up for THIS agent?
+ * Should the pre-edit gate speak up for THIS agent, about THIS file?
  *
- * TIME, NOT SESSION — the load-bearing design call. A session-scoped check ("have you read the
- * graph this session?") would have said YES to the failure we measured: it read at 12:17 and
- * shipped the bug at 16:45, same session. What decayed was not the session, it was the CONTEXT.
- * So the gate asks how STALE this agent's last read is — the thing actually observed going wrong.
+ * TWO triggers, because staleness alone is not enough:
  *
- * An unidentified caller falls back to the graph-wide clock: without a name we cannot do better,
- * and staying silent would be worse than being occasionally over-eager.
+ * 1. TIME — the agent's last read has gone stale. This is the failure we MEASURED: it read the
+ *    dead-ends at 12:17 and shipped the bug at 16:45, same session. Session-scoped ("have you
+ *    read the graph this session?") would have said YES and stayed silent. What decayed was the
+ *    CONTEXT, not the session, so the question is how OLD the read is.
+ *
+ * 2. A NEW FILE — because a fresh read is not the same as a RELEVANT one. An agent that read
+ *    about the font system four minutes ago knows nothing about enemy placement, and a
+ *    time-only gate would wave it straight through. A NEW TASK SHOWS UP AS NEW FILES, and the
+ *    reflex already names this trigger in its own words: "before your first edit to a file you
+ *    have not touched this session". So: first touch of a file ⇒ remind, once. Editing the same
+ *    file again is silent — that is the same task continuing, and nagging it would get the gate
+ *    uninstalled by Tuesday.
+ *
+ * A read RESETS the file memory: having just consulted the graph, the agent is entitled to work
+ * across the files that read was about.
  */
-export function gateShouldRemind(db: WorkspaceDB, client?: string): boolean {
+export function gateShouldRemind(db: WorkspaceDB, client?: string, file?: string): boolean {
+  const who = client ?? "unknown-agent";
   const mins = Number(process.env.NODEDEX_GATE_STALE_MIN ?? 30);
   const last = Number(get(db, client ? `${K.lastRead}::${client}` : K.lastRead) ?? 0);
-  if (!last) return true; // this agent has never consulted the graph → definitely remind
-  return Date.now() - last > mins * 60_000;
+  if (!last) return true;                                   // never consulted the graph
+  if (Date.now() - last > mins * 60_000) return true;       // (1) stale
+
+  if (!file) return false;
+
+  // GRACE — it consulted the graph moments ago and is now acting on what it found. Nagging an
+  // agent for editing right after it did the right thing is how a gate gets uninstalled. The
+  // window is short (2 min): long enough to cover the burst of edits that follows a read, far
+  // too short to cover the four-hour gap that produced the bug we are actually chasing.
+  const graceSec = Number(process.env.NODEDEX_GATE_GRACE_SEC ?? 120);
+  if (Date.now() - last < graceSec * 1000) return false;
+
+  // (2) NEW FILE — first touch since the agent last consulted the graph. A fresh read is not the
+  // same as a RELEVANT one, and a new task shows up as new files. Compared by read EPOCH, not by
+  // clock: two writes in the same millisecond would make a timestamp comparison flip at random,
+  // and a gate that fires at random is worse than no gate.
+  const epoch = Number(get(db, `${K.readEpoch}::${who}`) ?? 0);
+  const seenKey = `gate_seen_file::${who}::${file}`;
+  const seenEpoch = Number(get(db, seenKey) ?? -1);
+  set(db, seenKey, String(epoch));
+  return seenEpoch < epoch;
 }
 
 // ── the notice (rides every tool RESULT — the one channel that cannot decay) ─────────

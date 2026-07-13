@@ -34,20 +34,42 @@ const AGENT =
   process.env.NODEDEX_AGENT ||
   "";
 
+/** WHICH FILE is about to be edited. Two ways to tell us, because hosts differ:
+ *   · --file=<path>
+ *   · a JSON payload on stdin containing a file path anywhere (most pre-tool hooks pipe one)
+ *
+ *  It matters because a fresh graph read is not the same as a RELEVANT one: an agent that read
+ *  about the font system four minutes ago knows nothing about enemy placement. A NEW TASK SHOWS
+ *  UP AS NEW FILES, so the first touch of a file is a moment worth checking. */
+function fileFrom(stdinText) {
+  const flag = process.argv.find((a) => a.startsWith("--file="));
+  if (flag) return flag.slice(7);
+  try {
+    const j = JSON.parse(stdinText);
+    const hit = j?.tool_input?.file_path ?? j?.file_path ?? j?.path ?? j?.tool_input?.path;
+    if (typeof hit === "string") return hit;
+  } catch { /* not JSON, or no path in it — fine */ }
+  return "";
+}
+
 async function main() {
-  // Drain stdin if the host pipes us a payload — we do not need it, but leaving the pipe
-  // unread can make some hosts hang.
+  // Read stdin if the host pipes us a payload (most pre-tool hooks do). Leaving the pipe
+  // unread can also make some hosts hang, so we always drain it.
+  let stdinText = "";
   if (!process.stdin.isTTY) {
     try {
-      for await (const _ of process.stdin) { /* discard */ }
+      for await (const chunk of process.stdin) stdinText += chunk;
     } catch { /* ignore */ }
   }
+  const file = fileFrom(stdinText);
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const q = AGENT ? `?agent=${encodeURIComponent(AGENT)}` : "";
-    const res = await fetch(`${URL_BASE}/api/gate/check${q}`, { signal: ctrl.signal });
+    const q = new URLSearchParams();
+    if (AGENT) q.set("agent", AGENT);
+    if (file) q.set("file", file);
+    const res = await fetch(`${URL_BASE}/api/gate/check${q.size ? `?${q}` : ""}`, { signal: ctrl.signal });
     if (!res.ok) return;
     const body = await res.json();
     if (body?.remind && body?.message) process.stdout.write(String(body.message) + "\n");

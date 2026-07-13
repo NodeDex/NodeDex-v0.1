@@ -254,6 +254,34 @@ describe("the gate — staleness is TIME, not session", () => {
     try { fs.unlinkSync("/tmp/wmcs_gate_time2.db"); } catch { /* best-effort */ }
   });
 
+  test("a fresh read is not a RELEVANT read — a NEW FILE still gets checked", () => {
+    // The hole in a time-only gate: the agent reads the graph about the font system, then four
+    // minutes later starts a different task — enemy placement — and sails straight through,
+    // because the clock says "recent". A new task shows up as NEW FILES, and the reflex already
+    // names this trigger in its own words: "before your first edit to a file you have not
+    // touched this session".
+    const fresh = new WorkspaceDB("/tmp/wmcs_gate_files.db");
+    fresh.init();
+    // Grace off: this test is about RELEVANCE (new file), not about the just-read grace window.
+    const prevGrace = process.env.NODEDEX_GATE_GRACE_SEC;
+    process.env.NODEDEX_GATE_GRACE_SEC = "0";
+    recordGraphRead(fresh, "agent-x");
+
+    assert.equal(gateShouldRemind(fresh, "agent-x", "src/font.js"), true, "first touch of a file → check");
+    assert.equal(gateShouldRemind(fresh, "agent-x", "src/font.js"), false, "same file again → silent (same task)");
+    assert.equal(gateShouldRemind(fresh, "agent-x", "src/rooms.js"), true, "a DIFFERENT file → new task → check");
+
+    // …and consulting the graph again re-opens the files it was about: having just read, the
+    // agent is entitled to work across them without being nagged for each one.
+    recordGraphRead(fresh, "agent-x");
+    assert.equal(gateShouldRemind(fresh, "agent-x", "src/rooms.js"), true, "after a new read, the next file is checked once more");
+
+    if (prevGrace === undefined) delete process.env.NODEDEX_GATE_GRACE_SEC;
+    else process.env.NODEDEX_GATE_GRACE_SEC = prevGrace;
+    fresh.close();
+    try { fs.unlinkSync("/tmp/wmcs_gate_files.db"); } catch { /* best-effort */ }
+  });
+
   test("the gate wire is proven by a check ARRIVING, not by a claim", () => {
     const fresh = new WorkspaceDB("/tmp/wmcs_gate_seen.db");
     fresh.init();
@@ -262,5 +290,26 @@ describe("the gate — staleness is TIME, not session", () => {
     assert.equal(wireState(fresh, CLIENT).gate, true, "an actual check reaching us is the only proof it is wired");
     fresh.close();
     try { fs.unlinkSync("/tmp/wmcs_gate_seen.db"); } catch { /* best-effort */ }
+  });
+});
+
+describe("the gate does not nag an agent that just did the right thing", () => {
+  test("GRACE: it consulted the graph moments ago → silent even on a new file", () => {
+    // A gate that fires the instant after a read is a gate that gets uninstalled. The window is
+    // short on purpose: it covers the burst of edits that FOLLOWS a read, and comes nowhere near
+    // the four-hour gap that produced the bug we are actually chasing.
+    const db2 = new WorkspaceDB("/tmp/wmcs_gate_grace.db");
+    db2.init();
+    recordGraphRead(db2, "agent-g");
+    assert.equal(gateShouldRemind(db2, "agent-g", "src/brand-new.js"), false, "just read → let it work");
+
+    const prev = process.env.NODEDEX_GATE_GRACE_SEC;
+    process.env.NODEDEX_GATE_GRACE_SEC = "0"; // the grace has passed; it is now 'working'
+    assert.equal(gateShouldRemind(db2, "agent-g", "src/brand-new.js"), true, "…but a new file later IS checked");
+    if (prev === undefined) delete process.env.NODEDEX_GATE_GRACE_SEC;
+    else process.env.NODEDEX_GATE_GRACE_SEC = prev;
+
+    db2.close();
+    try { fs.unlinkSync("/tmp/wmcs_gate_grace.db"); } catch { /* best-effort */ }
   });
 });

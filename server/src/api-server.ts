@@ -18,7 +18,7 @@ import { createBlocksRouter }      from "./routes/blocks.js";
 import { createRecallRouter }      from "./routes/recall.js";
 import { createReflectRouter }     from "./routes/reflect.js";
 import { createSessionRouter }     from "./routes/session.js";
-import { recordGraphRead }         from "./tools/setup-state.js";
+import { recordGraphRead, normalizeClient } from "./tools/setup-state.js";
 import { createWorkspaceRouter }   from "./routes/workspace.js";
 import { createAdminRouter }       from "./routes/admin.js";
 import { createInjectRouter }      from "./routes/inject.js";
@@ -106,7 +106,14 @@ export function startApiServer(
   // be silenced by a heartbeat.
   const GRAPH_READ_PATHS = /^\/api\/(tree|search|blocks|roots|chains|recall|filter)(\/|$)/;
   app.use((req, _res, next) => {
-    if (req.method === "GET" && GRAPH_READ_PATHS.test(req.path)) recordGraphRead(db);
+    if (req.method === "GET" && GRAPH_READ_PATHS.test(req.path)) {
+      // WHO read. MCP carries the client identity for free; REST does not — so an agent with
+      // its own loop (which reads over REST, never through MCP) would stamp nobody's clock,
+      // its gate would find "never consulted" forever, and it would be nagged precisely for
+      // reading diligently. Let it name itself: `x-nodedex-agent` or ?agent=.
+      const named = (req.headers["x-nodedex-agent"] as string) || (req.query.agent as string) || "";
+      recordGraphRead(db, named ? normalizeClient(named) : undefined);
+    }
     next();
   });
 
