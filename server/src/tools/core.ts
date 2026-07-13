@@ -457,7 +457,13 @@ Tip: use "surface" first. If the essence tells you what you need, stop there. "r
           })(),
           created_by: block.created_by || null,
           locked:     block.locked || false,
-          flow_role:  block.flow_role || null,
+          // `flow_role` is emitted ONLY when it is actually set. Audited 2026-07-13 across the
+          // live graph: NULL on 171/171 blocks — extraction has never filled it (only
+          // workspace_derive and a manual remember ever do). A field that is always null does
+          // not read as "absent", it reads as "this graph has no flow roles" — we were paying
+          // tokens on every block, at every detail level, to assert a hole. Same rule as
+          // `arc: null` on a one-node lineage: never imply structure that is not there.
+          ...(block.flow_role ? { flow_role: block.flow_role } : {}),
           // `chain_id` NOT surfaced (2026-07-13) — same reason as `on_chain` in workspace_list:
           // it names the stamped-once Pass-5 chain block, which the story no longer comes from,
           // and whose single conclusion cannot answer the several different blocks on it. The
@@ -491,9 +497,21 @@ Tip: use "surface" first. If the essence tells you what you need, stop there. "r
 
         // ── content ───────────────────────────────────────────────
         if (detail === "content" || detail === "full") {
-          base.is_a   = content.is_a   || null;
-          base.unique = content.unique  || {};
-          base.has    = content.has     || {};
+          // THE CONTENT BODY. `unique` is the one that carries the knowledge (filled on 165/171
+          // blocks in the live graph: {approach, reason} on a dead_end, {choice, reason} on a
+          // decision, {limit, reason} on a constraint). The other two are usually noise, so we
+          // only emit them when they SAY something:
+          //   is_a — duplicates `type` on 169/171 ("is_a: dead_end" on a dead_end block). A field
+          //          that restates the field above it teaches the reader that the field is
+          //          worthless; when it genuinely differs it is a real parent category, so keep
+          //          it THEN and only then.
+          //   has  — empty {} on 165/171. It is for process blocks (the steps). Emitting `has: {}`
+          //          on everything else is a promise of structure that is not there.
+          base.unique = content.unique || {};
+          const isA = content.is_a as string | undefined;
+          if (isA && isA !== block.type) base.is_a = isA;
+          const has = content.has as Record<string, unknown> | undefined;
+          if (has && Object.keys(has).length > 0) base.has = has;
         }
 
         // ── relations ─────────────────────────────────────────────
