@@ -65,7 +65,13 @@ THE LOOP (traversal-first):
 - New task, no anchor? → workspace_filter(concepts) — first-principle terms of your task (technologies, mechanisms, failure-modes; NOT "fix"/"issue"). Returns relevant project ROOTS + entry blocks.
 - Know it exists but not the label? → workspace_search (fuzzy — the LAST resort; isolated matches). A weak-results note means the graph has NOTHING on this — say so plainly instead of stretching the nearest hits.
 - Know exactly what you want? → CONSTRUCT the label and get it directly: {project}_{entity}_{type}_{concept} ('_' between dimensions, '-' within a concept, entity optional).
-- Have a block? → workspace_get(label, detail="relations") — the block PLUS the chain(s) it sits on AND the chains they lead to / rest on (the connected story). That is the unit of meaning; read it, open the next block, keep walking.
+- Have a block? → workspace_get(label, detail="relations") — the block PLUS the causal SIGN it sits on. That is the unit of meaning; read it, open the next block, keep walking.
+
+WHICH FIELD IS THE ROAD (a block hands you several, and they are not equal):
+- chains[].leads_to  → THE ROAD. The very next thing this block led to, ranked — follow this. On a dead_end it is the fix.
+- chains[].conclusion → where that next step lands, in one line. chains[].members → what this block CAME from (arc = that path; null when the block is itself the origin).
+- outgoing / incoming → the RAW edges, unranked, including non-causal ones (related_to, contradicts, grounding). Your fallback when the sign did not show what you need. Expect the same neighbour to appear more than once (one edge per relation type) — that is one relationship, not several.
+- linked_chains → a jump to a DIFFERENT thread that touches this one. Use it to change subject, not to continue.
 
 CURRENT TRUTH: a block carrying superseded_by is STALE — read the superseding block and use THAT; never present the old one as current. But a DEAD_END IS NEVER STALE: a resolved dead-end carries resolved_by, not superseded_by, and it means the door STAYS CLOSED — resolved_by is HOW the project got around it, not permission to re-try the approach that failed. Re-open a dead-end only if some block says what CHANGED. And judge every block by its CONTENT (essence, unique fields, source_excerpt — the verbatim transcript evidence), never by its label: names drift.
 
