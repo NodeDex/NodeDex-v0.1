@@ -215,3 +215,47 @@ describe("orderMembersCausally — members follow the chain's flow, not created_
     assert.deepEqual(orderMembersCausally(db, [only]).map((m) => m.label), ["o_fact_only"]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+// The signpost must point AT the answer — the exact failure this graph recorded about us.
+//
+// Measured on the real game graph: workspace_get(dead_end_enemy-spawns-solid, "relations")
+// returned leads_to = [blueprint about NodeDex traversal, a validator fact] and conclusion =
+// "Agent offered to do proper Nodedex traversal now as back-check…" — while the actual fix,
+// decision_enemy-spawns-walkable, sat ONE EDGE AWAY and never appeared. leads_to was built
+// from the walk's TERMINAL LEAVES, so it stepped over the next turn and reported the far end
+// of a road that, in a long session, connects to everything.
+//
+// A sign says WHERE TO GO FROM HERE. These lock that.
+describe("the mechanical SIGN points at the NEXT TURN, not the far end of the road", () => {
+  test("leads_to is the immediate successor — the fix, not the leaf six hops on", () => {
+    const deadEnd = db.createBlock({ label: "g_dead-end_spawns-solid", type: "dead_end", essence: "Spawns were on solid tiles." });
+    const fix     = db.createBlock({ label: "g_decision_spawns-walkable", type: "decision", essence: "Spawns corrected to walkable tiles." });
+    const later   = db.createBlock({ label: "g_fact_validator-passed", type: "fact", essence: "Validator passed all 14 rooms." });
+    const far     = db.createBlock({ label: "g_blueprint_unrelated", type: "blueprint", essence: "Offered to do a traversal back-check." });
+    // dead_end → fix → later → far   (the fix is ONE hop; `far` is the terminal leaf)
+    db.createRelation({ source_id: fix.id,   target_id: deadEnd.id, type: "based_on" });
+    db.createRelation({ source_id: later.id, target_id: fix.id,     type: "based_on" });
+    db.createRelation({ source_id: far.id,   target_id: later.id,   type: "based_on" });
+
+    const sign = assembleBlockChains(db, { id: deadEnd.id, type: deadEnd.type }).chains[0]!;
+    const dests = (sign.leads_to ?? []).map((l) => l.label);
+    assert.ok(dests.includes("g_decision_spawns-walkable"), "the NEXT hop — the fix — must be the destination");
+    assert.ok(!dests.includes("g_blueprint_unrelated"), "the far leaf must NOT masquerade as where this leads");
+    assert.equal(sign.conclusion, "Spawns corrected to walkable tiles.", "and the conclusion is the fix, not a leaf");
+  });
+
+  test("a path of ONE is not a path — arc is null, never a truncated fragment", () => {
+    // The block IS the origin (nothing upstream), so there is no journey to describe. Rendering
+    // the lone node as an arc produced "Spawns were on solid tiles, thus inval…" — a fragment
+    // that READS like a path. Never dress missing structure up as structure.
+    const origin = db.createBlock({ label: "g_dead-end_origin-only", type: "dead_end", essence: "Nothing came before this." });
+    const next   = db.createBlock({ label: "g_decision_after-origin", type: "decision", essence: "What we did about it." });
+    db.createRelation({ source_id: next.id, target_id: origin.id, type: "based_on" });
+
+    const sign = assembleBlockChains(db, { id: origin.id, type: origin.type }).chains[0]!;
+    assert.equal(sign.members.length, 1, "precondition: nothing upstream");
+    assert.equal(sign.arc, null, "no upstream path ⇒ arc is null, not a one-node 'arc'");
+    assert.equal(sign.essence, "Nothing came before this. → What we did about it.", "essence still tells the story");
+  });
+});

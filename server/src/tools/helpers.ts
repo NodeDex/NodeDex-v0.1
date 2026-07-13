@@ -396,11 +396,20 @@ function composeSign(db: WorkspaceDB, walk: ThreadWalk): ChainSummary | null {
   const isTerminal = shown.length === 0 && !walk.truncated;
   const topLeaf = shown[0] ?? { essence: ordered[ordered.length - 1]!.b.essence || "" };
 
+  // `arc` = the path this block CAME ALONG (origin → … → focal). With nothing upstream there
+  // IS no path — the block is the origin — and rendering the lone node as an arc produced a
+  // truncated fragment that READS like a journey ("Initial D-04 enemy spawns were on solid
+  // tiles, thus invalid…"). A path of one is not a path; say null and let `members` carry it.
+  // Same rule as everywhere else here: never dress missing structure up as structure.
+  const lineageArc = ordered.length > 1
+    ? ordered.map((x) => truncEssence(x.b.essence, 60)).join("  →  ")
+    : null;
+
   return {
     label: null,
     mechanical: true,
     essence: `${truncEssence(origin.essence)} → ${truncEssence(topLeaf.essence)}`,
-    arc: ordered.map((x) => truncEssence(x.b.essence, 60)).join("  →  "),
+    arc: lineageArc,
     conclusion: topLeaf.essence || null,
     members,
     leads_to: shown.map(({ label, type, essence }) => ({ label, type, essence })),
