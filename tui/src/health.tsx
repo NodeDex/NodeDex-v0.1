@@ -456,9 +456,10 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
             !setup ? "— (server not reporting)"
               : setup.capture.turns > 0
                 ? `${setup.capture.turns} from ${setup.capture.sources.map((s) => s.agent_id).join(", ")}`
+                : setup.capture.arrived ? 'arrived, not yet stored as turns (arc mode off)'
                 : `${glyph.flag} none — nothing has ever been captured`
           }
-          color={!setup ? theme.dim : setup.capture.turns > 0 ? theme.value : theme.warn}
+          color={!setup ? theme.dim : setup.capture.turns > 0 || setup.capture.arrived ? theme.value : theme.warn}
           hint="whatever fed them: a watcher, the adapter, or your own POST"
         />
         {/* PER-AGENT — ALL THREE WIRES. The reflex sits in a file ONE agent reads, the gate in

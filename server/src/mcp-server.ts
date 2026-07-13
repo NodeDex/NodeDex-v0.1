@@ -115,7 +115,7 @@ export function buildWorkspaceServer(db: WorkspaceDB, embeddings: EmbeddingEngin
           // 4. READ CLOCK — stamp when the agent last actually LOOKED at the graph. The
           //    gate reads this to decide whether its view has gone stale. Only genuine
           //    graph reads count: stats/setup calls are not "consulting the graph".
-          if (GRAPH_READ_TOOLS.has(name)) recordGraphRead(db);
+          if (GRAPH_READ_TOOLS.has(name)) recordGraphRead(db, connectedClient(server));
           // The setup notice is PER-AGENT: the reflex lives in a file THIS agent reads and
           // the gate in a seam THIS agent runs, so another agent's setup does nothing for it.
           // MCP gives us the connecting client on initialize — that is the identity we key on.

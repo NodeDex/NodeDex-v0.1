@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine } from "../engine/embeddings.js";
 import { reflectTokenStats } from "../middleware/auto-reflect.js";
+import { recordCaptureArrival } from "../tools/setup-state.js";
 import {
   reflectQueue, reflectProcessing, reflectFlushGeneration, reflectPaused, spendPaused,
   setReflectPaused, setSpendPaused, setReflectFlushGeneration,
@@ -151,6 +152,14 @@ export function createReflectRouter(db: WorkspaceDB, embeddings?: EmbeddingEngin
         turnNumber,
         turnName,
       });
+
+      // CAPTURE PROOF, stamped at the door. It must NOT depend on what the pipeline does next:
+      // conversation_turns is only written in ARC mode (and only when the caller sent a
+      // turn_number, which is optional), so proving capture from that table would tell an agent
+      // capturing perfectly on the default path that "capture is not proven" — forever. A false
+      // alarm born of a detection gap is exactly what this surface exists to refuse. A turn
+      // ARRIVED; that is the fact, and this is where it is true.
+      recordCaptureArrival(db, agentId);
 
       console.log(`[reflect-trigger] queued (hint=${hint}, agent=${agentId?.slice(0,8) || "anon"})`);
       res.json({ triggered: true, hint, queue_depth: queueDepth });

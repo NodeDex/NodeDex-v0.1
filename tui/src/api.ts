@@ -285,7 +285,7 @@ export interface AgentWires {
 export interface SetupStatus {
   wired: boolean;
   agents:  AgentWires[];
-  capture: { turns: number; sources: CaptureSource[] };
+  capture: { arrived: boolean; turns: number; sources: CaptureSource[] };
   gate:    { checks: number; last_check_at: string | null };
   last_graph_read_at: string | null;
 }

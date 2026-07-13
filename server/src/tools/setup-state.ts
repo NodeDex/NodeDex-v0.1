@@ -162,21 +162,49 @@ export function knownAgents(db: WorkspaceDB): string[] {
   return (get(db, K.agents) ?? "").split(",").filter(Boolean);
 }
 
-/** Has ANY turn landed? (Proves the pipeline is fed — the proof a watcher-captured agent gets.) */
+// A turn ARRIVING is the proof of capture — and it must be recorded INDEPENDENTLY of what the
+// pipeline later does with it. conversation_turns looked like the natural place to check, but
+// that table is only written in ARC mode (NODEDEX_ARC_EXTRACTION=1 *and* the adapter chose to
+// send turn_number, which is optional). An agent capturing perfectly on the default path would
+// have been told "capture is not proven" FOREVER — a false alarm born of a detection gap,
+// which is the exact failure this whole surface exists to refuse. So we stamp arrival at the
+// door, on every accepted trigger, whatever the pipeline does next.
+const arrivalKey = (agentId: string) => `capture_arrived::${agentId}`;
+
+/** Called by POST /api/reflect/trigger the moment a turn is accepted. Path-independent proof. */
+export function recordCaptureArrival(db: WorkspaceDB, agentId?: string | null): void {
+  if (!agentId) return;
+  set(db, arrivalKey(agentId), String(Date.now()));
+}
+
+/** Has ANY turn arrived? (The proof available to an agent captured by a watcher.) */
 export function anyTurnLanded(db: WorkspaceDB): boolean {
   try {
-    return !!(raw(db).prepare(`SELECT 1 AS hit FROM conversation_turns LIMIT 1`).get() as { hit?: number } | undefined)
-      ?.hit;
+    const r = raw(db);
+    ensure(r);
+    const hit = r.prepare(`SELECT 1 AS hit FROM maintenance_state WHERE key LIKE 'capture_arrived::%' LIMIT 1`).get() as
+      | { hit?: number }
+      | undefined;
+    if (hit?.hit) return true;
+    // Older graphs captured before arrivals were stamped: fall back to the turns table so we
+    // never nag a user whose capture has demonstrably been working for weeks.
+    return !!(r.prepare(`SELECT 1 AS hit FROM conversation_turns LIMIT 1`).get() as { hit?: number } | undefined)?.hit;
   } catch {
     return false;
   }
 }
 
-/** Has a turn landed under THIS agent's declared capture id? Deterministic — no name-guessing:
+/** Has a turn arrived under THIS agent's declared capture id? Deterministic — no name-guessing:
  *  the agent told us the id it posts under, so we look for exactly that. */
 export function turnLandedFor(db: WorkspaceDB, captureId: string): boolean {
   try {
-    const row = raw(db)
+    const r = raw(db);
+    ensure(r);
+    const arrived = r
+      .prepare(`SELECT 1 AS hit FROM maintenance_state WHERE key = ? OR key LIKE ? LIMIT 1`)
+      .get(arrivalKey(captureId), `${arrivalKey(captureId)}-%`) as { hit?: number } | undefined;
+    if (arrived?.hit) return true;
+    const row = r
       .prepare(`SELECT 1 AS hit FROM conversation_turns WHERE agent_id = ? OR agent_id LIKE ? LIMIT 1`)
       .get(captureId, `${captureId}-%`) as { hit?: number } | undefined;
     return !!row?.hit;
@@ -221,24 +249,30 @@ export function markDeclined(db: WorkspaceDB, wire: Wire, client: string): void 
   rememberAgent(db, client);
 }
 
-/** Every graph read stamps the clock the GATE reads. See gateShouldRemind. */
-export function recordGraphRead(db: WorkspaceDB): void {
-  set(db, K.lastRead, String(Date.now()));
+/** Every graph read stamps the clock the GATE reads — PER AGENT. It has to be per agent: one
+ *  agent consulting the graph tells us nothing about what is in ANOTHER agent's context, and a
+ *  global clock would let a busy agent silence a blind one's gate. */
+export function recordGraphRead(db: WorkspaceDB, client?: string): void {
+  const now = String(Date.now());
+  set(db, K.lastRead, now);                                  // graph-wide (shown in the TUI)
+  if (client) set(db, `${K.lastRead}::${client}`, now);      // what the gate actually reads
 }
 
 /**
- * Should the pre-edit gate speak up?
+ * Should the pre-edit gate speak up for THIS agent?
  *
- * TIME, NOT SESSION — and this is the load-bearing design call. A session-scoped check
- * ("have you read the graph this session?") would have said YES to arm B: it read at 12:17
- * and shipped the bug at 16:45, same session. What decayed was not the session, it was the
- * CONTEXT — four hours and several compactions later, the knowledge was gone. So the gate
- * asks how STALE the last read is, which is the thing we actually measured going wrong.
+ * TIME, NOT SESSION — the load-bearing design call. A session-scoped check ("have you read the
+ * graph this session?") would have said YES to the failure we measured: it read at 12:17 and
+ * shipped the bug at 16:45, same session. What decayed was not the session, it was the CONTEXT.
+ * So the gate asks how STALE this agent's last read is — the thing actually observed going wrong.
+ *
+ * An unidentified caller falls back to the graph-wide clock: without a name we cannot do better,
+ * and staying silent would be worse than being occasionally over-eager.
  */
-export function gateShouldRemind(db: WorkspaceDB): boolean {
+export function gateShouldRemind(db: WorkspaceDB, client?: string): boolean {
   const mins = Number(process.env.NODEDEX_GATE_STALE_MIN ?? 30);
-  const last = Number(get(db, K.lastRead) ?? 0);
-  if (!last) return true; // never read this graph → definitely remind
+  const last = Number(get(db, client ? `${K.lastRead}::${client}` : K.lastRead) ?? 0);
+  if (!last) return true; // this agent has never consulted the graph → definitely remind
   return Date.now() - last > mins * 60_000;
 }
 
@@ -341,8 +375,11 @@ export interface SetupStatus {
   /** True only if at least one agent has ALL THREE of its wires settled. */
   wired: boolean;
   agents: AgentWires[];
-  /** Graph-wide capture facts (what has landed, from whom) — per-agent proof is on each agent. */
-  capture: { turns: number; sources: CaptureSource[] };
+  /** Graph-wide capture facts. `arrived` = a turn has reached the door; `turns`/`sources` are
+   *  what the pipeline STORED, which is a different (and narrower) thing — only ARC mode writes
+   *  conversation_turns. Showing `turns: 0` next to a proven capture wire would read as a
+   *  contradiction; it isn't, so we report both facts instead of one misleading one. */
+  capture: { arrived: boolean; turns: number; sources: CaptureSource[] };
   gate: { checks: number; last_check_at: string | null };
   /** When the graph was last actually consulted — what the gate measures staleness against. */
   last_graph_read_at: string | null;
@@ -387,7 +424,7 @@ export function setupStatus(db: WorkspaceDB): SetupStatus {
   return {
     wired: agents.some((a) => settled(a.reflex) && settled(a.capture) && settled(a.gate)),
     agents,
-    capture: { turns, sources },
+    capture: { arrived: anyTurnLanded(db), turns, sources },
     gate: { checks: Number(get(db, K.gateCount) ?? 0), last_check_at: iso(K.gateLast) },
     last_graph_read_at: iso(K.lastRead),
   };

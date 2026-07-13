@@ -161,7 +161,7 @@ export function createAdminRouter(
     // gate proves nothing about the next host's.
     const agent = typeof req.query.agent === "string" ? normalizeClient(req.query.agent) : undefined;
     markGateSeen(db, agent);
-    if (!gateShouldRemind(db)) {
+    if (!gateShouldRemind(db, agent)) {
       res.json({ remind: false });
       return;
     }
