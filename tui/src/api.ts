@@ -276,13 +276,16 @@ export interface CaptureSource { agent_id: string; turns: number; last_turn_at: 
  *  per-AGENT, and EVERY new agent has to wire itself in — it inherits nothing. */
 export interface AgentWires {
   agent: string;
-  reflex: { done: boolean; declined: boolean; file: string | null };
-  gate:   { done: boolean; declined: boolean };
+  reflex:  { done: boolean; declined: boolean; file: string | null };
+  /** ALL THREE wires are per-agent: capture is that agent's OWN seam (or the watcher, if it
+   *  has none). A graph full of another agent's turns proves nothing about this one's. */
+  capture: { done: boolean; declined: boolean; how: "adapter" | "watcher" | null; capture_id: string | null };
+  gate:    { done: boolean; declined: boolean };
 }
 export interface SetupStatus {
   wired: boolean;
   agents:  AgentWires[];
-  capture: { done: boolean; declined: boolean; turns: number; sources: CaptureSource[] };
+  capture: { turns: number; sources: CaptureSource[] };
   gate:    { checks: number; last_check_at: string | null };
   last_graph_read_at: string | null;
 }

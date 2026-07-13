@@ -191,12 +191,35 @@ describe("the wires are PER-AGENT — one graph, many hosts", () => {
     assert.match(notice, /AGENTS\.md/i, "and point at the shared file that makes it one call");
   });
 
-  test("capture stays GLOBAL — a landed turn proves the pipeline, whoever sent it", () => {
-    // Deliberate: agent_id on a turn comes from the watcher/adapter, NOT the MCP client name.
-    // Assuming they match would manufacture a false "capture broken" alarm out of a naming
-    // mismatch — so capture is proven graph-wide, and the per-agent notice tells a new agent
-    // to check capture itself if its OWN turns aren't landing.
-    assert.equal(wireState(db, CLIENT).capture, wireState(db, "some-other-agent").capture);
+  test("CAPTURE is per-agent too — another agent's turns prove nothing about yours", async () => {
+    // The bug: capture was global, so a graph full of agent A's turns marked agent B "captured"
+    // while B's work was being recorded NOWHERE. A healthy-looking graph is not evidence.
+    const other = await connectAs("seam-agent");
+
+    // B declares the id it posts under, and no turn with that id has landed.
+    await other.callTool({ name: "workspace_install_capture", arguments: { capture_id: "seam-agent-1" } });
+    assert.equal(wireState(db, "seam-agent").capture, false, "declared, but nothing has landed → still unproven");
+
+    const nag: any = await other.callTool({ name: "workspace_tree", arguments: {} });
+    assert.ok(textOf(nag).includes("CAPTURE"), "so it must still be nagged about capture");
+
+    // Now a real turn lands under that id — the ONLY thing that proves it.
+    db.createConversationTurn({
+      agent_id: "seam-agent-1",
+      turn_number: 1,
+      transcript_json: JSON.stringify({ user_message: "hi", agent_response: "hello" }),
+    });
+    assert.equal(wireState(db, "seam-agent").capture, true, "a landed turn under the declared id proves capture");
+    await other.close();
+  });
+
+  test("no post-turn seam? declare via_watcher — then turns landing at all is the honest proof", async () => {
+    const watcherAgent = await connectAs("watcher-agent");
+    await watcherAgent.callTool({ name: "workspace_install_capture", arguments: { via_watcher: true } });
+    // Its host persists transcripts and the user's watcher feeds them in — the agent has no
+    // seam of its own, so "turns are arriving" is the strongest claim we can honestly make.
+    assert.equal(wireState(db, "watcher-agent").capture, true);
+    await watcherAgent.close();
   });
 });
 

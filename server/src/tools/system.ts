@@ -7,7 +7,7 @@ import { ok, err, cosineSim } from "./helpers.js";
 import { buildAgentFlagSurface } from "./flag-surface.js";
 import { runArcExtraction } from "../middleware/reflect/arc-pipeline.js";
 import { protocolBlock } from "../agent-protocol.js";
-import { markDeclined, verifyReflexWrite } from "./setup-state.js";
+import { markDeclined, verifyReflexWrite, declareCapture, captureWiredFor } from "./setup-state.js";
 import { connectedClient } from "../mcp-server.js";
 import fs from "fs";
 import path from "path";
@@ -127,15 +127,31 @@ Call with NO arguments to get the contract: (1) CHECK where YOUR standing instru
     "workspace_install_capture",
     `Deploy Nodedex's capture adapter into THIS host so each finished turn is fed to the memory pipeline. Without it, nothing is ever stored — the MCP server is passive and can't read your output itself. Call this ONCE per host during setup, after the user agrees.
 The adapter is a NON-INTRUSIVE tee: it sends a COPY of {user_message, agent_response, reasoning} to POST /api/reflect/trigger, fire-and-forget, OUT of your LLM's path — your own model call is never touched or slowed. You choose which fields to capture (response/user/reasoning).
-The result gives you adapter_source (write it to a file) + wiring_examples (call it in your host's post-turn seam) + a 4-step contract: (1) CHECK you can write a file AND have a post-turn seam to call it from; (2) EXPLAIN reason_for_user + ASK permission (an MCP tool wiring capture into their agent shouldn't surprise them); (3) on yes, WRITE adapter_filename verbatim + add the one-line call in the post-turn seam + (optional) set NODEDEX_CAPTURE_* env to scope fields; (4) if you can't or they decline, call with declined=true.`,
+The result gives you adapter_source (write it to a file) + wiring_examples (call it in your host's post-turn seam) + a 4-step contract: (1) CHECK you can write a file AND have a post-turn seam to call it from; (2) EXPLAIN reason_for_user + ASK permission (an MCP tool wiring capture into their agent shouldn't surprise them); (3) on yes, WRITE adapter_filename verbatim + add the one-line call in the post-turn seam, passing a stable agentId; (4) TELL US HOW YOU ARE CAPTURED — call again with capture_id=<that agentId>, or via_watcher=true if your host has NO post-turn seam and persists its own transcripts (then the NodeDex watcher is the path). If the user declines, call with declined=true.
+CAPTURE IS PER-AGENT: a graph full of ANOTHER agent's turns proves nothing about yours. If your turns land nowhere, your work is recorded nowhere — however healthy the graph looks.`,
     {
-      declined: z.boolean().optional().describe("The user said no, or this host has no post-turn seam. Records the decision and stops the notice permanently."),
+      capture_id: z.string().optional().describe("The stable agentId your adapter posts turns under. The server verifies capture by finding a REAL turn with this id — not by your say-so."),
+      via_watcher: z.boolean().optional().describe("You have NO post-turn seam and your host persists its own transcripts (e.g. Claude Code, Hermes). Capture is then the NodeDex watcher's job; the user enables it in the TUI."),
+      declined: z.boolean().optional().describe("The user said no. Records the decision and stops the notice permanently."),
     },
-    async (params: { declined?: boolean }) => {
+    async (params: { capture_id?: string; via_watcher?: boolean; declined?: boolean }) => {
       try {
+        const client = connectedClient(server);
         if (params.declined) {
-          markDeclined(db, "capture", connectedClient(server));
-          return ok({ status: "declined", note: "Recorded. We won't ask again. Note the graph will stay empty unless turns reach it another way (e.g. a transcript watcher on the NodeDex side)." });
+          markDeclined(db, "capture", client);
+          return ok({ status: "declined", note: "Recorded. We won't ask again. Note YOUR turns will not reach the graph — your work stays unrecorded." });
+        }
+        if (params.capture_id || params.via_watcher) {
+          declareCapture(db, client, { capture_id: params.capture_id, via_watcher: params.via_watcher });
+          const proven = captureWiredFor(db, client);
+          return ok({
+            status: proven ? "verified" : "declared_awaiting_first_turn",
+            how: params.capture_id ? `adapter posting as "${params.capture_id}"` : "the host's transcripts + the NodeDex watcher",
+            note: proven
+              ? "A real turn has landed under this identity — capture is proven for you. The notice stops."
+              : "Recorded. The notice will stop as soon as a REAL turn lands under this identity — we verify by effect, never by claim. If it never does, capture is silently broken and you should know.",
+            ...(params.via_watcher ? { user_action: "This host keeps its own transcripts, so ask the user to enable the matching watcher in the NodeDex TUI (settings → capture watchers) and pick this project." } : {}),
+          });
         }
         const { filename, source } = readCaptureAdapter();
         return ok({
@@ -170,10 +186,10 @@ The result gives you adapter_source (write it to a file) + wiring_examples (call
             "Tell the user `reason_for_user` and ASK permission — wiring capture into their agent shouldn't surprise them. Wait for a clear yes.",
           step_3_deploy:
             "On yes: (a) write `adapter_source` to `adapter_filename` next to your agent code; (b) add the matching one-liner from wiring_examples in your post-turn seam; (c) OPTIONAL: set NODEDEX_CAPTURE_* env to scope which fields are sent. Do this ONCE per host.",
-          step_4_fallback:
-            "If you can't write files / have no post-turn seam, or the user declines: call workspace_install_capture(declined=true) so we stop asking. Reads still work; the graph just won't grow from this host. (Some hosts don't expose a post-turn seam at all — those are covered by a transcript watcher on the NodeDex side instead; tell the user to enable it in the NodeDex TUI.)",
+          step_4_declare_how:
+            "TELL US HOW YOU ARE CAPTURED, or we cannot verify it: call workspace_install_capture again with capture_id=<the stable agentId your adapter posts under>. If you have NO post-turn seam but your host persists its own transcripts (Claude Code, Hermes…), call with via_watcher=true instead — capture is then the NodeDex watcher's job, and you should ask the user to enable it in the TUI for this project. If neither is possible, declined=true.",
           verification:
-            "We do NOT take your word for it. Capture counts as wired only when a real turn LANDS in the graph — until then the setup notice keeps saying capture is unproven. That is the honest signal: a graph nobody feeds is worse than no graph, because the reflex will point at nothing.",
+            "We do NOT take your word for it. Capture counts as wired only when a REAL TURN LANDS under the identity you declared — until then the notice keeps saying capture is unproven for you. And it is PER-AGENT: a graph full of another agent's turns proves nothing about yours. If your turns land nowhere, your work is recorded nowhere, however healthy the graph looks.",
         });
       } catch (error) {
         return err("INSTALL_CAPTURE_FAILED", String(error));

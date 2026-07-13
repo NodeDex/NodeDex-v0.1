@@ -48,16 +48,29 @@ export type Wire = "reflex" | "capture" | "gate";
 //
 // MCP hands us the connecting client's identity on initialize, so we key on it.
 //
-// CAPTURE stays GLOBAL, deliberately. It is proven by turns LANDING, and the agent_id on a
-// turn comes from the watcher/adapter — it is not the MCP client name, and quietly assuming
-// the two match would invent a false alarm out of a naming mismatch. So: zero turns anywhere
-// ⇒ nag everyone; turns arriving ⇒ the pipeline is fed, and the per-agent notice tells a new
-// agent to check capture too if its own turns aren't reaching the graph.
+// CAPTURE IS PER-AGENT TOO. An earlier version made it global because MATCHING turns to an
+// agent is hard (the agent_id on a turn is set by the watcher/adapter, not by MCP). That was
+// an implementation difficulty deciding the semantics — asking "what can I detect?" instead of
+// "what is TRUE?". The truth: if a second agent's turns land nowhere, its work is recorded
+// nowhere, and a graph full of the FIRST agent's turns says nothing about that.
+//
+// So we stop guessing and let the agent DECLARE how it is captured — it knows, and only it
+// can know:
+//   · capture_id  — "I post turns with this agentId" (the adapter / a custom loop).
+//                   Verified when a turn with that id actually LANDS.
+//   · via_watcher — "I have no post-turn seam; my host persists its own transcripts."
+//                   Then capture is the user's watcher, and turns landing at all is the proof
+//                   we can honestly get.
+// Undeclared ⇒ unwired ⇒ nag. Which is right: an agent we cannot confirm is captured is an
+// agent whose work may be vanishing.
 const KEYS = (client: string) => ({
   reflexPath: `setup_reflex_verified_path::${client}`,
   reflexDeclined: `setup_reflex_declined::${client}`,
   gateSeen: `setup_gate_seen::${client}`,
   gateDeclined: `setup_gate_declined::${client}`,
+  captureId: `setup_capture_id::${client}`,
+  captureWatcher: `setup_capture_via_watcher::${client}`,
+  captureDeclined: `setup_capture_declined::${client}`,
 });
 
 const K = {
@@ -149,15 +162,46 @@ export function knownAgents(db: WorkspaceDB): string[] {
   return (get(db, K.agents) ?? "").split(",").filter(Boolean);
 }
 
-/** CAPTURE — did a turn ever actually land? The only honest proof that capture is wired. */
-export function captureWired(db: WorkspaceDB): boolean {
+/** Has ANY turn landed? (Proves the pipeline is fed — the proof a watcher-captured agent gets.) */
+export function anyTurnLanded(db: WorkspaceDB): boolean {
   try {
-    const r = raw(db);
-    const row = r.prepare(`SELECT 1 AS hit FROM conversation_turns LIMIT 1`).get() as { hit?: number } | undefined;
+    return !!(raw(db).prepare(`SELECT 1 AS hit FROM conversation_turns LIMIT 1`).get() as { hit?: number } | undefined)
+      ?.hit;
+  } catch {
+    return false;
+  }
+}
+
+/** Has a turn landed under THIS agent's declared capture id? Deterministic — no name-guessing:
+ *  the agent told us the id it posts under, so we look for exactly that. */
+export function turnLandedFor(db: WorkspaceDB, captureId: string): boolean {
+  try {
+    const row = raw(db)
+      .prepare(`SELECT 1 AS hit FROM conversation_turns WHERE agent_id = ? OR agent_id LIKE ? LIMIT 1`)
+      .get(captureId, `${captureId}-%`) as { hit?: number } | undefined;
     return !!row?.hit;
   } catch {
-    return true; // table missing/unreadable → stay silent rather than nag on a false alarm
+    return false;
   }
+}
+
+/** The agent declares HOW it is captured. Only it can know: it is the one with (or without)
+ *  a post-turn seam. `capture_id` = the agentId it will post under; `via_watcher` = it has no
+ *  seam, so the host's transcripts + the user's watcher are the path. */
+export function declareCapture(db: WorkspaceDB, client: string, d: { capture_id?: string; via_watcher?: boolean }): void {
+  const k = KEYS(client);
+  if (d.capture_id) set(db, k.captureId, d.capture_id);
+  if (d.via_watcher) set(db, k.captureWatcher, "1");
+  rememberAgent(db, client);
+}
+
+/** Is capture PROVEN for this agent — by a landed turn, not by a claim? */
+export function captureWiredFor(db: WorkspaceDB, client: string): boolean {
+  const k = KEYS(client);
+  const id = get(db, k.captureId);
+  if (id) return turnLandedFor(db, id);              // declared an id → look for its turns
+  if (get(db, k.captureWatcher) === "1") return anyTurnLanded(db); // watcher path → turns at all
+  return false;                                       // undeclared → we cannot confirm → nag
 }
 
 /** GATE — did a check ever actually reach us? Set by the /api/gate/check route.
@@ -172,9 +216,8 @@ export function markGateSeen(db: WorkspaceDB, client?: string): void {
 /** The user said no. A decline is a decision — record it and never nag past it.
  *  Reflex/gate declines are per-agent (this agent's files); capture is global. */
 export function markDeclined(db: WorkspaceDB, wire: Wire, client: string): void {
-  if (wire === "capture") { set(db, K.captureDeclined, "1"); return; }
   const k = KEYS(client);
-  set(db, wire === "reflex" ? k.reflexDeclined : k.gateDeclined, "1");
+  set(db, wire === "reflex" ? k.reflexDeclined : wire === "capture" ? k.captureDeclined : k.gateDeclined, "1");
   rememberAgent(db, client);
 }
 
@@ -213,7 +256,7 @@ export function wireState(db: WorkspaceDB, client: string): WireState {
   const k = KEYS(client);
   return {
     reflex: !!get(db, k.reflexPath) || get(db, k.reflexDeclined) === "1",
-    capture: captureWired(db) || get(db, K.captureDeclined) === "1",
+    capture: captureWiredFor(db, client) || get(db, k.captureDeclined) === "1",
     gate: get(db, k.gateSeen) === "1" || get(db, k.gateDeclined) === "1",
   };
 }
@@ -230,9 +273,14 @@ export function buildSetupNotice(db: WorkspaceDB, client: string): string | null
 
   const lines: string[] = ["⚠ NODEDEX IS NOT FULLY WIRED INTO YOU YET — and unwired, it cannot help you."];
   if (!s.capture) {
+    // Note "YOUR turns": a graph full of ANOTHER agent's turns proves nothing about yours.
+    // If your work lands nowhere, it is recorded nowhere — however healthy the graph looks.
     lines.push(
-      "· CAPTURE is not proven: no conversation turn has ever reached this graph, so it is EMPTY and will stay empty. " +
-        "Call workspace_install_capture.",
+      anyTurnLanded(db)
+        ? "· CAPTURE is not proven FOR YOU: turns from other agents have reached this graph, but none from you — so " +
+          "YOUR work is being recorded nowhere. Call workspace_install_capture."
+        : "· CAPTURE is not proven: no conversation turn has ever reached this graph, so it is EMPTY and will stay " +
+          "empty. Call workspace_install_capture.",
     );
   }
   if (!s.reflex) {
@@ -284,14 +332,17 @@ export interface CaptureSource {
 export interface AgentWires {
   agent: string;
   reflex: { done: boolean; declined: boolean; file: string | null };
+  /** `how`: the agent's own seam (its capture id) vs the host's transcripts + our watcher. */
+  capture: { done: boolean; declined: boolean; how: "adapter" | "watcher" | null; capture_id: string | null };
   gate: { done: boolean; declined: boolean };
 }
 
 export interface SetupStatus {
-  /** True only if at least one agent is fully wired AND capture is proven. */
+  /** True only if at least one agent has ALL THREE of its wires settled. */
   wired: boolean;
   agents: AgentWires[];
-  capture: { done: boolean; declined: boolean; turns: number; sources: CaptureSource[] };
+  /** Graph-wide capture facts (what has landed, from whom) — per-agent proof is on each agent. */
+  capture: { turns: number; sources: CaptureSource[] };
   gate: { checks: number; last_check_at: string | null };
   /** When the graph was last actually consulted — what the gate measures staleness against. */
   last_graph_read_at: string | null;
@@ -299,9 +350,17 @@ export interface SetupStatus {
 
 function agentWires(db: WorkspaceDB, agent: string): AgentWires {
   const k = KEYS(agent);
+  const captureId = get(db, k.captureId);
+  const viaWatcher = get(db, k.captureWatcher) === "1";
   return {
     agent,
     reflex: { done: !!get(db, k.reflexPath), declined: get(db, k.reflexDeclined) === "1", file: get(db, k.reflexPath) },
+    capture: {
+      done: captureWiredFor(db, agent),
+      declined: get(db, k.captureDeclined) === "1",
+      how: captureId ? "adapter" : viaWatcher ? "watcher" : null,
+      capture_id: captureId,
+    },
     gate: { done: get(db, k.gateSeen) === "1", declined: get(db, k.gateDeclined) === "1" },
   };
 }
@@ -324,11 +383,11 @@ export function setupStatus(db: WorkspaceDB): SetupStatus {
     return v ? new Date(v).toISOString() : null;
   };
   const agents = knownAgents(db).map((a) => agentWires(db, a));
-  const captureOk = turns > 0 || get(db, K.captureDeclined) === "1";
+  const settled = (w: { done: boolean; declined: boolean }) => w.done || w.declined;
   return {
-    wired: captureOk && agents.some((a) => (a.reflex.done || a.reflex.declined) && (a.gate.done || a.gate.declined)),
+    wired: agents.some((a) => settled(a.reflex) && settled(a.capture) && settled(a.gate)),
     agents,
-    capture: { done: turns > 0, declined: get(db, K.captureDeclined) === "1", turns, sources },
+    capture: { turns, sources },
     gate: { checks: Number(get(db, K.gateCount) ?? 0), last_check_at: iso(K.gateLast) },
     last_graph_read_at: iso(K.lastRead),
   };

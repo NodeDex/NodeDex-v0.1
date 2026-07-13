@@ -451,34 +451,39 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
           is the same confidently-wrong-display failure the c-- slug taught us to refuse. */}
       <Section title="wired into your agent">
         <R
-          id="w-capture" label="capture"
+          id="w-capture" label="turns in graph"
           value={
             !setup ? "— (server not reporting)"
-              : setup.capture.done
-                ? `${glyph.up} ${setup.capture.turns} turns · ${setup.capture.sources.map((s) => s.agent_id).join(", ")}`
-              : setup.capture.declined ? "declined"
-              : `${glyph.flag} nothing has ever arrived — the graph cannot grow`
+              : setup.capture.turns > 0
+                ? `${setup.capture.turns} from ${setup.capture.sources.map((s) => s.agent_id).join(", ")}`
+                : `${glyph.flag} none — nothing has ever been captured`
           }
-          color={!setup ? theme.dim : setup.capture.done ? theme.ok : setup.capture.declined ? theme.dim : theme.warn}
-          hint="whatever feeds it: a watcher, the adapter, or your own POST"
+          color={!setup ? theme.dim : setup.capture.turns > 0 ? theme.value : theme.warn}
+          hint="whatever fed them: a watcher, the adapter, or your own POST"
         />
-        {/* PER-AGENT. The reflex sits in a file ONE agent reads, the gate in a seam ONE agent
-            runs — so every new agent must wire ITSELF in, and inherits nothing. Showing this
-            per agent is the only way a user switching hosts can SEE that the new one is blind
-            rather than assume it inherited the last one's setup. */}
-        {(setup?.agents ?? []).map((a) => (
-          <R
-            key={a.agent} id="w-reflex" label={`  ${trunc(a.agent, 14)}`}
-            value={
-              `reflex ${a.reflex.done ? `${glyph.up} ${trunc(a.reflex.file ?? "", 30)}` : a.reflex.declined ? "declined" : `${glyph.flag} none`}` +
-              ` · gate ${a.gate.done ? glyph.up : a.gate.declined ? "declined" : `${glyph.flag} none`}`
-            }
-            color={a.reflex.done && a.gate.done ? theme.ok : theme.warn}
-            hint="each agent wires itself — nothing is inherited"
-          />
-        ))}
+        {/* PER-AGENT — ALL THREE WIRES. The reflex sits in a file ONE agent reads, the gate in
+            a seam ONE agent runs, and capture in that agent's OWN post-turn seam (or the
+            watcher, if it has none). Nothing is inherited: a graph full of one agent's turns
+            says NOTHING about whether a second agent's work is being recorded. Showing it per
+            agent is the only way a user switching hosts can SEE the new one is blind. */}
+        {(setup?.agents ?? []).map((a) => {
+          const mark = (w: { done: boolean; declined: boolean }) => (w.done ? glyph.up : w.declined ? "–" : glyph.flag);
+          const allGood = [a.reflex, a.capture, a.gate].every((w) => w.done || w.declined);
+          return (
+            <R
+              key={a.agent} id="w-reflex" label={`  ${trunc(a.agent, 14)}`}
+              value={
+                `capture ${mark(a.capture)}${a.capture.how ? ` (${a.capture.how})` : ""}` +
+                ` · reflex ${mark(a.reflex)}${a.reflex.file ? ` ${trunc(a.reflex.file.split(/[\\/]/).pop() ?? "", 16)}` : ""}` +
+                ` · gate ${mark(a.gate)}`
+              }
+              color={allGood ? theme.ok : theme.warn}
+              hint="each agent wires ITSELF — nothing is inherited"
+            />
+          );
+        })}
         {setup && setup.agents.length === 0 ? (
-          <R id="w-reflex" label="  agents" value={`${glyph.flag} none set up — say "Set up NodeDex" to your agent`} color={theme.warn} hint="every agent needs its own reflex + gate" />
+          <R id="w-reflex" label="  agents" value={`${glyph.flag} none set up — say "Set up NodeDex" to your agent`} color={theme.warn} hint="every agent needs its own capture + reflex + gate" />
         ) : null}
         <R
           id="w-gate" label="gate checks"
