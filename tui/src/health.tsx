@@ -449,17 +449,23 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
           UNKNOWN ≠ BROKEN. If the server is old or down, /api/setup does not answer and we
           show "—", never "nothing has ever arrived". Raising a false alarm from missing data
           is the same confidently-wrong-display failure the c-- slug taught us to refuse. */}
+      {/* A VERSION SKEW MUST NOT KILL THE TUI. /api/setup's shape has changed twice as the wires
+          became per-agent, and a stale build reading a newer server (or the reverse) crashed the
+          whole app on `undefined.done`. This panel is STATUS — the worst it may ever do is show
+          "—". So every field is read defensively: an unrecognised shape degrades, it does not
+          throw. (Same rule as UNKNOWN ≠ BROKEN below: missing data is not a fault to report,
+          and it is certainly not a reason to take the process down.) */}
       <Section title="wired into your agent">
         <R
           id="w-capture" label="turns in graph"
           value={
-            !setup ? "— (server not reporting)"
-              : setup.capture.turns > 0
-                ? `${setup.capture.turns} from ${setup.capture.sources.map((s) => s.agent_id).join(", ")}`
-                : setup.capture.arrived ? 'arrived, not yet stored as turns (arc mode off)'
+            !setup?.capture ? "— (server not reporting)"
+              : (setup.capture.turns ?? 0) > 0
+                ? `${setup.capture.turns} from ${(setup.capture.sources ?? []).map((s) => s.agent_id).join(", ")}`
+                : setup.capture.arrived ? "arrived, not yet stored as turns (arc mode off)"
                 : `${glyph.flag} none — nothing has ever been captured`
           }
-          color={!setup ? theme.dim : setup.capture.turns > 0 || setup.capture.arrived ? theme.value : theme.warn}
+          color={!setup?.capture ? theme.dim : (setup.capture.turns ?? 0) > 0 || setup.capture.arrived ? theme.value : theme.warn}
           hint="whatever fed them: a watcher, the adapter, or your own POST"
         />
         {/* PER-AGENT — ALL THREE WIRES. The reflex sits in a file ONE agent reads, the gate in
@@ -468,22 +474,26 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
             says NOTHING about whether a second agent's work is being recorded. Showing it per
             agent is the only way a user switching hosts can SEE the new one is blind. */}
         {(setup?.agents ?? []).map((a) => {
-          const mark = (w: { done: boolean; declined: boolean }) => (w.done ? glyph.up : w.declined ? "–" : glyph.flag);
-          const allGood = [a.reflex, a.capture, a.gate].every((w) => w.done || w.declined);
+          const NONE = { done: false, declined: false };
+          const reflex = a?.reflex ?? NONE, capture = a?.capture ?? NONE, gate = a?.gate ?? NONE;
+          const mark = (w: { done?: boolean; declined?: boolean }) => (w.done ? glyph.up : w.declined ? "–" : glyph.flag);
+          const allGood = [reflex, capture, gate].every((w) => w.done || w.declined);
+          const how = (capture as { how?: string }).how;
+          const file = (reflex as { file?: string | null }).file;
           return (
             <R
-              key={a.agent} id="w-reflex" label={`  ${trunc(a.agent, 14)}`}
+              key={a?.agent ?? Math.random()} id="w-reflex" label={`  ${trunc(a?.agent ?? "?", 14)}`}
               value={
-                `capture ${mark(a.capture)}${a.capture.how ? ` (${a.capture.how})` : ""}` +
-                ` · reflex ${mark(a.reflex)}${a.reflex.file ? ` ${trunc(a.reflex.file.split(/[\\/]/).pop() ?? "", 16)}` : ""}` +
-                ` · gate ${mark(a.gate)}`
+                `capture ${mark(capture)}${how ? ` (${how})` : ""}` +
+                ` · reflex ${mark(reflex)}${file ? ` ${trunc(file.split(/[\\/]/).pop() ?? "", 16)}` : ""}` +
+                ` · gate ${mark(gate)}`
               }
               color={allGood ? theme.ok : theme.warn}
               hint="each agent wires ITSELF — nothing is inherited"
             />
           );
         })}
-        {setup && setup.agents.length === 0 ? (
+        {setup && (setup.agents ?? []).length === 0 ? (
           <R id="w-reflex" label="  agents" value={`${glyph.flag} none set up — say "Set up NodeDex" to your agent`} color={theme.warn} hint="every agent needs its own capture + reflex + gate" />
         ) : null}
         <R
