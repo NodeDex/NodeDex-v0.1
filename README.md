@@ -10,7 +10,7 @@ Give your agent your project's **decision history**: it checks what was already 
 
 [![npm: nodedex](https://img.shields.io/npm/v/nodedex.svg?label=npm&color=cb3837)](https://www.npmjs.com/package/nodedex)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![tests: 1304 passing](https://img.shields.io/badge/tests-1304%20passing-brightgreen.svg)](#evidence-it-works)
+[![tests: 1304 passing](https://img.shields.io/badge/tests-1313%20passing-brightgreen.svg)](#evidence-it-works)
 [![status: early & solo-built](https://img.shields.io/badge/status-early%20%26%20solo--built-orange.svg)](#)
 [![MCP: stdio + HTTP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7b5cff.svg)](#connect-your-agent)
 
@@ -25,7 +25,7 @@ Give your agent your project's **decision history**: it checks what was already 
 Without NodeDex, session N+1 quietly **re-derives what session N already settled** — which approaches failed (and why), which decisions were replaced (and by what), which constraints still bind. NodeDex keeps that record in a local SQLite graph the agent navigates deliberately, session after session.
 
 > **Status — early & solo-built.** NodeDex is developed by one person and is at an early stage.
-> The engine is tested end-to-end (1304 passing tests), but it hasn't been battle-tested across
+> The engine is tested end-to-end (1313 passing tests), but it hasn't been battle-tested across
 > many machines and agents yet — **expect rough edges, and please [open an issue](https://github.com/NodeDex/NodeDex-v0.1/issues)
 > when you hit one.** Feedback at this stage is hugely valuable.
 >
@@ -547,7 +547,7 @@ decontextualized fragment.
 > skill, not the memory. Full write-up:
 > [docs/NODEDEX-MEMORY-MODEL.md](docs/NODEDEX-MEMORY-MODEL.md).
 
-Engine health: **1304/1304 server tests pass**, with extraction → graph → retrieval validated
+Engine health: **1313/1313 server tests pass**, with extraction → graph → retrieval validated
 end-to-end — including capture-loss (ack-safe watcher cursors), the MCP read surface itself
 (what the agent receives, provenance included), and the setup wires (a claimed-but-unwritten
 reflex is caught, not believed). Tests prove the *mechanisms* work; whether the memory makes
