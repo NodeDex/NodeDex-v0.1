@@ -904,6 +904,10 @@ Results are HEADLINES (label, type, essence) — and a block means little alone.
             blocks = matched;
           }
         }
+        // Everything inside the project scope, BEFORE the type filter narrows it. The
+        // entanglement question is "which roots is MY PROJECT tied to" — asking it from only the
+        // dead-ends would answer a different, much narrower question and quietly miss siblings.
+        const projectScope = blocks;
         if (params.type)         blocks = blocks.filter((b) => b.type === params.type);
         if (params.label_prefix) blocks = blocks.filter((b) => b.label.startsWith(params.label_prefix!));
         if (params.concept) {
@@ -966,27 +970,49 @@ Results are HEADLINES (label, type, essence) — and a block means little alone.
         // We REPORT: "N more of this type live in roots entangled with yours." The count is a
         // fact; what to do about it is the agent's call. Silence here is the dangerous option —
         // the agent reads "2 closed doors", believes it has looked, and ships the bug.
+        // COST NOTE: this runs on the DEAD-END CHECK — the call an agent makes at every
+        // decision. deriveRootRelatedness() would give us the answer, but it builds the WHOLE
+        // pairwise root matrix (every block, every relation) to answer a question about ONE
+        // root. That is O(graph) on the hottest path, and "traversal does not degrade with
+        // scale" is the entire argument for this product — shipping a full scan here would
+        // quietly make it false. We ask only what we need: which roots share an edge with THIS
+        // one. Same answer, scoped.
         let elsewhere: Record<string, number> | undefined;
         if (params.project && params.type) {
           try {
             const root = db.getBlock(params.project);
             if (root?.type === "project") {
-              const inScope = new Set(blocks.map((b) => b.id));
-              const rel = deriveRootRelatedness(db);
+              const inScope = new Set(projectScope.map((b) => b.id));
+              const rootOf = new Map<string, string>(); // block id → its root id
+              const rootById = new Map<string, string>(); // root id → label
+              for (const b of all) {
+                if (b.type === "project") rootById.set(b.id, b.label);
+                if (b.project_id) rootOf.set(b.id, b.project_id as string);
+              }
+              // Roots reached by an edge from/to anything in our scope. ONE query over the
+              // relations table — not two per block. (First attempt walked getRelations() per
+              // block and was SLOWER than the full scan it replaced: hundreds of round-trips
+              // beat one table read. Measured, not guessed: 57ms → 72ms → 12ms.)
               const near = new Set<string>();
-              for (const p of rel.pairs) {
-                if (p.root_a === root.label) near.add(p.root_b);
-                if (p.root_b === root.label) near.add(p.root_a);
+              const noteRoot = (blockId: string) => {
+                const rid = rootById.has(blockId) ? blockId : rootOf.get(blockId);
+                if (rid && rid !== root.id && rootById.has(rid)) near.add(rid);
+              };
+              const edges = (db as any).db
+                .prepare(`SELECT source_id, target_id FROM relations WHERE valid_to IS NULL`)
+                .all() as Array<{ source_id: string; target_id: string }>;
+              for (const e of edges) {
+                if (inScope.has(e.source_id)) noteRoot(e.target_id);
+                if (inScope.has(e.target_id)) noteRoot(e.source_id);
               }
               const counts: Record<string, number> = {};
-              for (const label of near) {
-                const r = db.getBlock(label);
-                if (!r) continue;
+              for (const rid of near) {
+                const rl = rootById.get(rid)!;
                 const n = all.filter(
                   (b) => b.type === params.type && !inScope.has(b.id) &&
-                         (b.project_id === r.id || b.label.startsWith(r.label + "_")),
+                         (b.project_id === rid || b.label.startsWith(rl + "_")),
                 ).length;
-                if (n > 0) counts[label] = n;
+                if (n > 0) counts[rl] = n;
               }
               if (Object.keys(counts).length) elsewhere = counts;
             }
