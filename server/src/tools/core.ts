@@ -769,21 +769,72 @@ These are SUGGESTIONS, not "the" root: open one with workspace_get(label, "relat
           }
         } catch { relatedOf = new Map(); } // best-effort: a tree without entanglement beats no tree
 
+        // CONTAINMENT — the hierarchy that was in the graph the whole time.
+        //
+        // Two axes, kept apart on purpose:
+        //   CONTAINMENT → the TREE. A root can be PART OF another root (a sub-root).
+        //   CAUSAL      → the WEB. Crosses roots freely. That is entangled_with, below.
+        //
+        // The tree used to read the `project_id` COLUMN and render a flat list of 67 roots. But
+        // project_id is NULL on every root — nothing has ever written it. The pipeline records
+        // root containment as `part_of` EDGES between root blocks, and there are 34 of them
+        // sitting in the graph, describing a clean three-level tree:
+        //
+        //   nodedex  ← 25 sub-roots (nodedex-tui, nodedex-v01, workspace-mcp-tools, …)
+        //   pass-5-chain-pipeline → nodedex-pass5-mechanical-mode → { mechanical-pass5, v2-arc }
+        //
+        // So the structure was never missing. WE WERE LOOKING IN THE WRONG PLACE — the same
+        // failure as `on_chain` (a stale pointer while the real story was computable) and the
+        // currency hole (workspace_list had it, workspace_get did not). Read the edge.
+        //
+        // This is also why no reparenting sweep is needed, and no LLM merge: nothing has to be
+        // INVENTED. The hierarchy was extracted from real work; it just never reached the agent.
+        const rootIds = new Set(projects.map((p) => p.id));
+        const rootById = new Map(projects.map((p) => [p.id, p]));
+        const parentOf = new Map<string, string>();   // child root id → parent root id
+        const kids = new Map<string, string[]>();     // parent root id → child root labels
+        for (const p of projects) {
+          // part_of points CHILD → PARENT. Fall back to the project_id column if some writer
+          // ever populates it (manual nesting), but the edge is the source of truth today.
+          const partOf = db.getRelations(p.id)
+            .find((r) => r.direction === "outgoing" && r.type === "part_of" && rootIds.has(r.target_id));
+          const parentId = partOf?.target_id ?? ((p as any).project_id as string | null);
+          if (parentId && rootById.has(parentId) && parentId !== p.id) {
+            parentOf.set(p.id, parentId);
+            if (!kids.has(parentId)) kids.set(parentId, []);
+            kids.get(parentId)!.push(p.label);
+          }
+        }
+
         const roots = projects
-          .map((p) => ({
-            root: p.label,
-            description: p.essence || null,
-            blocks: childCount.get(p.id) ?? 0,
-            ...(relatedOf.get(p.label)?.length ? { entangled_with: relatedOf.get(p.label) } : {}),
-          }))
-          .sort((a, b) => b.blocks - a.blocks); // most substantial first
+          .map((p) => {
+            const parent = rootById.get(parentOf.get(p.id) ?? "");
+            return {
+              root: p.label,
+              description: p.essence || null,
+              blocks: childCount.get(p.id) ?? 0,
+              ...(parent ? { parent_root: parent.label } : {}),
+              ...(kids.get(p.id)?.length ? { child_roots: kids.get(p.id) } : {}),
+              ...(relatedOf.get(p.label)?.length ? { entangled_with: relatedOf.get(p.label) } : {}),
+            };
+          })
+          // Top-level roots first (so the shape reads top-down), then most substantial first.
+          .sort((a, b) => {
+            const ap = "parent_root" in a ? 1 : 0, bp = "parent_root" in b ? 1 : 0;
+            return ap - bp || b.blocks - a.blocks;
+          });
+
+        const nested = roots.filter((r) => "parent_root" in r).length;
         const entangled = roots.filter((r) => "entangled_with" in r).length;
         return ok({
           projects: roots,
           hint:
             "Drill into a root with workspace_filter(concepts) or workspace_get(root-label, \"relations\")." +
+            (nested > 0
+              ? " parent_root / child_roots = CONTAINMENT: a sub-root is PART OF its parent, so read the parent's constraints and dead-ends too — they bind here."
+              : "") +
             (entangled > 0
-              ? " ⚠ entangled_with = roots sharing REAL causal edges with this one: a long project forks into sibling roots, so ONE root is usually a SLICE of the story, not the story. Widen across the entangled set before you conclude anything — especially the dead_end check, which returns only what that one root happens to hold."
+              ? " ⚠ entangled_with = roots sharing REAL causal edges with this one (a different axis from containment: linked, not owned). A long project forks into sibling roots, so ONE root is usually a SLICE of the story, not the story. Widen across the entangled set before you conclude anything — especially the dead_end check, which returns only what that one root happens to hold."
               : ""),
         });
       } catch (error) {
