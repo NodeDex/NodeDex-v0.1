@@ -4,6 +4,7 @@ import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine, blockEmbeddingText } from "../engine/embeddings.js";
 import { ok, err, cosineSim, assembleBlockChains, assembleFullThread, filterRootsByConcepts , currencyFields, currencyOf } from "./helpers.js";
 import { searchBlocks, rootContextFor, allWeak, WEAK_NOTE } from "../engine/search-core.js";
+import { deriveRootRelatedness } from "../middleware/reflect/root-relatedness.js";
 
 // ─── Keyword concept extractor ───────────────────────────────────
 // Extracts meaningful tokens from text as placeholder concepts.
@@ -734,12 +735,56 @@ These are SUGGESTIONS, not "the" root: open one with workspace_get(label, "relat
         for (const b of all) {
           if (b.project_id) childCount.set(b.project_id, (childCount.get(b.project_id) ?? 0) + 1);
         }
+
+        // ENTANGLEMENT — the thing the agent could not see, and needed most.
+        //
+        // The recognizer forks a long-running project into sibling roots (measured: one person
+        // dogfooding NodeDex → 67 roots that are nearly all the same project). They are NOT
+        // islands: they are densely cross-linked — 149 related pairs, ZERO standalone roots.
+        // But workspace_tree showed a FLAT list, so the agent saw 67 unrelated projects and had
+        // no way to learn that the knowledge it wants spans eight of them.
+        //
+        // That is not cosmetic. It holes the Rule-1 check: `workspace_list(project, "dead_end")`
+        // scoped to ONE root finds 2 dead-ends when the graph holds 39 — the other 37 are filed
+        // under siblings the agent never heard of. The core promise ("check what is already
+        // closed") quietly returns a subset.
+        //
+        // We surface the WEB and refuse to fake a TREE. The relatedness signal guesses parents,
+        // and its guesses are not containment ("competitor-comparison is the parent of
+        // session-handoff" — that is a dependency edge, not a parent). Asserting a hierarchy the
+        // data does not support would be inventing structure, which is the one thing this read
+        // surface must never do. So: say WHICH roots are entangled, and let the agent walk.
+        let relatedOf = new Map<string, string[]>();
+        try {
+          const rel = deriveRootRelatedness(db);
+          const byRoot = new Map<string, Array<{ label: string; edges: number }>>();
+          for (const p of rel.pairs) {
+            for (const [a, b] of [[p.root_a, p.root_b], [p.root_b, p.root_a]] as const) {
+              if (!byRoot.has(a)) byRoot.set(a, []);
+              byRoot.get(a)!.push({ label: b, edges: p.total });
+            }
+          }
+          for (const [root, list] of byRoot) {
+            relatedOf.set(root, list.sort((x, y) => y.edges - x.edges).slice(0, 4).map((x) => x.label));
+          }
+        } catch { relatedOf = new Map(); } // best-effort: a tree without entanglement beats no tree
+
         const roots = projects
-          .map((p) => ({ root: p.label, description: p.essence || null, blocks: childCount.get(p.id) ?? 0 }))
+          .map((p) => ({
+            root: p.label,
+            description: p.essence || null,
+            blocks: childCount.get(p.id) ?? 0,
+            ...(relatedOf.get(p.label)?.length ? { entangled_with: relatedOf.get(p.label) } : {}),
+          }))
           .sort((a, b) => b.blocks - a.blocks); // most substantial first
+        const entangled = roots.filter((r) => "entangled_with" in r).length;
         return ok({
           projects: roots,
-          hint: "Drill into a root with workspace_filter(concepts) or workspace_get(root-label, \"relations\").",
+          hint:
+            "Drill into a root with workspace_filter(concepts) or workspace_get(root-label, \"relations\")." +
+            (entangled > 0
+              ? " ⚠ entangled_with = roots sharing REAL causal edges with this one: a long project forks into sibling roots, so ONE root is usually a SLICE of the story, not the story. Widen across the entangled set before you conclude anything — especially the dead_end check, which returns only what that one root happens to hold."
+              : ""),
         });
       } catch (error) {
         return err("TREE_FAILED", String(error));
