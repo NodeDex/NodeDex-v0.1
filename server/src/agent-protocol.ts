@@ -23,29 +23,35 @@
 
 /** The persisted BEHAVIOUR. Small on purpose — every token here is paid on every turn. */
 export const AGENT_REFLEX = `This project has a NodeDex memory graph: what was DECIDED, TRIED-AND-ABANDONED, and
-CONSTRAINED here — the reasoning the code does not carry. It is NOT in your context.
-You have to ask for it.
+CONSTRAINED here — reasoning the code does not carry, and that is NOT in your context.
 
-CHECK IT AT THE MOMENT YOU COMMIT TO AN APPROACH — not once at session start:
+YOUR CONFIDENCE IS NOT EVIDENCE HERE. You are competent, so an approach feels obviously
+right. But what makes it right or wrong IN THIS PROJECT is in neither your training nor
+your context — unless you read it from the graph THIS session. If you did not, you do
+not know; you are guessing with conviction. Obviousness is the signal to CHECK, never
+the licence to skip.
+
+CHECK AT THE MOMENT YOU COMMIT TO AN APPROACH — not once at session start (a long task
+scrolls that away long before the decision):
+  · before you begin work in a project you have not checked THIS session
   · before your first edit to a file you have not touched this session
   · when asked to change / replace / improve / fix existing behaviour
   · when choosing between implementation options
-  · WHEN THE ANSWER FEELS OBVIOUS — that feeling is exactly when a recorded dead-end
-    is most likely to be the thing you are about to re-run
+  · whenever the answer feels obvious — see above
 
     workspace_filter(concepts)                  → the relevant project + entry blocks
     workspace_list(project, type="dead_end")    → what is already closed
     workspace_list(project, type="constraint")  → what must not break
 
-Then TRAVERSE: workspace_get(label, detail="relations") returns the block WITH its
-causal chain. A block is the headline; the chain is the story.
+Then TRAVERSE: workspace_get(label, detail="relations") returns the block WITH its causal
+chain. A block is the headline; the chain is the story.
 
-If a dead-end matches your idea: cite it to the user and propose differently — or say
-what has changed that makes it worth re-trying.
+If a dead-end matches your idea: cite it and propose differently — or say what changed
+that makes it worth re-trying.
 
-You do not write knowledge — a background pipeline extracts it from this conversation.
-The ONE thing you maintain is your own work-state: at a task boundary,
-workspace_task_update(id, "done"|"blocked", note). Only you know when work is finished.`;
+You do not write knowledge (a pipeline extracts it from this conversation). The ONE thing
+you maintain is your own work-state: workspace_task_update(id, "done"|"blocked", note) at
+a task boundary — only you know when work is actually finished.`;
 
 /** The reflex + the reference manual. Sent on the MCP `instructions` field each connect. */
 export const AGENT_PROTOCOL = `${AGENT_REFLEX}

@@ -17,9 +17,11 @@ describe("agent-protocol — the reflex/reference split", () => {
     const block = protocolBlock();
     assert.ok(block.includes(AGENT_REFLEX), "the persisted block carries the reflex");
     assert.ok(!block.includes("── REFERENCE"), "the reference manual must NOT be persisted every turn");
-    // Size guard: a reflex re-read on every turn, forever. If this fails, someone is
-    // pushing the manual back into the every-turn channel.
-    assert.ok(AGENT_REFLEX.length < 1600, `reflex must stay small, got ${AGENT_REFLEX.length} chars`);
+    // Size guard: a reflex re-read on every turn, forever (~450 tokens). If this fails,
+    // someone is pushing the manual — or graph DATA — back into the every-turn channel.
+    // Data must never live here: it would not scale (a 500-block project cannot ride in
+    // every turn) and traversal already handles any graph size. Only the discipline.
+    assert.ok(AGENT_REFLEX.length < 1800, `reflex must stay small, got ${AGENT_REFLEX.length} chars`);
   });
 
   test("AGENT_PROTOCOL = reflex + reference (one source of truth, no drift)", () => {
@@ -48,11 +50,29 @@ describe("agent-protocol — the reflex's trigger design", () => {
     // Every earlier version said "when you suspect it may have failed before", which
     // requires DOUBT — and doubt is absent exactly when the agent is confidently about
     // to re-run a recorded dead-end.
-    assert.match(AGENT_REFLEX, /WHEN THE ANSWER FEELS OBVIOUS/i);
+    assert.match(AGENT_REFLEX, /the answer feels obvious/i);
     assert.ok(
       !/feels like it may have failed|suspect .* failed before/i.test(AGENT_REFLEX),
       "must not gate on doubt — that is the clause that never fires when it matters",
     );
+  });
+
+  test("names WHY the agent's confidence is not evidence (the epistemics of the failure)", () => {
+    // The agent is competent, so an approach feels obviously right. But what makes it
+    // right or wrong IN THIS PROJECT is in neither its training nor its context — unless
+    // it read the graph this session. Confidence therefore carries no information about
+    // project-specific correctness, and "it feels fine" is the failure, not the check.
+    // whitespace-tolerant: the reflex is hard-wrapped for readability in a config file
+    const flat = AGENT_REFLEX.replace(/\s+/g, " ");
+    assert.match(flat, /YOUR CONFIDENCE IS NOT EVIDENCE/i);
+    assert.match(flat, /neither your training nor your context/i);
+    assert.match(flat, /THIS session/);
+    assert.match(flat, /guessing with conviction/i);
+    assert.match(flat, /Obviousness is the signal to CHECK, never the licence to skip/i);
+  });
+
+  test("fires BEFORE work begins in an unchecked project, not only mid-edit", () => {
+    assert.match(AGENT_REFLEX, /before you begin work in a project you have not checked/i);
   });
 
   test("ends in TRAVERSAL, and carries no graph data (so it scales)", () => {
