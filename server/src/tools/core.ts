@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine, blockEmbeddingText } from "../engine/embeddings.js";
-import { ok, err, cosineSim, assembleBlockChains, assembleFullThread, filterRootsByConcepts , currencyFields } from "./helpers.js";
+import { ok, err, cosineSim, assembleBlockChains, assembleFullThread, filterRootsByConcepts , currencyFields, currencyOf } from "./helpers.js";
 import { searchBlocks, rootContextFor, allWeak, WEAK_NOTE } from "../engine/search-core.js";
 
 // ─── Keyword concept extractor ───────────────────────────────────
@@ -474,6 +474,14 @@ Tip: use "surface" first. If the essence tells you what you need, stop there. "r
           // read path never returned it (REST did) — the agent was told to run a check
           // it couldn't perform. null = not extracted (manual save / derived / root).
           source_excerpt: (block as any).source_excerpt ?? null,
+          // CURRENCY travels at every detail level too — and until now it did NOT, which was
+          // the worst hole on the read surface (found 2026-07-13 by actually walking the graph
+          // instead of reading the code). workspace_LIST said `resolved_by`; workspace_GET said
+          // nothing, at any detail level. So the FASTEST path — the one you take when you know
+          // the label, one call, seven milliseconds — handed back a SUPERSEDED DECISION looking
+          // perfectly current, with no marker at all. "Confidently wrong about the past" is the
+          // exact failure this product exists to prevent, and the primary read path was doing it.
+          ...currencyOf(db, block),
         };
 
         // Derivation staleness warning: if any input block was updated after this block was created

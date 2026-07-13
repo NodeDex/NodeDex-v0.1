@@ -33,6 +33,12 @@ export function ok(data: unknown) {
  * claim in prose, not a graph shape. No such block exists yet; when extraction can mark one,
  * it earns its own field.)
  */
+/** The block's OWN currency, ready to spread into any read payload. Empty when it is current. */
+export function currencyOf(db: WorkspaceDB, block: { id: string; type: string }): Record<string, string> {
+  const label = db.getSupersededByLabels([block.id]).get(block.id);
+  return label ? currencyFields(block.type, label) : {};
+}
+
 export function currencyFields(blockType: string, supersedingLabel: string): Record<string, string> {
   if (blockType === "dead_end") {
     return {
