@@ -89,47 +89,77 @@ export interface ClaudeCaptureConfig {
   projectsDir?: string;    // override the transcripts dir (default ~/.claude/projects)
 }
 
-// ── Claude Code project slugs: never make the user type one ─────────────────────────
+// ── Capture scopes: the user gives HUMAN input; code speaks the HOST's dialect ───────
 //
-// Claude Code names each transcript directory by MANGLING the project path — every
-// non-alphanumeric character becomes a '-'. So c:\Users\me\Project_NodeDex becomes
-// c--Users-me-Project-NodeDex.
+// THE UNIVERSAL RULE, and it binds every capture host we ever add:
 //
-// This mangling is NOT REVERSIBLE: '-', '_', '.', '/', '\' and ':' all collapse to the same
-// '-', so `Project-NodeDex` could have been `Project_NodeDex` (and here, it was). Any code
-// that "decodes" a slug back into a path is guessing, and will sometimes be confidently wrong.
+//   1. The user types the thing a human would type — usually a folder PATH.
+//   2. CODE converts it to whatever internal identifier that host actually uses.
+//   3. Display shows GROUND TRUTH, read from the host's own data — NEVER decoded back
+//      from the identifier, because encodings are usually lossy and a decoded guess is
+//      confidently wrong, which is the one failure mode this project exists to prevent.
 //
-// It is also the source of a SILENT failure that cost us a whole captured session: the
-// `projects` allow-list wants SLUGS, and a user who naturally pastes a PATH gets no error,
-// no warning — just a watcher that quietly captures nothing, forever.
+// This is not a Claude Code patch. It is the seam every host plugs into, precisely so the
+// next watcher CANNOT reintroduce the trap — the hosts differ, the user's experience does not.
 //
-// So: slugging is CODE's job, and displaying is done from GROUND TRUTH. The transcripts
-// carry the real `cwd`, so we read it rather than trying to invert the mangle.
-const CC_PROJECTS_DIR = (): string => resolve(homedir(), ".claude", "projects");
+// WHY IT MATTERS (this cost us a whole captured session): Claude Code's allow-list wants its
+// own mangled directory names, so a user who pasted the natural thing — a path — got no error,
+// no warning, and a watcher that silently captured NOTHING, forever.
+//
+// The hosts genuinely differ, and we do not pretend otherwise:
+//   · Claude Code scopes by PROJECT — a directory whose name is the project path with every
+//     non-alphanumeric character replaced by '-'. That mangle is NOT invertible ('-', '_',
+//     '.', '/', ':' all collapse to '-', so `Project-NodeDex` may really be `Project_NodeDex`
+//     — and in this repo, it is). So we read the true `cwd` out of the transcript instead.
+//   · Hermes scopes by session SOURCE ("tui"), which is not a path at all — identity mapping.
+//   · A host with no scope concept needs no resolver; the default passes input through.
 
-/** Path → the directory name Claude Code actually uses. Accepts a slug unchanged. */
-export function claudeProjectSlug(input: string): string {
-  const s = input.trim();
-  if (s === "*" || !/[\\/:]/.test(s)) return s; // already a slug (or the wildcard)
-  return s.replace(/[^a-zA-Z0-9]/g, "-");
+/** How one capture host translates between what a user types and what it stores. */
+export interface CaptureScope {
+  /** what the user typed (a path, a name, or "*") → the host's internal identifier */
+  toId(input: string): string;
+  /** the host's identifier → what to SHOW the user, read from ground truth, never decoded */
+  toDisplay(id: string): string;
+  /** what to tell the user they can type */
+  hint: string;
 }
 
-/** Slug → the REAL project path, read out of the transcript itself (never decoded). */
-export function claudeProjectPath(slug: string): string {
-  if (slug === "*") return "* (all projects)";
-  try {
-    const dir = resolve(CC_PROJECTS_DIR(), slug);
-    const files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
-    for (const f of files) {
-      // `cwd` appears on the message lines; the first one is enough and the files are big,
-      // so read a slice rather than the whole transcript.
-      const head = readFileSync(resolve(dir, f), "utf8").slice(0, 200_000);
-      const m = head.match(/"cwd"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-      if (m) return JSON.parse(`"${m[1]}"`);
-    }
-  } catch { /* fall through */ }
-  return slug; // unknown project → show what we have rather than invent a path
-}
+const passthrough: CaptureScope = {
+  toId: (s) => s.trim(),
+  toDisplay: (id) => id,
+  hint: "enter = edit (* = all)",
+};
+
+const claudeCodeScope: CaptureScope = {
+  toId(input) {
+    const s = input.trim();
+    if (s === "*" || !/[\\/:]/.test(s)) return s; // already an id (or the wildcard)
+    return s.replace(/[^a-zA-Z0-9]/g, "-"); // Claude Code's own encoding
+  },
+  toDisplay(id) {
+    if (id === "*") return "* (all projects)";
+    try {
+      const dir = resolve(homedir(), ".claude", "projects", id);
+      for (const f of readdirSync(dir).filter((n) => n.endsWith(".jsonl"))) {
+        // The transcript carries the real cwd. Read a slice — these files are large, and the
+        // first occurrence is enough.
+        const head = readFileSync(resolve(dir, f), "utf8").slice(0, 200_000);
+        const m = head.match(/"cwd"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+        if (m) return JSON.parse(`"${m[1]}"`);
+      }
+    } catch { /* fall through */ }
+    return id; // unknown → show what we have rather than invent a path
+  },
+  hint: "enter = edit — paste a folder PATH (* = all)",
+};
+
+/** Per-host scope translation. A host absent here gets passthrough, which is always safe. */
+export const CAPTURE_SCOPES: Record<string, CaptureScope> = {
+  "claude-code": claudeCodeScope,
+  hermes: { ...passthrough, hint: "enter = edit — session sources (* = all)" },
+};
+
+export const captureScope = (host: string): CaptureScope => CAPTURE_SCOPES[host] ?? passthrough;
 
 export interface NodedexConfig {
   provider?: Provider;

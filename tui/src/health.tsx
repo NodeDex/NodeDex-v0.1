@@ -17,7 +17,7 @@ import {
 import {
   loadHermesCapture, setHermesCapture, loadClaudeCapture, setClaudeCapture,
   parseSources, loadConfig, saveConfig,
-  claudeProjectSlug, claudeProjectPath,
+  captureScope,
   RECOMMENDED_MODELS, isTrainsOnPrompts, validateOpenRouterKey, scanLocalModels,
   DEFAULT_LOCAL_BASE_URL,
   type Provider, type LocalModel,
@@ -155,8 +155,8 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
       id === "model" ? (cfg?.model ?? "") :
       id === "fallback" ? (cfg?.fallback_model ?? "") :
       id === "autoturns" ? (cfg?.arc_auto_turns ?? "") :
-      id === "sources" ? hc.sources.join(", ") :
-      id === "ccprojects" ? cc.projects.map(claudeProjectPath).join(", ") :
+      id === "sources" ? hc.sources.map(captureScope("hermes").toDisplay).join(", ") :
+      id === "ccprojects" ? cc.projects.map(captureScope("claude-code").toDisplay).join(", ") :
       id === "floor" ? (floor != null ? String(floor) : "") :
       cap != null ? String(cap) : "",
     );
@@ -191,14 +191,22 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
     // on weak models and delay freshness on any model. The chunk cap (ARC_MAX_TURNS)
     // rides this value, so this one knob bounds both the trigger and the arc size.
     if (id === "autoturns") { if (v && (!Number.isInteger(Number(v)) || Number(v) < 0 || Number(v) > 6)) { setNotice("auto-turns must be 0-6 (0 = off; small chunks survive, big arcs fail multiplicatively)"); return; } return save({ arc_auto_turns: v }, v && Number(v) > 0 ? `auto-extract every ${v} turns` : "auto-extract off"); }
-    if (id === "sources")  { const arr = parseSources(v); setHermesCapture({ sources: arr }); setHc(loadHermesCapture()); setNotice(`hermes sources → ${arr.join(", ")}`); return; }
-    // Accept a real PATH here, not just Claude's mangled dir name. Pasting a path used to
-    // fail SILENTLY — the watcher matched nothing and captured nothing, with no error — which
-    // is exactly how we lost a whole session's capture. Slugging is code's job now.
+    // Both capture hosts go through the SAME seam (captureScope): the user types what a human
+    // would type, code converts it to that host's dialect, and we echo back ground truth. A
+    // user who pasted a folder path used to get no error, no warning, and a watcher that
+    // silently captured NOTHING — which is how we lost a whole session's capture.
+    if (id === "sources") {
+      const sc = captureScope("hermes");
+      const arr = parseSources(v).map(sc.toId);
+      setHermesCapture({ sources: arr }); setHc(loadHermesCapture());
+      setNotice(`hermes sources → ${arr.map(sc.toDisplay).join(", ")}`);
+      return;
+    }
     if (id === "ccprojects") {
-      const arr = parseSources(v).map(claudeProjectSlug);
+      const sc = captureScope("claude-code");
+      const arr = parseSources(v).map(sc.toId);
       setClaudeCapture({ projects: arr }); setCc(loadClaudeCapture());
-      setNotice(`claude projects → ${arr.map(claudeProjectPath).join(", ")}`);
+      setNotice(`claude projects → ${arr.map(sc.toDisplay).join(", ")}`);
       return;
     }
     if (id === "floor")    { if (v && !Number.isFinite(Number(v))) { setNotice("floor must be a number"); return; } return save({ min_credit_usd: v }, v ? `credit floor → $${v}` : "credit floor off"); }
@@ -409,9 +417,9 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
 
       <Section title="capture watchers">
         <R id="hermes" label="hermes" value={isWatcherRunning("hermes") ? `${glyph.up} running` : hc.enabled ? `${glyph.paused} enabled (stopped)` : "off"} color={isWatcherRunning("hermes") ? theme.ok : hc.enabled ? theme.warn : theme.dim} hint="enter = start/stop" />
-        <R id="sources" label="  sources" value={hc.sources.join(", ")} hint="enter = edit (* = all)" />
+        <R id="sources" label="  sources" value={hc.sources.map(captureScope("hermes").toDisplay).join(", ")} hint={captureScope("hermes").hint} />
         <R id="claude" label="claude code" value={isWatcherRunning("claude-code") ? `${glyph.up} running` : cc.enabled ? `${glyph.paused} enabled (stopped)` : "off"} color={isWatcherRunning("claude-code") ? theme.ok : cc.enabled ? theme.warn : theme.dim} hint="enter = start/stop" />
-        <R id="ccprojects" label="  projects" value={cc.projects.map(claudeProjectPath).join(", ")} hint="enter = edit — paste a folder PATH (* = all)" />
+        <R id="ccprojects" label="  projects" value={cc.projects.map(captureScope("claude-code").toDisplay).join(", ")} hint={captureScope("claude-code").hint} />
       </Section>
 
       <Section title="review">
