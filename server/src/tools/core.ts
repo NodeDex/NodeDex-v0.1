@@ -458,7 +458,11 @@ Tip: use "surface" first. If the essence tells you what you need, stop there. "r
           created_by: block.created_by || null,
           locked:     block.locked || false,
           flow_role:  block.flow_role || null,
-          chain_id:   (block as any).chain_id || null,
+          // `chain_id` NOT surfaced (2026-07-13) — same reason as `on_chain` in workspace_list:
+          // it names the stamped-once Pass-5 chain block, which the story no longer comes from,
+          // and whose single conclusion cannot answer the several different blocks on it. The
+          // agent's chain is `chains[]` below: computed live from the spine, per block, current
+          // by construction. Two names for "chain" on one surface is how a reader gets misled.
           // Provenance travels at EVERY detail level: the protocol + skill instruct the
           // agent to judge a record by its verbatim source, and until this line the MCP
           // read path never returned it (REST did) — the agent was told to run a check
@@ -721,7 +725,7 @@ These are SUGGESTIONS, not "the" root: open one with workspace_get(label, "relat
   server.tool(
     "workspace_list",
     `Structured browse/CHECK — list blocks by project + type (+ exact label_prefix / concept). The precise form of the dead-end check: workspace_list(project, type="dead_end") returns EVERY dead-end in a project (zero false positives), and likewise constraints, decisions, etc.
-Results are HEADLINES (label, type, essence) — and most blocks mean little alone, so each carries on_chain (the named chain it sits on). To get the actual story, workspace_get(label, "relations") the one you care about and walk its chain. Use workspace_filter when you have concepts but not a project; use this when you want an exhaustive typed list within a project.`,
+Results are HEADLINES (label, type, essence) — and a block means little alone. To get the actual story, workspace_get(label, "relations") the one you care about: it returns the block WITH its causal sign (where it came from, and the very next thing it led to). A resolved dead_end carries resolved_by — the door STAYS CLOSED; that block is how the project got around it. Use workspace_filter when you have concepts but not a project; use this when you want an exhaustive typed list within a project.`,
     {
       project:      z.string().optional().describe("Scope to a project (root label or id). Pulls the root + sub-projects + its label-prefix namespace."),
       type:         z.string().optional().describe("Block type filter, e.g. 'dead_end', 'constraint', 'decision', 'fact'."),
@@ -766,19 +770,26 @@ Results are HEADLINES (label, type, essence) — and most blocks mean little alo
         }
         const limit = params.limit ?? 50;
         const sliced = blocks.slice(0, limit);
-        // Annotate each headline with the chain it sits on (a block alone means little).
-        const chainName = new Map<string, string | null>();
-        const onChain = (cid: string | null | undefined): string | null => {
-          if (!cid) return null;
-          if (!chainName.has(cid)) chainName.set(cid, db.getBlock(cid)?.label ?? cid);
-          return chainName.get(cid) ?? null;
-        };
-        // Currency annotation: superseded blocks stay ACTIVE (the edge is the currency
-        // marker, not status) — a typed list must say what replaced them or a stale
-        // decision reads as current. Batched single query over the page.
+        // `on_chain` REMOVED (2026-07-13). It pointed at the Pass-5 MATERIALIZED chain block —
+        // a stamped-once layer the read side stopped using long ago (the sign is now computed
+        // live from the causal spine). Leaving the pointer up handed the agent TWO competing
+        // notions of "chain", and the older one is wrong in a way that matters:
+        //
+        //   dead-end_es-modules-rejected  → on_chain: chain_html-script-load-order
+        //   dead-end_system-font-rejected → on_chain: chain_html-script-load-order   (same!)
+        //     conclusion: "HTML loads JS modules in dependency order via script tags."
+        //
+        // Two dead-ends with DIFFERENT answers, one chain, ONE conclusion — so an agent that
+        // arrived from the FONT dead-end is told the answer is about script load order. The
+        // fix it needs (hand-coded-bitmap-font) is a member of that chain and the conclusion
+        // never points at it. One conclusion cannot serve seven blocks.
+        //
+        // The mechanical sign gives each block ITS OWN answer, and now points at the
+        // resolution. So we stop advertising the worse one. (The chain blocks and chain_id
+        // still LIVE — dedup and context-injection use them; they are just not navigation.)
         const supersededBy = db.getSupersededByLabels(sliced.map((b) => b.id));
         const results = sliced.map((b) => {
-          const row: Record<string, any> = { label: b.label, type: b.type, essence: b.essence, on_chain: onChain((b as any).chain_id) };
+          const row: Record<string, any> = { label: b.label, type: b.type, essence: b.essence };
           // The field NAME is the instruction: `resolved_by` on a dead_end (door stays CLOSED,
           // here is how we got around it) vs `superseded_by` elsewhere (stale, use the new one).
           // workspace_list(type="dead_end") is where an agent MEETS the closed doors — labelling
@@ -799,7 +810,7 @@ Results are HEADLINES (label, type, essence) — and most blocks mean little alo
         });
         return ok({
           total: blocks.length, returned: results.length, results,
-          hint: "Headlines only — a block means little alone. Open one with workspace_get(label, \"relations\") to walk its chain (on_chain shows where each sits).",
+          hint: "Headlines only — a block means little alone. Open one with workspace_get(label, \"relations\") for its causal sign: what it came from, and the very next thing it led to.",
         });
       } catch (error) {
         return err("LIST_FAILED", String(error));
