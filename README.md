@@ -10,7 +10,7 @@ Give your agent your project's **decision history**: it checks what was already 
 
 [![npm: nodedex](https://img.shields.io/npm/v/nodedex.svg?label=npm&color=cb3837)](https://www.npmjs.com/package/nodedex)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![tests: 1271 passing](https://img.shields.io/badge/tests-1271%20passing-brightgreen.svg)](#evidence-it-works)
+[![tests: 1304 passing](https://img.shields.io/badge/tests-1304%20passing-brightgreen.svg)](#evidence-it-works)
 [![status: early & solo-built](https://img.shields.io/badge/status-early%20%26%20solo--built-orange.svg)](#)
 [![MCP: stdio + HTTP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7b5cff.svg)](#connect-your-agent)
 
@@ -25,13 +25,19 @@ Give your agent your project's **decision history**: it checks what was already 
 Without NodeDex, session N+1 quietly **re-derives what session N already settled** — which approaches failed (and why), which decisions were replaced (and by what), which constraints still bind. NodeDex keeps that record in a local SQLite graph the agent navigates deliberately, session after session.
 
 > **Status — early & solo-built.** NodeDex is developed by one person and is at an early stage.
-> The engine is tested end-to-end (1271 passing tests), but it hasn't been battle-tested across
+> The engine is tested end-to-end (1304 passing tests), but it hasn't been battle-tested across
 > many machines and agents yet — **expect rough edges, and please [open an issue](https://github.com/NodeDex/NodeDex-v0.1/issues)
 > when you hit one.** Feedback at this stage is hugely valuable.
 >
-> **On the roadmap:** a pre-generation dead-end gate (hook-enforced check, not just a nudge) ·
-> interop with Claude Code's native memory · a "what's new since last session" surface for
-> hookless hosts · broader agent-host support.
+> **Newest, and least battle-tested:** the [three-wire setup](#connect-your-agent) — your agent
+> installs NodeDex into itself (reflex + capture + gate), and NodeDex verifies each wire by what
+> actually happened rather than taking the agent's word. The **gate** (a pre-edit check, warn-only,
+> fail-open) is brand new; it replaces a roadmap item that used to read "hook-enforced check, not
+> just a nudge". Whether it changes agent behaviour on a long task is exactly what we're measuring
+> next — **we don't claim it yet.**
+>
+> **On the roadmap:** interop with Claude Code's native memory · a "what's new since last session"
+> surface · broader agent-host support.
 
 ---
 
@@ -202,66 +208,94 @@ config value, not a shell command, so it's the same on every OS. All config live
 
 ## Connect your agent
 
-NodeDex is built for **agents doing long, multi-session work** — Claude Code, Cursor, an
-autonomous host like Hermes, or an agent loop you wrote yourself. The onboarding wizard sets up
-and starts the **server**; pointing your agent at it is the one remaining step.
+NodeDex is built for **agentic agents doing long, multi-session work** — anything that can
+read a file, write a file, and run a tool. Claude Code, Cursor, Codex, Copilot, an autonomous
+host like Hermes, or a loop you wrote yourself: the setup below is the **same for all of them**,
+because your agent does it, not you.
 
-> **Use what the wizard showed you.** Its final screen prints your **server URL**
-> (`http://127.0.0.1:<port>/mcp`, where `<port>` is the port you picked) and — only if you
-> chose a Docker/network bind — an **auth token**. The examples below use the default `3001`
-> as a placeholder: **replace it with your port**, and pass the token only if your server is
-> gated. If you ever lose them, run **`nodedex connect`** — it prints the connection card
-> (per-location URLs + when a token is needed) — and `~/.nodedex/connect-snippets.md` always
-> holds ready-to-paste configs for every host, regenerated at each launch.
+There are exactly **two steps**.
 
-### Quickstart (Claude Code) — one command
+### Step 1 — point your agent at the server (the only host-specific part)
 
-**1. Connect** (terminal):
+The wizard already started the server and printed your URL (`http://127.0.0.1:<port>/mcp`).
+Register it with your host over MCP (Streamable-HTTP). One line, once:
+
+| Host | How |
+|---|---|
+| **Claude Code (CLI)** | `claude mcp add --transport http nodedex http://127.0.0.1:3001/mcp` <br/>(add `--scope user` for every project) |
+| **Claude Code in an IDE** | project `.mcp.json` → `{ "mcpServers": { "nodedex": { "type": "http", "url": "…/mcp" } } }`, then start a **new** session |
+| **Cursor** | `~/.cursor/mcp.json` → `{ "mcpServers": { "nodedex": { "url": "…/mcp" } } }` |
+| **VS Code / Copilot** | `.vscode/mcp.json` → top key is `"servers"`, not `"mcpServers"` |
+| **Codex** | `~/.codex/config.toml` → `[mcp_servers.nodedex]` / `url = "…/mcp"` |
+| **Hermes** | `hermes mcp add nodedex --url http://127.0.0.1:3001/mcp`, then restart |
+| **Your own loop** | `{ "mcpServers": { "nodedex": { "url": "…/mcp" } } }` — or skip MCP entirely and call the REST API |
+
+> **Use `127.0.0.1`, not `localhost`** — the server binds IPv4, and on Windows `localhost` resolves
+> to IPv6 `::1` first, so it silently fails to connect. Lost your URL? Run **`nodedex connect`**;
+> `~/.nodedex/connect-snippets.md` also holds ready-to-paste configs, regenerated at each launch.
+
+### Step 2 — tell your agent to wire itself in
+
+Say this to it, once:
+
+> **Set up NodeDex**
+
+That's the whole instruction. **Your agent installs NodeDex into itself** — it knows its own host
+far better than we do, so it finds its own files and its own seams. It will ask your permission
+before touching anything, and it will be **nagged on every tool result until it's done**, so it's
+hard to skip.
+
+There are **three wires**, and they have different lifetimes — which is the entire point:
+
+| Wire | What it does | Without it |
+|---|---|---|
+| **CAPTURE** | feeds finished turns to the pipeline | the graph stays **empty, forever** |
+| **REFLEX** | a short marked block in the file your agent re-reads **every turn** (`AGENTS.md`, `CLAUDE.md`, a rules file, a system prompt) | the habit reaches it once, at connect, and is gone from context by the time it's deep in a task |
+| **GATE** | a check that fires **right before it edits a file** and reminds it to consult the graph if it hasn't looked recently | nothing checks anything at the moment that actually matters |
+
+The **gate warns; it never blocks**, and it **fails open** — if NodeDex isn't running, it does
+nothing at all. It will never stand between you and your editor.
+
+**None of it is taken on trust.** NodeDex verifies each wire by what actually *happened* — it reads
+the file back and looks for the marker, waits for a real turn to land in the graph, waits for a real
+check to reach the endpoint. An agent that *says* it did the setup and didn't will keep being nagged.
+
+<details>
+<summary><b>Why three wires and not just "connect the tools"?</b></summary>
+
+Because connecting the tools is demonstrably not enough. In our own testing, an agent with NodeDex
+connected read this project's recorded dead-ends at **12:17**, wrote the code at **16:44**, and
+shipped the exact bug those dead-ends warned about. It understood them perfectly — in isolation it
+uses them every time. It simply no longer *had* them: the instruction to look arrived once, at
+connect, and four hours and several compactions later it was gone.
+
+A memory an agent doesn't consult at the moment of decision is not memory. The reflex puts the habit
+where the host re-reads it every turn; the gate puts the reminder at the edit itself. Capture makes
+sure there is something there to find.
+
+</details>
+
+### If your agent can't write files
+
+Then it can't install anything, and you wire it by hand — three HTTP calls, any language:
+
 ```bash
-claude mcp add --transport http nodedex http://127.0.0.1:3001/mcp   # 3001 → your wizard port; add --scope user for all projects
-```
-Using the **VS Code / Cursor / JetBrains extension** instead of the CLI? Add a project `.mcp.json` (config in the table below) and start a **new** session.
+# 1. REFLEX — paste this into that agent's system prompt (it must be present on EVERY turn)
+curl http://127.0.0.1:3001/api/agent-reflex?format=text
 
-**2. Capture is already handled** — the Claude Code watcher tails your session transcripts locally (`~/.claude/projects/…jsonl`), read-only and forward-only. The wizard detects Claude Code and asks; per-project toggles live in the TUI's settings view.
+# 2. CAPTURE — POST each finished turn, fire-and-forget, out of your model's path
+#    POST /api/reflect/trigger  { user_message, agent_response, reasoning }
 
-That's it — the graph grows from your sessions on its own, and the agent gets the usage protocol over MCP automatically.
-
-### Quickstart (Hermes) — two pastes, once
-
-**1. Connect** NodeDex to Hermes (in your terminal):
-```bash
-hermes mcp add nodedex --url http://127.0.0.1:3001/mcp   # 3001 → use the port you chose in the wizard
-```
-…or add it to `%LOCALAPPDATA%\hermes\config.yaml` (`~/.hermes/config.yaml` on macOS/Linux):
-```yaml
-mcp_servers:
-  nodedex:
-    url: http://127.0.0.1:3001/mcp
-```
-Then restart Hermes (or start a new session). Use `127.0.0.1`, **not** `localhost` — on Windows `localhost` resolves to IPv6 `::1` first, which an IPv4-bound server won't answer.
-
-**2. Orient your agent** — paste this as your first message so it uses the tools instead of hunting around:
-> Your long-term memory is NodeDex, connected as MCP tools. To recall anything, use `workspace_tree` to see what exists, then `workspace_get` / `workspace_search` and follow the chains — don't search files, the database, or ports; it's all behind the tools.
-
-**That's the whole setup.** Capture is **on by default**, so once connected the graph grows from your turns on its own — no extra step. (The agent also gets this usage protocol automatically over MCP; the message above just reinforces it on turn one.)
-
-### Your own agent loop? Two wires, ~5 lines
-
-Building with the Agent SDK / OpenAI Agents SDK / LangChain / a hand-rolled loop? The integration is one MCP entry (read) + one post-turn call (write):
-
-```json
-{ "mcpServers": { "nodedex": { "url": "http://127.0.0.1:3001/mcp" } } }
+# 3. GATE — call before a file edit; feed anything it returns back into context
+curl http://127.0.0.1:3001/api/gate/check
 ```
 
-```js
-import { nodedexCapture } from './nodedex-capture.mjs';
-// after your turn completes — a fire-and-forget COPY, out of your model's path:
-nodedexCapture({ userMessage, agentResponse: out.text, agentId: sessionId });
-```
+On Node, `workspace_install_capture` hands your agent a ready-made adapter (a fire-and-forget tee —
+your model call is never touched or slowed) and `workspace_install_gate` hands it the gate script.
 
-Get the adapter by having your agent call **`workspace_install_capture`** once — it returns the file plus wiring examples for your seam shape (post-turn callback, OpenAI-style call site, or framework `onTurnEnd`/Stop hook), and asks the user's permission before touching anything. Not on Node? The adapter is sugar over a single HTTP call — replicate it as one fire-and-forget `POST /api/reflect/trigger` with `{user_message, agent_response, reasoning}` from any language.
-
-> This tee is the newest capture path with the least real-world mileage — if it fights your framework, [open an issue](https://github.com/NodeDex/NodeDex-v0.1/issues).
+> Some hosts persist their own transcripts and expose no post-turn seam (Claude Code, Hermes). For
+> those, NodeDex ships a **watcher** instead — read-only, forward-only, enabled from the TUI — so
+> capture works with no wiring at all. The wizard detects them and asks.
 
 ---
 
@@ -513,10 +547,11 @@ decontextualized fragment.
 > skill, not the memory. Full write-up:
 > [docs/NODEDEX-MEMORY-MODEL.md](docs/NODEDEX-MEMORY-MODEL.md).
 
-Engine health: **1271/1271 server tests pass**, with extraction → graph → retrieval validated
-end-to-end — including capture-loss (ack-safe watcher cursors) and the MCP read surface itself
-(what the agent receives, provenance included). Tests prove the *mechanisms* work; whether the
-memory makes *your* agent measurably better is the claim we're still validating with users.
+Engine health: **1304/1304 server tests pass**, with extraction → graph → retrieval validated
+end-to-end — including capture-loss (ack-safe watcher cursors), the MCP read surface itself
+(what the agent receives, provenance included), and the setup wires (a claimed-but-unwritten
+reflex is caught, not believed). Tests prove the *mechanisms* work; whether the memory makes
+*your* agent measurably better is the claim we're still validating with users.
 
 We also ran NodeDex on itself: the last ~50 turns of the Claude Code session that *built* it,
 captured by the watcher, extracted into a 223-block graph — audited at 9/10 fidelity, with the
