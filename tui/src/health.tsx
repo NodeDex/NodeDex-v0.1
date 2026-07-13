@@ -11,8 +11,8 @@ import { Box, Text, useInput } from "ink";
 import { Section, Row, Keys, Panel } from "./components.js";
 import { theme, glyph, trunc, fmtMoney } from "./theme.js";
 import {
-  fetchConfig, postConfig, setReflectPausedRemote, getBase, setBase,
-  type AdminConfig, type Dashboard, type Balance,
+  fetchConfig, postConfig, setReflectPausedRemote, getBase, setBase, fetchSetup,
+  type AdminConfig, type Dashboard, type Balance, type SetupStatus,
 } from "./api.js";
 import {
   loadHermesCapture, setHermesCapture, loadClaudeCapture, setClaudeCapture,
@@ -32,9 +32,25 @@ import { ReviewTab } from "./review.js";
 type RowId =
   | "server" | "db"
   | "reflect" | "provider" | "model" | "fallback" | "autoturns" | "floor" | "cap"
+  | "w-capture" | "w-reflex" | "w-gate" | "w-read"
   | "hermes" | "sources" | "claude" | "ccprojects"
   | "review";
+// The w-* rows are STATUS, not settings — they report what the agent did, so there is
+// nothing here for the user to toggle. Absent from ROWS ⇒ rendered, never selectable.
 const ROWS: RowId[] = ["server", "db", "reflect", "provider", "model", "fallback", "autoturns", "floor", "cap", "hermes", "sources", "claude", "ccprojects", "review"];
+
+/** "3m ago" — a timestamp the user can act on, not an ISO string they have to decode. */
+function ago(iso: string | null): string {
+  if (!iso) return "never";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "just now";
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 // Provider-overlay steps: pick cloud/local → OpenRouter (key if none saved → model
 // list) | Local (auto-scan Ollama/LM Studio/vLLM → pick, or manual url+model).
@@ -74,6 +90,17 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
 
   const load = useCallback(() => { void fetchConfig().then(setCfg); }, []);
   useEffect(() => { load(); }, [load]);
+
+  // The wires: is NodeDex actually plugged into the agent, and is anything reaching it?
+  // Polled from the SERVER (not from local config) because the answer is about observed
+  // effect — a turn that landed, a file that really contains the block, a check that fired.
+  const [setup, setSetup] = useState<SetupStatus | null>(null);
+  useEffect(() => {
+    const poll = () => { void fetchSetup().then(setSetup).catch(() => { /* server down — leave last known */ }); };
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => clearInterval(id);
+  }, []);
   useEffect(() => { onCapture(editing !== null || overlay !== "none"); }, [editing, overlay, onCapture]);
   useEffect(() => {
     if (!notice) return;
@@ -415,7 +442,48 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
         <R id="cap" label="daily cap" value={cap != null ? fmtMoney(cap) : "off"} hint="enter = edit" />
       </Section>
 
-      <Section title="capture watchers">
+      {/* WIRED INTO YOUR AGENT — the three wires, reported from observed effect.
+          Source-agnostic on purpose: a user running their own loop has every watcher below
+          switched OFF and is capturing perfectly. This section is true for them too. */}
+      <Section title="wired into your agent">
+        <R
+          id="w-capture" label="capture"
+          value={
+            setup?.capture.done
+              ? `${glyph.up} ${setup.capture.turns} turns · ${setup.capture.sources.map((s) => s.agent_id).join(", ") || "—"}`
+              : setup?.capture.declined ? "declined"
+              : `${glyph.flag} nothing has ever arrived — the graph cannot grow`
+          }
+          color={setup?.capture.done ? theme.ok : setup?.capture.declined ? theme.dim : theme.warn}
+          hint="whatever feeds it: a watcher, the adapter, or your own POST"
+        />
+        <R
+          id="w-reflex" label="reflex"
+          value={
+            setup?.reflex.done ? `${glyph.up} ${trunc(setup.reflex.file ?? "", 44)}`
+              : setup?.reflex.declined ? "declined"
+              : `${glyph.flag} not persisted — the habit dies with the context`
+          }
+          color={setup?.reflex.done ? theme.ok : setup?.reflex.declined ? theme.dim : theme.warn}
+          hint={'say "Set up NodeDex" to your agent'}
+        />
+        <R
+          id="w-gate" label="gate"
+          value={
+            setup?.gate.done ? `${glyph.up} ${setup.gate.checks} checks · last ${ago(setup.gate.last_check_at)}`
+              : setup?.gate.declined ? "declined"
+              : `${glyph.flag} never fired — nothing checks at the edit`
+          }
+          color={setup?.gate.done ? theme.ok : setup?.gate.declined ? theme.dim : theme.warn}
+          hint="fires before your agent edits a file"
+        />
+        <R id="w-read" label="last consulted" value={setup?.last_graph_read_at ? ago(setup.last_graph_read_at) : "never"} color={setup?.last_graph_read_at ? theme.value : theme.warn} hint="what the gate measures staleness against" />
+      </Section>
+
+      {/* Watchers are ONE way to feed capture above — for hosts that keep their own
+          transcripts and expose no post-turn seam. Off is perfectly fine if something
+          else (the adapter, your own loop) is posting turns. */}
+      <Section title="capture watchers (optional — for hosts with no post-turn seam)">
         <R id="hermes" label="hermes" value={isWatcherRunning("hermes") ? `${glyph.up} running` : hc.enabled ? `${glyph.paused} enabled (stopped)` : "off"} color={isWatcherRunning("hermes") ? theme.ok : hc.enabled ? theme.warn : theme.dim} hint="enter = start/stop" />
         <R id="sources" label="  sources" value={hc.sources.map(captureScope("hermes").toDisplay).join(", ")} hint={captureScope("hermes").hint} />
         <R id="claude" label="claude code" value={isWatcherRunning("claude-code") ? `${glyph.up} running` : cc.enabled ? `${glyph.paused} enabled (stopped)` : "off"} color={isWatcherRunning("claude-code") ? theme.ok : cc.enabled ? theme.warn : theme.dim} hint="enter = start/stop" />

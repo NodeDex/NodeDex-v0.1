@@ -6,7 +6,7 @@ import { WorkspaceDB } from "../store/database.js";
 import { EmbeddingEngine, blockEmbeddingText } from "../engine/embeddings.js";
 import { getLLMProvider, getEmbeddingProvider, resetProviders } from "../engine/providers/index.js";
 import { protocolBlock } from "../agent-protocol.js";
-import { markGateSeen, gateShouldRemind } from "../tools/setup-state.js";
+import { markGateSeen, gateShouldRemind, setupStatus } from "../tools/setup-state.js";
 import type { SchedulerJobStatus } from "../server.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
@@ -130,6 +130,16 @@ export function createAdminRouter(
         "system prompt yourself. Either way it must be present on EVERY turn: delivered once at startup, it is " +
         "gone from context by the time the agent is deep in a task and actually choosing an approach.",
     });
+  });
+
+  // ─── Setup status — is NodeDex actually wired into the agent, and is it fed? ────
+  // Deliberately SOURCE-AGNOSTIC. A UI that lists our watchers describes OUR helpers, not
+  // the user's reality: someone running their own loop has every watcher off and captures
+  // perfectly. So this answers the questions that hold for ANY workflow — did a turn arrive,
+  // who sent it, is the reflex really in a file, has a gate check ever fired — all from
+  // observed effect, never from configured intent.
+  router.get("/api/setup", (_req, res) => {
+    res.json(setupStatus(db));
   });
 
   // ─── The GATE check ────────────────────────────────────────────────────────

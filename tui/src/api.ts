@@ -264,6 +264,25 @@ export async function fetchConfig(): Promise<AdminConfig | null> {
   return getJSON<AdminConfig>("/api/admin/config", 6000);
 }
 
+/** Is NodeDex actually wired into the agent, and is anything reaching it?
+ *
+ *  Source-agnostic BY DESIGN. It reports what ACTUALLY HAPPENED — a turn that landed and who
+ *  sent it, a reflex block really present in a file, a gate check that really fired — so it is
+ *  true for a watcher, for the adapter, and for someone's hand-rolled loop alike. A screen that
+ *  only listed OUR watchers would tell a custom-workflow user that nothing works while their
+ *  graph fills up perfectly. */
+export interface CaptureSource { agent_id: string; turns: number; last_turn_at: string | null }
+export interface SetupStatus {
+  wired: boolean;
+  reflex:  { done: boolean; declined: boolean; file: string | null };
+  capture: { done: boolean; declined: boolean; turns: number; sources: CaptureSource[] };
+  gate:    { done: boolean; declined: boolean; checks: number; last_check_at: string | null };
+  last_graph_read_at: string | null;
+}
+export async function fetchSetup(): Promise<SetupStatus | null> {
+  return getJSON<SetupStatus>("/api/setup", 6000);
+}
+
 /** Persist a config patch (model/fallback/breaker). Applies live + writes .env. */
 export async function postConfig(patch: Record<string, string | number>): Promise<boolean> {
   try {

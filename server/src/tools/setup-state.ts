@@ -44,6 +44,8 @@ const K = {
   captureDeclined: "setup_capture_declined",
   gateSeen: "setup_gate_seen",
   gateDeclined: "setup_gate_declined",
+  gateLast: "setup_gate_last_check_at",
+  gateCount: "setup_gate_check_count",
   lastRead: "last_graph_read_at",
 } as const;
 
@@ -125,6 +127,8 @@ export function captureWired(db: WorkspaceDB): boolean {
 /** GATE — did a check ever actually reach us? Set by the /api/gate/check route. */
 export function markGateSeen(db: WorkspaceDB): void {
   set(db, K.gateSeen, "1");
+  set(db, K.gateLast, String(Date.now()));
+  set(db, K.gateCount, String(Number(get(db, K.gateCount) ?? 0) + 1));
 }
 
 /** The user said no. A decline is a decision — record it and never nag past it. */
@@ -201,6 +205,63 @@ export function buildSetupNotice(db: WorkspaceDB): string | null {
   }
   lines.push("Each asks the user's permission first, and each goes quiet once it is VERIFIED (not merely claimed).");
   return lines.join("\n");
+}
+
+// ── the status surface (what the TUI and any UI should show) ─────────────────────────
+//
+// SOURCE-AGNOSTIC ON PURPOSE. A settings screen with a toggle per watcher describes OUR
+// helpers, not the user's reality: someone running their own loop (the adapter, or a raw
+// POST) has every watcher OFF and is capturing perfectly — and would see a screen implying
+// nothing works. So we report what ACTUALLY ARRIVED, grouped by the agent that sent it.
+// Watchers are then just one way to feed this; they are not the definition of "capture".
+//
+// Same rule as everywhere else in this file: report observed effect, not configured intent.
+
+export interface CaptureSource {
+  agent_id: string;
+  turns: number;
+  last_turn_at: string | null;
+}
+
+export interface SetupStatus {
+  wired: boolean;
+  reflex: { done: boolean; declined: boolean; file: string | null };
+  capture: { done: boolean; declined: boolean; turns: number; sources: CaptureSource[] };
+  gate: { done: boolean; declined: boolean; checks: number; last_check_at: string | null };
+  /** When the graph was last actually consulted — what the gate measures staleness against. */
+  last_graph_read_at: string | null;
+}
+
+export function setupStatus(db: WorkspaceDB): SetupStatus {
+  let sources: CaptureSource[] = [];
+  let turns = 0;
+  try {
+    sources = raw(db)
+      .prepare(
+        `SELECT agent_id, COUNT(*) AS turns, MAX(created_at) AS last_turn_at
+           FROM conversation_turns GROUP BY agent_id ORDER BY last_turn_at DESC`,
+      )
+      .all() as CaptureSource[];
+    turns = sources.reduce((n, s) => n + s.turns, 0);
+  } catch { /* no turns table yet */ }
+
+  const iso = (key: string): string | null => {
+    const v = Number(get(db, key) ?? 0);
+    return v ? new Date(v).toISOString() : null;
+  };
+  const s = wireState(db);
+  return {
+    wired: s.reflex && s.capture && s.gate,
+    reflex: { done: !!get(db, K.reflexPath), declined: get(db, K.reflexDeclined) === "1", file: get(db, K.reflexPath) },
+    capture: { done: turns > 0, declined: get(db, K.captureDeclined) === "1", turns, sources },
+    gate: {
+      done: get(db, K.gateSeen) === "1",
+      declined: get(db, K.gateDeclined) === "1",
+      checks: Number(get(db, K.gateCount) ?? 0),
+      last_check_at: iso(K.gateLast),
+    },
+    last_graph_read_at: iso(K.lastRead),
+  };
 }
 
 type ToolResult = { content?: Array<{ type: string; text?: string }> };
