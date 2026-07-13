@@ -128,18 +128,46 @@ export async function searchBlocks(
 // it: a silent [] can't be told apart from "search broke" (fail-loud rule), and
 // a weak semantic hit is occasionally a true one (measured: a relevant dead-end
 // at 0.22).
-const WEAK_SCORE = 0.3;
-
-/** True when the ENTIRE result set is weak (semantic-only, sub-0.3): the graph
- *  likely has nothing on this topic. One strong hit anywhere → not weak. */
+/**
+ * CORROBORATION, not exclusivity.
+ *
+ * The old rule was "every hit is semantic-only AND under 0.3". It failed in both directions,
+ * and both failures were measured (2026-07-13):
+ *
+ *   1150-block graph, "how do I configure the kubernetes ingress" (the graph has NOTHING on it)
+ *     → 0.38 [keyword, concept(kubernetes)] → NOT flagged, because a hit carried a non-semantic
+ *       match type. At scale SOME block is always tagged `server` or mentions `kubernetes`, so a
+ *       single generic token manufactures a match type and disarms the net entirely.
+ *   Same query, "best practices for react server components" → 0.38 [keyword, concept(server)].
+ *
+ * The signature of a REAL hit is not its match type, it is AGREEMENT:
+ *
+ *   real   "why did we reject es modules"      → 0.83 [semantic, keyword, concept]
+ *   real   "why did the extraction drop turns" → 0.68 [semantic, keyword, concept]
+ *   false  "kubernetes ingress"                → 0.38 [keyword, concept]   ← no semantic
+ *   false  "react server components"           → 0.38 [keyword, concept]   ← no semantic
+ *
+ * MEANING AND WORDING MUST AGREE. Semantic alone is a nearest-neighbour, and nearest-neighbour
+ * ALWAYS returns something. Keyword/concept alone is a string coincidence — and the bigger the
+ * graph, the more coincidences there are. Only when both fire on the same block have we found
+ * anything.
+ *
+ * This DOES over-flag one case: a true hit worded very differently from the block ("enemies
+ * standing inside walls" → the spawn decision, semantic-only at 0.30) gets labelled weak. That
+ * is the right way to be wrong. The note is a HEDGE, not a filter — the results are still
+ * returned and the agent can still use them. A false "weak" costs a little confidence; a false
+ * CONFIDENCE makes the agent act on a block about ES modules when it asked about Kubernetes.
+ */
 export function allWeak(hits: SearchHit[]): boolean {
-  return hits.length > 0 && hits.every(
-    (h) => h.score < WEAK_SCORE && h.matchTypes.length === 1 && h.matchTypes[0] === "semantic"
-  );
+  if (hits.length === 0) return false;
+  const corroborated = (h: SearchHit) =>
+    h.matchTypes.includes("semantic") &&
+    h.matchTypes.some((t) => t === "keyword" || t.startsWith("concept"));
+  return !hits.some(corroborated);
 }
 
 export const WEAK_NOTE =
-  "weak matches only — nothing matched by keyword or concept; the graph likely has nothing on this topic. These are just the nearest blocks, not an answer.";
+  "weak matches only — no block matched on BOTH meaning and wording, so these are just the nearest neighbours, not an answer. The graph may well have nothing on this topic; say so plainly rather than stretching the closest hit.";
 
 export interface RootContext {
   root_label: string;

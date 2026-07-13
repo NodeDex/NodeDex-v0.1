@@ -94,18 +94,39 @@ describe("searchBlocks — match-quality ranking", () => {
   });
 });
 
-describe("allWeak — the nearest-neighbor shrug detector", () => {
+// allWeak — CORROBORATION, not exclusivity. Semantic alone is a nearest-neighbour, and
+// nearest-neighbour always returns SOMETHING. Keyword/concept alone is a string coincidence,
+// and the bigger the graph the more coincidences there are. Only when meaning AND wording fire
+// on the same block have we actually found anything.
+//
+// The old rule ("every hit semantic-only and under 0.3") failed live in both directions —
+// these cases are lifted verbatim from the 1150-block graph, 2026-07-13.
+describe("allWeak — meaning and wording must AGREE", () => {
   const hit = (score: number, matchTypes: string[]): SearchHit =>
     ({ block: {} as any, score, matchTypes });
 
-  test("all semantic-only sub-0.3 hits → weak (off-graph query signature)", () => {
-    assert.equal(allWeak([hit(0.26, ["semantic"]), hit(0.26, ["semantic"])]), true);
+  test("a corroborated hit — semantic AND wording — is a real answer", () => {
+    // "why did we reject es modules" → 0.83, and it IS the es-modules dead-end.
+    assert.equal(allWeak([hit(0.83, ["semantic", "keyword", "concept(reject,modules)"])]), false);
+    assert.equal(allWeak([hit(0.68, ["semantic", "keyword"]), hit(0.22, ["semantic"])]), false);
   });
 
-  test("one strong or multi-signal hit anywhere → not weak", () => {
-    assert.equal(allWeak([hit(0.63, ["semantic", "keyword"]), hit(0.22, ["semantic"])]), false);
-    assert.equal(allWeak([hit(0.45, ["semantic"])]), false, "high score alone disarms it");
-    assert.equal(allWeak([hit(0.25, ["keyword"])]), false, "keyword match alone disarms it");
+  test("semantic-only → WEAK, however high the score", () => {
+    // Nearest-neighbour always returns the closest blocks even when nothing is close. A high
+    // cosine on an off-graph query is the FLOOR of the embedding space, not a finding.
+    assert.equal(allWeak([hit(0.26, ["semantic"]), hit(0.26, ["semantic"])]), true);
+    assert.equal(allWeak([hit(0.45, ["semantic"])]), true, "a high score alone must NOT disarm it");
+  });
+
+  test("keyword/concept WITHOUT semantic → WEAK. This is the bug scale exposed.", () => {
+    // Live, 1150 blocks: "how do I configure the kubernetes ingress" → 0.38
+    // [keyword, concept(kubernetes)] and NO warning — because a non-semantic match type was
+    // enough to disarm the old rule. At scale SOME block is always tagged `server` or mentions
+    // `kubernetes`, so one generic token manufactures a match and the net stops working exactly
+    // where it is needed most.
+    assert.equal(allWeak([hit(0.38, ["keyword", "concept(kubernetes)"])]), true);
+    assert.equal(allWeak([hit(0.38, ["keyword", "concept(server)"])]), true);
+    assert.equal(allWeak([hit(0.25, ["keyword"])]), true, "a keyword match alone must NOT disarm it");
   });
 
   test("empty result set is not weak (it is simply empty)", () => {
