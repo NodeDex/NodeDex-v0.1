@@ -93,9 +93,10 @@ Config (source filter, poll interval, a non-default `state.db` path) lives under
 | **NodeDex pipeline key** | `~/.nodedex/config.json` | the **extraction** pipeline that turns captured turns into graph blocks |
 
 If turns are captured but the graph stays empty, the **pipeline key** is the culprit (a `401` in the
-server log). Fix it with the flag (avoids terminal paste-truncation):
+server log). Fix it in the TUI — `nodedex tui` → **3 health** → Enter on **provider** → re-enter the
+key — or headless (avoids terminal paste-truncation):
 ```
-nodedex setup --key sk-or-v1-<your-FULL-key>
+nodedex setup --provider openrouter --key sk-or-v1-<your-FULL-key> --model google/gemini-2.5-flash-lite
 ```
 
 ---

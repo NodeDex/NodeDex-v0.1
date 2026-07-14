@@ -453,8 +453,9 @@ model (local models are auto-scanned). A model change within the same provider a
 a provider/endpoint switch applies when the server relaunches (switch db, or restart the TUI).
 
 Uninstall does **not** remove the package (`npm rm -g nodedex` for that) or the NodeDex
-entry in your agent host's MCP config (remove that on the host). To just change your key or
-model, re-run `nodedex onboard` (or `nodedex setup --key … --model …` headless).
+entry in your agent host's MCP config (remove that on the host). To change your key / model /
+provider, use the TUI (`nodedex tui` → **3 health** → Enter on **provider**), or re-run
+`nodedex onboard` — or headless: `nodedex setup --provider openrouter --key … --model …`.
 
 ---
 
@@ -481,7 +482,7 @@ model, re-run `nodedex onboard` (or `nodedex setup --key … --model …` headle
 | `nodedex run` | start the server + enabled capture watchers (never interactive) |
 | `nodedex tui` | launch the operator console |
 | `nodedex onboard` | re-run the setup wizard (switch provider / model / port / db) |
-| `nodedex setup --key … --model …` | headless setup / reconfigure — flags merge into the existing config |
+| `nodedex setup --provider … --key … --model …` | headless (re)configure — the whole provider block, merged into config. Granular tweaks: the TUI health view |
 | `nodedex connect` | the connection card: the right URL per client location + token rule + test commands |
 | `nodedex stop [port \| --all]` | stop running NodeDex servers (confirms a NodeDex answers before killing anything) |
 | `nodedex uninstall` | remove all local data + config (`~/.nodedex`) — asks first; `--yes` for scripts |
