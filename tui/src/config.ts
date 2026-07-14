@@ -134,7 +134,13 @@ const claudeCodeScope: CaptureScope = {
   toId(input) {
     const s = input.trim();
     if (s === "*" || !/[\\/:]/.test(s)) return s; // already an id (or the wildcard)
-    return s.replace(/[^a-zA-Z0-9]/g, "-"); // Claude Code's own encoding
+    // Claude Code's own encoding: it LOWERCASES the Windows drive letter (C:\ → c--) and then
+    // replaces every non-alphanumeric with '-'. We must reproduce BOTH steps — dropping the
+    // lowercasing produced `C--…` while the real transcript dir is `c--…`, so the exact-match
+    // watcher captured NOTHING, silently (the trap this whole seam exists to prevent).
+    return s
+      .replace(/^([A-Za-z]):/, (_, d) => `${d.toLowerCase()}:`) // c:\… drive-letter lowercase
+      .replace(/[^a-zA-Z0-9]/g, "-");
   },
   toDisplay(id) {
     if (id === "*") return "* (all projects)";

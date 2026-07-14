@@ -89,7 +89,12 @@ function loadCaptureConfig() {
     projectsDir: raw.projectsDir || defaultProjectsDir(),
   };
 }
-const projectAllowed = (cfg, dirName) => cfg.allowAll || cfg.projects.includes(dirName);
+// Case-INSENSITIVE match: Claude Code lowercases the Windows drive letter when it names the
+// transcript dir (C:\… → c--…), and a user-pasted path may keep the capital. Windows paths are
+// case-insensitive anyway, so comparing lowercased is both a fix for that exact silent-capture
+// trap and semantically correct. (The path→slug converter also lowercases the drive now.)
+const projectAllowed = (cfg, dirName) =>
+  cfg.allowAll || cfg.projects.some((p) => p.toLowerCase() === String(dirName).toLowerCase());
 
 // ─── cursor: file → byte offset of the CURRENT (still-buffering) turn's opening line ──────────
 // We persist the offset where the pending turn STARTS, not EOF — so a restart re-reads and
