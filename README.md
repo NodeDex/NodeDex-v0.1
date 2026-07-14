@@ -10,7 +10,7 @@ Give your agent your project's **decision history**: it checks what was already 
 
 [![npm: nodedex](https://img.shields.io/npm/v/nodedex.svg?label=npm&color=cb3837)](https://www.npmjs.com/package/nodedex)
 [![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![tests: 1313 passing](https://img.shields.io/badge/tests-1313%20passing-brightgreen.svg)](#evidence-it-works)
+[![tests: 1319 passing](https://img.shields.io/badge/tests-1319%20passing-brightgreen.svg)](#evidence-it-works)
 [![status: early & solo-built](https://img.shields.io/badge/status-early%20%26%20solo--built-orange.svg)](#)
 [![MCP: stdio + HTTP](https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7b5cff.svg)](#connect-your-agent)
 
@@ -25,7 +25,7 @@ Give your agent your project's **decision history**: it checks what was already 
 Without NodeDex, session N+1 quietly **re-derives what session N already settled** — which approaches failed (and why), which decisions were replaced (and by what), which constraints still bind. NodeDex keeps that record in a local SQLite graph the agent navigates deliberately, session after session.
 
 > **Status — early & solo-built.** NodeDex is developed by one person and is at an early stage.
-> The engine is tested end-to-end (1313 passing tests), but it hasn't been battle-tested across
+> The engine is tested end-to-end (1319 passing tests), but it hasn't been battle-tested across
 > many machines and agents yet — **expect rough edges, and please [open an issue](https://github.com/NodeDex/NodeDex-v0.1/issues)
 > when you hit one.** Feedback at this stage is hugely valuable.
 >
@@ -452,6 +452,18 @@ Or do it inside the TUI: **settings view → `provider` row** switches cloud/loc
 model (local models are auto-scanned). A model change within the same provider applies live;
 a provider/endpoint switch applies when the server relaunches (switch db, or restart the TUI).
 
+**Multiple keys + automatic failover.** Real setups keep more than one key — different accounts,
+and one held as a fallback. **`nodedex config`** opens a dedicated keyring page: store several API
+keys, mark one **active** and one **fallback**, set a **fallback model**, and choose what happens
+when the active key bills out (fail over and keep going, or respect the spend-pause). The running
+server then **automatically fails over** to the fallback key when the active one is rejected (bad
+key) or runs out of credit — same model, no restart. Setting the active key swaps the live server
+in place; everything reflects in `nodedex tui` (both read the same `~/.nodedex/config.json`). The
+keyring is also reachable from the TUI settings **`keyring`** row.
+
+> **Keys are stored in plaintext** in `~/.nodedex/config.json` today (single-user, local-first) —
+> treat that file as a secret; encrypt-at-rest is planned before a wider release.
+
 Uninstall does **not** remove the package (`npm rm -g nodedex` for that) or the NodeDex
 entry in your agent host's MCP config (remove that on the host). To change your key / model /
 provider, use the TUI (`nodedex tui` → **3 health** → Enter on **provider**), or re-run
@@ -481,6 +493,7 @@ provider, use the TUI (`nodedex tui` → **3 health** → Enter on **provider**)
 | `nodedex demo` | serve the bundled sample graph on :3009 — explore a finished project's memory, no key needed |
 | `nodedex run` | start the server + enabled capture watchers (never interactive) |
 | `nodedex tui` | launch the operator console |
+| `nodedex config` | the **keyring** page — store several API keys, mark one **active** + one **fallback** (+ a fallback model), and choose the billing-out behaviour; the server auto-fails-over when the active key dies |
 | `nodedex onboard` | re-run the setup wizard (switch provider / model / port / db) |
 | `nodedex setup --provider … --key … --model …` | headless (re)configure — the whole provider block, merged into config. Granular tweaks: the TUI health view |
 | `nodedex connect` | the connection card: the right URL per client location + token rule + test commands |
@@ -564,7 +577,7 @@ decontextualized fragment.
 > skill, not the memory. Full write-up:
 > [docs/NODEDEX-MEMORY-MODEL.md](docs/NODEDEX-MEMORY-MODEL.md).
 
-Engine health: **1313/1313 server tests pass**, with extraction → graph → retrieval validated
+Engine health: **1319/1319 server tests pass**, with extraction → graph → retrieval validated
 end-to-end — including capture-loss (ack-safe watcher cursors), the MCP read surface itself
 (what the agent receives, provenance included), and the setup wires (a claimed-but-unwritten
 reflex is caught, not believed). Tests prove the *mechanisms* work; whether the memory makes
