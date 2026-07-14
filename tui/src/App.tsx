@@ -25,13 +25,15 @@ const VERSION = "0.3.2";
 const FAST_MS = 2000;
 const SLOW_MS = 30000;
 
-export function App() {
+export function App({ initialView = MEMORY }: { initialView?: number } = {}) {
   const { exit } = useApp();
   const { isRawModeSupported } = useStdin();
   const { rows } = useTermSize();
   const [dash, setDash] = useState<Dashboard | null>(null);
   const [balance, setBalance] = useState<Balance>({ remaining: null, available: false });
-  const [active, setActive] = useState(MEMORY);
+  // `nodedex config` opens straight on the settings/health view (the provider/model/key
+  // manager) instead of the memory browser — landing where the user came to change things.
+  const [active, setActive] = useState(initialView);
   const [auto, setAuto] = useState(true);
   // Restore the last server+db BEFORE the first poll so we land on the right one (a
   // restart reconnects if it's up, else relaunches the managed server on the same

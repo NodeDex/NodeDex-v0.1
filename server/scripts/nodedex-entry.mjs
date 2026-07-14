@@ -38,8 +38,12 @@ Usage:
                     (host / Docker / LAN), token rule, and copy-paste test commands.
                     --json for machine-readable (agents).
   nodedex tui       Launch the operator console
-  nodedex onboard   Run the setup wizard (provider / model / port / db)
-  nodedex setup     Same as onboard; with flags = HEADLESS setup (for agents/scripts):
+  nodedex config    Manage your setup — provider (cloud/local), key, model. Opens the
+                    settings view: shows the current key/model, scans local model
+                    servers, and lets you change any of it. (Same view as tui → health.)
+  nodedex onboard   Run the FIRST-RUN setup wizard (provider / model / port / db)
+  nodedex setup     HEADLESS (re)configure, for agents/scripts. --provider is REQUIRED;
+                    it re-states the whole provider block (not a single-field edit):
     --provider openrouter --key sk-or-...   [--model google/gemini-2.5-flash-lite]
     --provider local --base-url http://localhost:11434/v1 --model <id>
     [--port 3001] [--db <name>] [--capture hermes,claude-code | none] [--dry-run]
@@ -54,8 +58,9 @@ Usage:
                     --yes skips the prompt (scripts). Does not remove the package.
   nodedex help      Show this message
 
-Reconfigure = re-run \`nodedex onboard\` (wizard) or \`nodedex setup\` with flags
-(headless — merges into the existing config, e.g. just --key or --model).
+Change your setup later: \`nodedex config\` (interactive — the easy way), \`nodedex onboard\`
+(full wizard), or \`nodedex setup --provider … --key … --model …\` (headless, for scripts;
+--provider is required — it is not a single-field edit).
 
 With no command: first run launches the setup wizard; once configured it starts
 the server (same as \`nodedex run\`). \`nodedex-server\` always starts the server.
@@ -576,6 +581,13 @@ switch (cmd) {
   case "tui":
   case "dashboard":
     launchTui();
+    break;
+  case "config":
+  case "reconfigure":
+    // The human-facing manager: opens the TUI on the settings/health view (provider,
+    // model, key, local-model scan) instead of the memory browser. `reconfigure` is
+    // accepted as an alias for the word people reach for.
+    launchTui(["--config"]);
     break;
   case "onboard":
   case "setup":

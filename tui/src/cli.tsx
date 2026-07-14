@@ -38,9 +38,12 @@ process.on("unhandledRejection", crashOut("unhandled rejection"));
 // hands off to the TUI. Otherwise, straight into the app. `--onboard` (npm run onboard)
 // FORCES the wizard even when already set up — to switch provider/model/db or re-run setup.
 const forceOnboard = process.argv.includes("--onboard");
+// `nodedex config` → land on the settings/health view (the provider/model/key manager),
+// not the memory browser. HEALTH is view index 2 in App.tsx.
+const startConfig = process.argv.includes("--config");
 function Root() {
   const [done, setDone] = useState(() => !forceOnboard && !needsOnboarding());
-  return done ? <App /> : <Onboarding onDone={() => setDone(true)} />;
+  return done ? <App initialView={startConfig ? 2 : 0} /> : <Onboarding onDone={() => setDone(true)} />;
 }
 
 render(<Root />);
