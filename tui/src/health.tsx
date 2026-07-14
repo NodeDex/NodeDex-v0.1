@@ -17,7 +17,7 @@ import {
 import {
   loadHermesCapture, setHermesCapture, loadClaudeCapture, setClaudeCapture,
   parseSources, loadConfig, saveConfig,
-  captureScope,
+  captureScope, listKeys, activeKey, fallbackKey,
   RECOMMENDED_MODELS, isTrainsOnPrompts, validateOpenRouterKey, scanLocalModels,
   DEFAULT_LOCAL_BASE_URL,
   type Provider, type LocalModel,
@@ -28,16 +28,17 @@ import {
   type ServerEntry,
 } from "./servers.js";
 import { ReviewTab } from "./review.js";
+import { KeyringPanel } from "./keyring.js";
 
 type RowId =
   | "server" | "db"
-  | "reflect" | "provider" | "model" | "fallback" | "autoturns" | "floor" | "cap"
+  | "reflect" | "provider" | "keyring" | "model" | "fallback" | "autoturns" | "floor" | "cap"
   | "w-capture" | "w-reflex" | "w-gate" | "w-read"
   | "hermes" | "sources" | "claude" | "ccprojects"
   | "review";
 // The w-* rows are STATUS, not settings — they report what the agent did, so there is
 // nothing here for the user to toggle. Absent from ROWS ⇒ rendered, never selectable.
-const ROWS: RowId[] = ["server", "db", "reflect", "provider", "model", "fallback", "autoturns", "floor", "cap", "hermes", "sources", "claude", "ccprojects", "review"];
+const ROWS: RowId[] = ["server", "db", "reflect", "provider", "keyring", "model", "fallback", "autoturns", "floor", "cap", "hermes", "sources", "claude", "ccprojects", "review"];
 
 /** "3m ago" — a timestamp the user can act on, not an ISO string they have to decode. */
 function ago(iso: string | null): string {
@@ -56,6 +57,8 @@ function ago(iso: string | null): string {
 // list) | Local (auto-scan Ollama/LM Studio/vLLM → pick, or manual url+model).
 type PStep = "pick" | "key" | "model" | "scan" | "lurl" | "lmodel";
 
+type Overlay = "none" | "db" | "servers" | "review" | "provider" | "keyring";
+
 export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
   dash: Dashboard | null;
   balance: Balance;
@@ -70,7 +73,7 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
   const [notice, setNotice] = useState("");
   const [hc, setHc] = useState(loadHermesCapture());
   const [cc, setCc] = useState(loadClaudeCapture());
-  const [overlay, setOverlay] = useState<"none" | "db" | "servers" | "review" | "provider">("none");
+  const [overlay, setOverlay] = useState<Overlay>("none");
   const [dbs, setDbs] = useState(listDbs());
   const [dbSel, setDbSel] = useState(0);
   const [dbNew, setDbNew] = useState<string | null>(null); // switch-db overlay: name being typed for a NEW db (null = list mode)
@@ -185,6 +188,7 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
       setOverlay("provider");
       return;
     }
+    if (id === "keyring") { setOverlay("keyring"); return; }
     if (id === "reflect") {
       const next = !paused;
       setNotice(next ? "pausing capture…" : "resuming capture…");
@@ -264,6 +268,7 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
 
   useInput((input, key) => {
     if (overlay === "review") { if (key.escape) setOverlay("none"); return; } // ReviewTab owns the rest
+    if (overlay === "keyring") return; // KeyringPanel owns the keyboard (incl. its own esc → onClose)
     if (overlay === "provider") {
       if (pBusy) return;
       const typeInto = () => {
@@ -425,11 +430,31 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
     );
   }
 
+  if (overlay === "keyring") {
+    return (
+      <KeyringPanel
+        isActive={isActive}
+        provider={loadConfig().provider}
+        onClose={() => { setOverlay("none"); load(); }}
+      />
+    );
+  }
+
   const selId = navRows[Math.min(sel, navRows.length - 1)];
   const cfgFile = loadConfig();
   const providerValue =
     cfgFile.provider === "local" ? `local · ${trunc(cfgFile.base_url ?? "?", 36)}` :
     cfgFile.provider === "openrouter" ? "openrouter (cloud)" : "not set";
+  // Glance at the ring: how many keys, which is active, whether a fallback is set.
+  const keyringValue = (() => {
+    if (cfgFile.provider === "local") return "— (local, no key)";
+    const ks = listKeys();
+    if (ks.length === 0) return "no keys — enter to add";
+    const a = activeKey(), f = fallbackKey();
+    return `${ks.length} key${ks.length === 1 ? "" : "s"}` +
+      (a ? ` · active ${trunc(a.label, 16)}` : "") +
+      (f ? ` · fallback ${trunc(f.label, 16)}` : " · no fallback");
+  })();
   const editLabel =
     editing === "model" ? "model id:" :
     editing === "fallback" ? "fallback model id (blank = none):" :
@@ -457,6 +482,7 @@ export function HealthTab({ dash, balance, isActive, onCapture, onConnect }: {
       <Section title="pipeline">
         <R id="reflect" label="capture" value={paused ? `${glyph.paused} paused` : reflect?.spend_paused ? `${glyph.paused} spend paused` : `${glyph.up} running`} color={paused || reflect?.spend_paused ? theme.warn : theme.ok} hint="enter = pause/resume" />
         <R id="provider" label="provider" value={providerValue} hint="enter = switch cloud/local + pick model" />
+        <R id="keyring" label="keyring" value={keyringValue} hint="enter = manage keys (active · fallback · auto-failover)" />
         <R id="model" label="model" value={cfg?.model || "(default)"} hint="enter = edit" />
         <R id="fallback" label="fallback" value={cfg?.fallback_model || "(none)"} hint="enter = edit" />
         <R id="autoturns" label="auto-turns" value={cfg?.arc_auto_turns && Number(cfg.arc_auto_turns) > 0 ? `every ${cfg.arc_auto_turns}` : "off"} hint="enter = edit" />

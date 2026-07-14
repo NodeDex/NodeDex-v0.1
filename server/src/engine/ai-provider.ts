@@ -10,6 +10,11 @@ export interface GenerateResult<T> {
    *  this as a spend-pause trigger (preserve + requeue the turn, never drop), so it must be
    *  surfaced rather than swallowed into a generic null. See isInsufficientCreditError. */
   creditExhausted?: boolean;
+  /** The call failed because the KEY ITSELF was rejected (HTTP 401 / invalid-key body) —
+   *  distinct from creditExhausted (the account can't pay). Signals the provider's key-failover
+   *  orchestrator to retry the SAME model on the fallback KEY. A broken active key is not a spend
+   *  decision, so this always triggers failover (billing-out is user-gated). See isAuthError. */
+  authFailed?: boolean;
   thinking?: string;   // populated by Gemini; empty for other providers
   usage?: { input: number; thinking: number; output: number; costUsd?: number };
   /** Model that produced this result (or the last attempted, on failure). Instrumentation for run-to-run variance. */

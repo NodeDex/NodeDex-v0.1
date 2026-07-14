@@ -310,8 +310,9 @@ export async function forgetAgent(agent: string): Promise<boolean> {
   }
 }
 
-/** Persist a config patch (model/fallback/breaker). Applies live + writes .env. */
-export async function postConfig(patch: Record<string, string | number>): Promise<boolean> {
+/** Persist a config patch (model/fallback/breaker/keyring). Applies live + writes .env.
+ *  Booleans are for the on/off toggles the route reads as flags (e.g. failover_on_billing). */
+export async function postConfig(patch: Record<string, string | number | boolean>): Promise<boolean> {
   try {
     const r = await fetch(`${currentBase}/api/admin/config`, {
       method: "POST",

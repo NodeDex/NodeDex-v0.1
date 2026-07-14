@@ -161,9 +161,29 @@ export const CAPTURE_SCOPES: Record<string, CaptureScope> = {
 
 export const captureScope = (host: string): CaptureScope => CAPTURE_SCOPES[host] ?? passthrough;
 
+// ─── The keyring (multi-key + fallback) ─────────────────────────────────────
+// Real users hold several keys — different accounts, and one kept as a fallback.
+// The ring lives HERE (TUI-owned config); only the ACTIVE + FALLBACK keys ever
+// cross the seam into the server as env (see providerEnv). The server stays
+// keyring-agnostic — it only sees two keys, never the ring.
+//
+// Secrets are PLAINTEXT in config.json for now (single-user, local-first). An
+// encrypt-at-rest pass (reusing NODEDEX_DB_ENCRYPTION_KEY) lands before public
+// ship; until then the file is the only copy and must never be logged. Mask
+// everywhere with maskSecret().
+export type KeyProvider = "openrouter" | "openai" | "anthropic" | "gemini";
+export interface StoredKey {
+  id: string;            // stable, e.g. "key_ab12" (or "key_legacy" for the migrated one)
+  label: string;         // human name ("openrouter-main", "work account")
+  provider: KeyProvider; // openrouter only today; enum shaped for more
+  secret: string;        // the API key (plaintext — see note above)
+  base_url?: string;     // provider override; default per provider
+  added_at: string;
+}
+
 export interface NodedexConfig {
   provider?: Provider;
-  openrouter_key?: string;       // openrouter path only
+  openrouter_key?: string;       // LEGACY single key — kept for migration; folded into keys[] on load
   base_url?: string;             // local path only — the OpenAI-compatible endpoint (e.g. Ollama)
   // chosen model (default applied if blank)
   model?: string;
@@ -173,6 +193,15 @@ export interface NodedexConfig {
   onboarded?: boolean;
   hermesCapture?: HermesCaptureConfig;
   claudeCapture?: ClaudeCaptureConfig;
+  // The keyring:
+  keys?: StoredKey[];            // every stored key
+  active_key_id?: string;        // which key the running server uses
+  fallback_key_id?: string;      // which key it fails over to (auto-failover, P3)
+  fallback_model?: string;       // persist the fallback model (was env-only before)
+  // User's choice (question #2): on active-key billing-out, fail over and KEEP GOING
+  // (true, default) vs fail over once then respect the spend-pause (false). Consumed
+  // by the server's failover branch (P3); the keyring page toggles it.
+  failover_on_billing?: boolean;
 }
 
 export interface DbChoice { name: string; path: string }
@@ -193,12 +222,88 @@ export function dbPathForName(name: string): string {
   return resolve(NODEDEX_HOME, `${safe}.db`);
 }
 
+// Fold a legacy single `openrouter_key` into the ring as key #1. Applied in-memory on
+// every load (idempotent, no write) — the file only gains keys[] the first time the user
+// touches the ring (addKey/setActive → saveConfig). Stable id so re-loads match.
+export function migrateKeyring(cfg: NodedexConfig): NodedexConfig {
+  if (cfg.openrouter_key && (!cfg.keys || cfg.keys.length === 0)) {
+    const legacy: StoredKey = {
+      id: "key_legacy",
+      label: "openrouter",
+      provider: "openrouter",
+      secret: cfg.openrouter_key,
+      base_url: OPENROUTER_BASE_URL,
+      added_at: "",           // constant → migration is byte-idempotent across loads
+    };
+    return { ...cfg, keys: [legacy], active_key_id: cfg.active_key_id ?? legacy.id };
+  }
+  return cfg;
+}
+
 export function loadConfig(): NodedexConfig {
   try {
-    return JSON.parse(readFileSync(CONFIG_FILE, "utf8")) as NodedexConfig;
+    return migrateKeyring(JSON.parse(readFileSync(CONFIG_FILE, "utf8")) as NodedexConfig);
   } catch {
     return {};
   }
+}
+
+// ─── Keyring helpers (the ring's read/write API, used by the config page) ────
+let keyCounter = 0;
+function genKeyId(): string {
+  // Short, collision-resistant enough for a personal ring; monotonic suffix avoids
+  // two same-tick adds colliding.
+  return "key_" + Date.now().toString(36).slice(-4) + (keyCounter++ % 36).toString(36);
+}
+
+/** Every stored key (post-migration). */
+export function listKeys(): StoredKey[] {
+  return loadConfig().keys ?? [];
+}
+
+/** The active key: the one matching active_key_id, else the first in the ring. */
+export function activeKey(): StoredKey | undefined {
+  const c = loadConfig();
+  const keys = c.keys ?? [];
+  return keys.find((k) => k.id === c.active_key_id) ?? keys[0];
+}
+
+/** The fallback key, if one is set. */
+export function fallbackKey(): StoredKey | undefined {
+  const c = loadConfig();
+  return (c.keys ?? []).find((k) => k.id === c.fallback_key_id);
+}
+
+/** Add a key to the ring. The first key added becomes active automatically. */
+export function addKey(input: { label: string; provider: KeyProvider; secret: string; base_url?: string }): StoredKey {
+  const c = loadConfig();
+  const key: StoredKey = { id: genKeyId(), added_at: new Date().toISOString(), ...input };
+  const keys = [...(c.keys ?? []), key];
+  const patch: Partial<NodedexConfig> = { keys };
+  if (!c.active_key_id) patch.active_key_id = key.id;
+  saveConfig(patch);
+  return key;
+}
+
+/** Remove a key. If it was active/fallback, those pointers are repaired (active → first left). */
+export function removeKey(id: string): void {
+  const c = loadConfig();
+  const keys = (c.keys ?? []).filter((k) => k.id !== id);
+  const patch: Partial<NodedexConfig> = { keys };
+  if (c.active_key_id === id) patch.active_key_id = keys[0]?.id;   // undefined if ring now empty → dropped on save
+  if (c.fallback_key_id === id) patch.fallback_key_id = undefined; // clear a dangling fallback
+  saveConfig(patch);
+}
+
+/** Point the running server at a different key (the UI also POSTs /api/admin/config live). */
+export function setActiveKey(id: string): void { saveConfig({ active_key_id: id }); }
+/** Set (or clear, with undefined) the fallback key. */
+export function setFallbackKey(id: string | undefined): void { saveConfig({ fallback_key_id: id }); }
+
+/** Mask a secret for display — never render a raw key. first-8 … last-2. */
+export function maskSecret(s: string): string {
+  if (!s) return "";
+  return s.length <= 12 ? s.slice(0, 4) + "…" : s.slice(0, 8) + "…" + s.slice(-2);
 }
 
 export function saveConfig(patch: Partial<NodedexConfig>): void {
@@ -301,7 +406,8 @@ export function parseSources(input: string): string[] {
 export function needsOnboarding(): boolean {
   const c = loadConfig();
   if (!c.onboarded) return true;
-  if (c.provider === "openrouter") return !c.openrouter_key;
+  // openrouter is usable once the ring has an active key (legacy field folds in via migration).
+  if (c.provider === "openrouter") return !(activeKey()?.secret ?? c.openrouter_key);
   if (c.provider === "local") return !c.base_url || !c.model;  // local needs an endpoint + model, no key
   return true;
 }
@@ -311,14 +417,29 @@ export function needsOnboarding(): boolean {
  *  Empty when un-configured (so launchServer stays a no-op for un-onboarded use). These WIN over
  *  the server's .env because node --env-file won't override set vars. */
 export function providerEnv(): Record<string, string> {
-  const c = loadConfig();
-  if (c.provider === "openrouter" && c.openrouter_key) {
-    return {
+  const c = loadConfig();  // migrated: keys[] is populated if a legacy openrouter_key existed
+  if (c.provider === "openrouter") {
+    // Source the ACTIVE key from the ring; fall back to the legacy field for safety.
+    const active = (c.keys ?? []).find((k) => k.id === c.active_key_id) ?? (c.keys ?? [])[0];
+    const secret = active?.secret ?? c.openrouter_key;
+    if (!secret) return {};
+    const env: Record<string, string> = {
       AI_PROVIDER: "openai-compatible",
-      OPENAI_BASE_URL: OPENROUTER_BASE_URL,
-      OPENAI_API_KEY: c.openrouter_key,
+      OPENAI_BASE_URL: active?.base_url ?? OPENROUTER_BASE_URL,
+      OPENAI_API_KEY: secret,
       AI_MODEL: c.model || OPENROUTER_DEFAULT_MODEL,
     };
+    // Auto-failover (P3): hand the server the FALLBACK key + model + the user's billing choice.
+    // The server builds the fallback client lazily from these and swaps to it when the active key
+    // authenticates-fails or bills out. Only emitted when a distinct fallback key is actually set.
+    const fb = (c.keys ?? []).find((k) => k.id === c.fallback_key_id);
+    if (fb && fb.id !== active?.id) {
+      env.NODEDEX_FALLBACK_API_KEY = fb.secret;
+      env.NODEDEX_FALLBACK_BASE_URL = fb.base_url ?? OPENROUTER_BASE_URL;
+    }
+    if (c.fallback_model) env.NODEDEX_FALLBACK_MODEL = c.fallback_model;
+    env.NODEDEX_FAILOVER_ON_BILLING = c.failover_on_billing === false ? "off" : "on";
+    return env;
   }
   if (c.provider === "local" && c.base_url && c.model) {
     return {

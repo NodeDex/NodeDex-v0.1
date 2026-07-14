@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { render } from "ink";
 import { App } from "./App.js";
+import { ConfigScreen } from "./config-screen.js";
 import { Onboarding } from "./onboarding.js";
 import { needsOnboarding } from "./config.js";
 
@@ -38,12 +39,14 @@ process.on("unhandledRejection", crashOut("unhandled rejection"));
 // hands off to the TUI. Otherwise, straight into the app. `--onboard` (npm run onboard)
 // FORCES the wizard even when already set up — to switch provider/model/db or re-run setup.
 const forceOnboard = process.argv.includes("--onboard");
-// `nodedex config` → land on the settings/health view (the provider/model/key manager),
-// not the memory browser. HEALTH is view index 2 in App.tsx.
+// `nodedex config` → the STANDALONE keyring page (its own screen, NOT the tui shell).
+// The dashboard is `nodedex tui`; config is a focused key/model manager.
 const startConfig = process.argv.includes("--config");
 function Root() {
   const [done, setDone] = useState(() => !forceOnboard && !needsOnboarding());
-  return done ? <App initialView={startConfig ? 2 : 0} /> : <Onboarding onDone={() => setDone(true)} />;
+  if (!done) return <Onboarding onDone={() => setDone(true)} />;
+  if (startConfig) return <ConfigScreen />;
+  return <App initialView={0} />;
 }
 
 render(<Root />);

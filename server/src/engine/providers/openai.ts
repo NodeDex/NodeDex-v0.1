@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { LLMProvider, EmbeddingProvider, GenerateResult } from "../ai-provider.js";
-import { EmptyResponseError, TruncatedResponseError, classifyGenError, isEmptyResult, llmTimeoutMs, decideEmptyOrTimeoutAction, isInsufficientCreditError } from "./failure-policy.js";
+import { EmptyResponseError, TruncatedResponseError, classifyGenError, isEmptyResult, llmTimeoutMs, decideEmptyOrTimeoutAction, isInsufficientCreditError, isAuthError } from "./failure-policy.js";
 import { modelOutputCeiling } from "./model-caps.js";
 import { effectiveThinkBudget, recordObservedThinking, reasoningDisabledForCall } from "./thinking-spill.js";
 // Re-exported for back-compat (callers/tests that imported these from openai.js):
@@ -48,6 +48,29 @@ export class OpenAIProvider implements LLMProvider {
     return fb && fb !== this.model ? fb : null;
   }
 
+  // ── Key-failover (option B) ────────────────────────────────────────────────
+  // The FALLBACK-KEY client, constructed LIVE from env (like fallbackModel above, not cached at
+  // construction) so a keyring swap takes effect on the next call with no provider reset. Cached
+  // by (key, base) so we don't rebuild an OpenAI client every call. Null when no fallback key is
+  // configured — then the orchestrator simply never fails over.
+  private _fbClient: { key: string; base: string; client: OpenAI } | null = null;
+  private fallbackClient(): OpenAI | null {
+    const key = process.env.NODEDEX_FALLBACK_API_KEY ?? "";
+    if (!key) return null;
+    const base = process.env.NODEDEX_FALLBACK_BASE_URL ?? process.env.OPENAI_BASE_URL ?? "";
+    if (this._fbClient && this._fbClient.key === key && this._fbClient.base === base) return this._fbClient.client;
+    const client = new OpenAI({ apiKey: key, ...(base ? { baseURL: base } : {}) });
+    this._fbClient = { key, base, client };
+    return client;
+  }
+  // User's choice (keyring page → NODEDEX_FAILOVER_ON_BILLING): auto-fail-over to the fallback key
+  // when the ACTIVE key BILLS OUT (default on = keep extracting on the fallback). Off = respect the
+  // spend-pause instead of auto-spending the fallback. AUTH failures (a broken key) fail over
+  // regardless — that isn't a spend decision.
+  private failoverOnBilling(): boolean {
+    return (process.env.NODEDEX_FAILOVER_ON_BILLING ?? "on").toLowerCase() !== "off";
+  }
+
   isAvailable(): boolean { return this.client !== null; }
   getName(): string { return process.env.OPENAI_BASE_URL ? "openai-compatible" : "openai"; }
 
@@ -62,7 +85,35 @@ export class OpenAIProvider implements LLMProvider {
       ? [options.modelOverride]
       : this.fallbackModel ? [this.model, this.fallbackModel] : [this.model];
 
-    const client = this.client; // narrowed non-null (guarded above) — safe inside closures
+    // Primary attempt on the ACTIVE key.
+    const primary = await this.runModels<T>(this.client, modelsToTry, systemPrompt, userInput, schema, options);
+
+    // KEY-FAILOVER (option B): the active key can't authenticate (bad/revoked key) or can't pay
+    // (billing-out — only when the user left auto-failover-on-billing ON). Retry the SAME models on
+    // the FALLBACK key, if one is configured. Same model set ⇒ NO determinism trap (only the key
+    // changes, never the model). Auth failure ALWAYS fails over; billing-out is user-gated.
+    const fbClient = this.fallbackClient();
+    if (fbClient && (primary.authFailed || (primary.creditExhausted && this.failoverOnBilling()))) {
+      console.warn(`[openai] active key ${primary.authFailed ? "rejected (auth)" : "out of credit"} — failing over to fallback key (same model)`);
+      const fb = await this.runModels<T>(fbClient, modelsToTry, systemPrompt, userInput, schema, options);
+      fb.attempts = [...(primary.attempts ?? []), ...(fb.attempts ?? [])];
+      return fb;
+    }
+    return primary;
+  }
+
+  // Run the model list (primary → fallback-MODEL) on ONE client (one key). Extracted from
+  // generateStructured so the key-failover orchestrator above can re-run the SAME models on a
+  // second CLIENT (the fallback key) without duplicating the intricate truncation / mechanism /
+  // empty-retry policy. `client` is the key to use; every other line is unchanged from before.
+  private async runModels<T>(
+    client: OpenAI,
+    modelsToTry: string[],
+    systemPrompt: string,
+    userInput: string,
+    schema: object,
+    options?: { thinkingBudget?: number; maxOutputTokens?: number; modelOverride?: string; keepReasoning?: boolean }
+  ): Promise<GenerateResult<T>> {
     // Extraction is deterministic by nature → default temperature 0. This is the main lever
     // on run-to-run variance: 6 stochastic passes compound and the swing lands on borderline
     // items. Configurable via NODEDEX_REFLECT_TEMPERATURE; the call auto-drops temperature if
@@ -281,6 +332,15 @@ export class OpenAIProvider implements LLMProvider {
             attempts.push({ model: modelName, outcome: "error" });
             console.error(`[openai] ${modelName} insufficient credit (status=${e?.status ?? "?"}) — credit exhausted; not retrying/escalating (account unfunded)`);
             return { result: null, rateLimited: false, creditExhausted: true, model: modelName, attempts };
+          }
+          // Bad/revoked KEY (401) — surface DEFINITIVELY so the orchestrator fails over to the
+          // fallback KEY (a different model on the same broken key would 401 identically). Checked
+          // here alongside credit, and only AFTER it, so a spend-cap 402/403 stays billing (isAuthError
+          // short-circuits on a credit error anyway).
+          if (isAuthError(e)) {
+            attempts.push({ model: modelName, outcome: "error" });
+            console.error(`[openai] ${modelName} auth rejected (status=${e?.status ?? "?"}) — key invalid; signalling key-failover`);
+            return { result: null, rateLimited: false, authFailed: true, model: modelName, attempts };
           }
           const kind = classifyGenError(e);
           const rateLimited = kind === "rate_limited";

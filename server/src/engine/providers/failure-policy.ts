@@ -117,6 +117,21 @@ export function isInsufficientCreditError(e: unknown): boolean {
   return /\b402\b|payment required|insufficient[\s_-]*(credit|fund|balance|quota)|negative\s+(credit|balance)|requires?\s+(more|additional)\s+credit|out of credit|add (more )?credit|key\s+limit\s+exceeded|\btotal\s+limit\b|credit\s+limit\b/i.test(msg);
 }
 
+/** A genuine AUTHENTICATION failure — the KEY is rejected (HTTP 401, or an invalid/expired/
+ *  revoked-key body). DISTINCT from isInsufficientCreditError (402 / "key limit exceeded" = the
+ *  account can't PAY, a spend decision) and from a transient 429. This is the trigger to fail
+ *  over to a DIFFERENT KEY (the active one is broken), never to a different model. A billing 402/
+ *  403 spend-cap must NOT read as auth, so a credit-error short-circuits to false first. A bare
+ *  403 (permission/geo) is deliberately NOT auth unless the text names the key. */
+export function isAuthError(e: unknown): boolean {
+  if (e == null) return false;
+  if (isInsufficientCreditError(e)) return false; // a spend-cap 402/403 is billing, not auth
+  const status = (e as any)?.status ?? (e as any)?.code;
+  if (status === 401 || status === "401") return true;
+  const msg = typeof e === "string" ? e : String((e as any)?.message ?? "");
+  return /\b401\b|unauthor|invalid[\s_-]*(api[\s_-]*)?key|no auth credentials|authentication[\s_-]*fail(ed|ure)?|api key.*(invalid|expired|revoked)|user not found/i.test(msg);
+}
+
 export type RetryAction = "escalate" | "retry_same" | "degrade";
 
 /** Decide what to do with an EMPTY or TIMEOUT failure, given the retry state. This is

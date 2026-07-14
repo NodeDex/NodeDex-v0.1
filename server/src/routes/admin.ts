@@ -434,6 +434,12 @@ export function createAdminRouter(
     if (body.provider          !== undefined) envUpdates["AI_PROVIDER"]                  = body.provider;
     if (body.model             !== undefined) envUpdates["AI_MODEL"]                     = body.model;
     if (body.fallback_model    !== undefined) envUpdates["NODEDEX_FALLBACK_MODEL"]        = body.fallback_model;
+    // Key-failover (keyring page): the FALLBACK key + base + the user's billing-out choice. The
+    // provider reads these LIVE per call and rebuilds the fallback client on change, so a swap
+    // needs no provider reset (unlike the active OPENAI_API_KEY below, which does).
+    if (body.fallback_api_key  !== undefined) envUpdates["NODEDEX_FALLBACK_API_KEY"]      = body.fallback_api_key;
+    if (body.fallback_base_url !== undefined) envUpdates["NODEDEX_FALLBACK_BASE_URL"]     = body.fallback_base_url;
+    if (body.failover_on_billing !== undefined) envUpdates["NODEDEX_FAILOVER_ON_BILLING"] = body.failover_on_billing ? "on" : "off";
     if (body.pass4_model       !== undefined) envUpdates["NODEDEX_PASS4_MODEL"]           = body.pass4_model;
     if (body.gemini_key        !== undefined) envUpdates["GEMINI_API_KEY"]               = body.gemini_key;
     if (body.openai_key        !== undefined) envUpdates["OPENAI_API_KEY"]               = body.openai_key;
