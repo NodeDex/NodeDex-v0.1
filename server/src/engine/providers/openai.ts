@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import type { LLMProvider, EmbeddingProvider, GenerateResult } from "../ai-provider.js";
 import { EmptyResponseError, TruncatedResponseError, classifyGenError, isEmptyResult, llmTimeoutMs, decideEmptyOrTimeoutAction, isInsufficientCreditError, isAuthError } from "./failure-policy.js";
 import { modelOutputCeiling } from "./model-caps.js";
-import { effectiveThinkBudget, recordObservedThinking, reasoningDisabledForCall } from "./thinking-spill.js";
+import { effectiveThinkBudget, recordObservedThinking, reasoningDisabledForCall, recordNoThinkCompliance, modelIgnoresNoThink } from "./thinking-spill.js";
 // Re-exported for back-compat (callers/tests that imported these from openai.js):
 export { EmptyResponseError, classifyGenError } from "./failure-policy.js";
 
@@ -180,7 +180,11 @@ export class OpenAIProvider implements LLMProvider {
         // read, so a truncated attempt teaches this very retry). Recomputed per
         // iteration, per model — an escalation may switch to a model with a very
         // different ceiling (Gemini 2.5 Flash 65535 vs GPT-4o 16384).
-        const effThink = noThink ? 0 : effectiveThinkBudget(modelName, thinkBudget);
+        // A model on the no-think list that IGNORES reasoning-off (observed at runtime) still
+        // needs headroom — its reasoning bills inside max_tokens, so effThink=0 would starve
+        // the output and truncate (the hy3 failure). Once detected, budget for it anyway; this
+        // self-heals a stale no-think entry without a human editing the list.
+        const effThink = (noThink && !modelIgnoresNoThink(modelName)) ? 0 : effectiveThinkBudget(modelName, thinkBudget);
         const outBudgetCeiling = Math.max(1024, modelOutputCeiling(modelName) - effThink);
         baseMaxOut = Math.min(requestedMaxOut, outBudgetCeiling);
         bumpedMaxOut = Math.min(Math.round(baseMaxOut * 1.5), outBudgetCeiling);
@@ -255,6 +259,10 @@ export class OpenAIProvider implements LLMProvider {
           // Record spill NOW — before any parse/empty throw below — so even a truncated
           // response teaches the retry how much this model really thinks.
           recordObservedThinking(modelName, thinkingTokens);
+          // Did this model honor the no-think request? If we sent reasoning-off but it reasoned
+          // anyway, mark it non-compliant so the NEXT call reserves headroom for it (self-heals a
+          // stale no-think entry). Recorded from truncated attempts too — they report reasoning.
+          recordNoThinkCompliance(modelName, noThink, thinkingTokens);
           // OpenAI/OpenRouter `completion_tokens` is INCLUSIVE of reasoning_tokens.
           // Split it so output + thinking sums back to completion_tokens exactly —
           // otherwise the reasoning portion is billed twice in computeCost (once

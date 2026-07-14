@@ -33,9 +33,36 @@ export function effectiveThinkBudget(model: string, requested: number | undefine
   return seen <= req ? req : Math.ceil(seen * 1.25);
 }
 
+// ── No-think NON-COMPLIANCE (self-healing) ──────────────────────────────────────
+// A model can be on the no-think list yet IGNORE `reasoning:{enabled:false}` and keep
+// reasoning anyway (hy3, 2026-07-15). Because reasoning bills INSIDE max_tokens, the
+// no-think path's effThink=0 then starves the output → every structured pass truncates.
+// A hand-maintained list can't catch this — the model's behavior changed after it was
+// added. So DETECT it at runtime: if we sent no-think but got reasoning tokens back, the
+// model ignores the flag; from then on, budget headroom for its thinking even on the
+// no-think path. Self-heals a stale/wrong no-think entry (the hy3 failure in one rule).
+const NOTHINK_TOLERANCE = 256; // a compliant model may emit a few tokens; this is clear non-compliance
+const ignoresNoThink = new Set<string>();
+
+/** Record whether a model honored a no-think request. Called after every call's usage is
+ *  read. `sentNoThink` = we asked for reasoning-off this call; `reasoningTokens` = what it
+ *  actually spent. Spending past the tolerance despite the flag = ignores no-think. */
+export function recordNoThinkCompliance(model: string, sentNoThink: boolean, reasoningTokens: number): void {
+  if (model && sentNoThink && Number.isFinite(reasoningTokens) && reasoningTokens > NOTHINK_TOLERANCE) {
+    ignoresNoThink.add(model);
+  }
+}
+
+/** True once `model` has been OBSERVED to reason despite a no-think request — so callers
+ *  reserve thinking headroom for it even when it's on the no-think list. */
+export function modelIgnoresNoThink(model: string | undefined): boolean {
+  return !!model && ignoresNoThink.has(model);
+}
+
 /** Test hook. */
 export function _resetThinkingSpillForTests(): void {
   observedMax.clear();
+  ignoresNoThink.clear();
 }
 
 // ── No-think mode ──────────────────────────────────────────────────────────────

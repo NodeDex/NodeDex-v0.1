@@ -3,7 +3,7 @@
 
 import { describe, test, beforeEach } from "node:test";
 import assert from "node:assert";
-import { recordObservedThinking, effectiveThinkBudget, isReasoningDisabled, reasoningDisabledForCall, _resetThinkingSpillForTests } from "../thinking-spill.js";
+import { recordObservedThinking, effectiveThinkBudget, isReasoningDisabled, reasoningDisabledForCall, recordNoThinkCompliance, modelIgnoresNoThink, _resetThinkingSpillForTests } from "../thinking-spill.js";
 
 describe("thinking-spill", () => {
   beforeEach(() => _resetThinkingSpillForTests());
@@ -45,6 +45,45 @@ describe("thinking-spill", () => {
     recordObservedThinking("a/model", NaN);
     recordObservedThinking("", 5000);
     assert.equal(effectiveThinkBudget("a/model", 1024), 1024);
+  });
+});
+
+describe("no-think non-compliance (self-healing)", () => {
+  beforeEach(() => _resetThinkingSpillForTests());
+
+  test("unseen model is assumed compliant", () => {
+    assert.equal(modelIgnoresNoThink("x/model"), false);
+  });
+
+  test("a model that reasons DESPITE a no-think request is flagged non-compliant", () => {
+    recordNoThinkCompliance("hy3", true, 5000); // we sent no-think, it reasoned 5000 anyway
+    assert.equal(modelIgnoresNoThink("hy3"), true);
+  });
+
+  test("a model honoring no-think (near-zero reasoning) stays compliant", () => {
+    recordNoThinkCompliance("good/model", true, 12); // within tolerance
+    assert.equal(modelIgnoresNoThink("good/model"), false);
+  });
+
+  test("reasoning when we did NOT ask for no-think is not non-compliance", () => {
+    recordNoThinkCompliance("normal/model", false, 8000); // reasoning was allowed
+    assert.equal(modelIgnoresNoThink("normal/model"), false);
+  });
+
+  test("non-compliance flips the effThink calc: a flagged no-think model still gets headroom", () => {
+    // Simulate: hy3 is on the no-think list AND observed to ignore it, spilling 6000 tokens.
+    recordObservedThinking("hy3", 6000);
+    recordNoThinkCompliance("hy3", true, 6000);
+    // The provider's rule is effThink = (noThink && !ignores) ? 0 : effectiveThinkBudget(...).
+    // Because it ignores no-think, headroom is budgeted from the observed spill, not zeroed.
+    assert.equal(modelIgnoresNoThink("hy3"), true);
+    assert.equal(effectiveThinkBudget("hy3", 0), Math.ceil(6000 * 1.25)); // 7500 headroom
+  });
+
+  test("reset clears the non-compliance memory", () => {
+    recordNoThinkCompliance("hy3", true, 5000);
+    _resetThinkingSpillForTests();
+    assert.equal(modelIgnoresNoThink("hy3"), false);
   });
 });
 
