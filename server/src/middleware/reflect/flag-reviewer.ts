@@ -573,9 +573,17 @@ export async function runFlagReviewerTick(
           // on weak evidence (a wrong merge corrupts the graph). Route to the AGENT,
           // which has the conversation + can ask the user. ("system FLAGS, reasoning
           // MERGES, the agent resolves the genuinely-unclear ones.")
-          const why = validConfidence !== 'high'
-            ? `confidence=${validConfidence} (below the auto-merge bar)`
-            : `winner="${v.winning_block_id ?? 'none'}" not in the candidate pair`;
+          // Surface the ACTION safety in plain terms — NOT the internal 'confidence' label.
+          // That word was deliberately removed as a stored KNOWLEDGE score (blocks.confidence
+          // → quality_score), so echoing it here made the agent relay "medium confidence" to
+          // the user and read like a resurrected knowledge rating. The reviewer's high/medium/
+          // low is a transient auto-merge SAFETY gauge; the user only needs to know WHY the
+          // merge wasn't safe to run automatically.
+          const why = validConfidence === 'medium'
+            ? 'the evidence is partial (likely the same thing, but not certain — not safe to auto-merge)'
+            : validConfidence === 'low'
+              ? 'these are genuinely ambiguous (not safe to auto-merge)'
+              : `the reviewer named a winner ("${v.winning_block_id ?? 'none'}") outside the candidate pair`;
           const ok = markFlagPendingClarification(rawDb, {
             flag_id: flag.id,
             reason: `Reviewer leans MERGE but ${why} — routed to the agent to confirm these are the same claim reworded (or to keep them separate). Reviewer reason: ${v.reason || '(none)'}`,
@@ -592,7 +600,7 @@ export async function runFlagReviewerTick(
         const ok = markFlagReviewed(rawDb, {
           flag_id: flag.id,
           verdict: validVerdict,
-          reason: v.reason || `(LLM returned no reason; confidence=${validConfidence})`,
+          reason: v.reason || `(reviewer returned no reason; auto-merge safety=${validConfidence})`,
           action_taken: actionTaken,
           winning_block_id: winningId,
         });
