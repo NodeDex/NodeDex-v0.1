@@ -41,6 +41,31 @@ Without NodeDex, session N+1 quietly **re-derives what session N already settled
 
 ---
 
+## Get started
+
+Three steps. The first sets up the **server** (once); the other two connect **your agent**.
+
+```bash
+# 1. Install + run the setup wizard — asks for a provider key, model, port, and database.
+npx nodedex                 # or: npm i -g nodedex && nodedex onboard
+```
+
+```bash
+# 2. Point your agent at the running server (one line; this is the only host-specific part).
+#    Claude Code shown — Cursor, Codex, Copilot, Hermes and custom loops in "Connect your agent".
+claude mcp add --transport http nodedex http://127.0.0.1:3001/mcp   # 3001 = the port you chose
+```
+
+**3. Say `Set up NodeDex` to your agent.** It wires itself in — CAPTURE (so the graph fills),
+REFLEX (so it remembers to check), GATE (so it checks at the moment it edits) — asking your
+permission for each. NodeDex verifies each one actually happened; nothing is taken on trust.
+
+That's the whole path. Details: **[Setup](#setup)** (the wizard) · **[Connect your agent](#connect-your-agent)**
+(every host) · **[Try it in 60 seconds](#try-it-in-60-seconds--no-key-no-setup)** (a demo graph, no key).
+Switching tools later moves no data — point the new agent at the same server and say `Set up NodeDex` again.
+
+---
+
 ## Why NodeDex
 
 Forgetting announces itself — the agent asks again, you sigh, you re-explain. The failure that actually costs you re-work is **silent**: the agent re-proposes an approach it tried and abandoned three sessions ago, or plans against a decision that was replaced two weeks back. The stale decision looks exactly as authoritative as the current one, the ruled-out approach sounds fresh, and the hours get burned twice.
