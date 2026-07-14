@@ -112,7 +112,7 @@ push each finished turn to it. **Pick the path that fits your host:**
 
 | Your agent is… | Capture path | How |
 |---|---|---|
-| **Hermes / Owl** | **state.db watcher** | Hermes ignores a model proxy + never fires hooks, so NodeDex reads its `state.db`. Turn it on in **TUI → health view → `hermes` (capture watchers)** (Enter to start; `sources` = the privacy filter). Full walkthrough: [connect-hermes.md](connect-hermes.md). |
+| **Hermes** | **state.db watcher** | Hermes ignores a model proxy + never fires hooks, so NodeDex reads its `state.db`. Turn it on in **TUI → health view → `hermes` (capture watchers)** (Enter to start; `sources` = the privacy filter). Full walkthrough: [connect-hermes.md](connect-hermes.md). |
 | **OpenAI-compatible host** that honors a custom base URL | **Model proxy** | Point the agent's **model base_url** at `http://127.0.0.1:<port>/api`. It relays to your real provider *and* captures. Token-exempt; forwards your own provider key. (A remote/Docker agent uses the host address instead.) |
 | **Code/loop you control** (Agent SDK, LangChain, own loop) | **Tee** | Have the agent run `workspace_install_capture` once; wire the returned snippet into a post-turn hook. |
 | **Claude Code** | **Stop hook** | Built in (not part of this autonomous-agent release). |
@@ -123,7 +123,7 @@ push each finished turn to it. **Pick the path that fits your host:**
 
 Send your agent a message that gets a reply **>50 chars** (shorter is ignored), then look for the
 turn arriving — **which log depends on your capture path:**
-- **Hermes / Owl (watcher):** `~/.nodedex/tui-logs/hermes-watcher.log` shows `captured stop_id=… → captured`.
+- **Hermes (watcher):** `~/.nodedex/tui-logs/hermes-watcher.log` shows `captured stop_id=… → captured`.
 - **Proxy:** the server log (`~/.nodedex/tui-logs/server-<port>.log`) shows `[chat-proxy] inbound turn … → relaying to …` then `[chat-proxy] capture queued`.
 - Either way, the server log then shows `Auto-Reflect COMPREHEND: … blocks` → `PIPELINE v2: … block(s)`, and in the TUI **`blocks`** climbs within ~30–90s (slower models can take a few minutes).
 

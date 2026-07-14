@@ -64,7 +64,7 @@ export async function validateOpenRouterKey(key: string): Promise<{ ok: boolean;
 
 export type Provider = "openrouter" | "local";
 
-// Hermes/Owl capture (the state.db watcher). Hermes ignores model-proxy + shell-hook capture, so
+// Hermes capture (the state.db watcher). Hermes ignores model-proxy + shell-hook capture, so
 // the only working path is reading its own state.db. These knobs are owned by the TUI Settings tab
 // and read live by server/adapters/hermes-statedb-watcher.mjs each poll (so a change applies without
 // a watcher restart). `sources` is the privacy filter: only Hermes sessions whose `source` matches
@@ -382,7 +382,7 @@ export function scanCaptureHosts(): CaptureHostInfo[] {
     : resolve(homedir(), ".local", "share", "hermes", "state.db");
   let hermesFound = false;
   try { hermesFound = readdirSync(resolve(hermesDb, "..")).includes("state.db"); } catch { /* absent */ }
-  out.push({ host: "hermes", label: "Hermes / Owl", found: hermesFound, detail: hermesFound ? "state.db present" : "not installed" });
+  out.push({ host: "hermes", label: "Hermes", found: hermesFound, detail: hermesFound ? "state.db present" : "not installed" });
   // Claude Code: the transcripts dir.
   const ccDir = resolve(homedir(), ".claude", "projects");
   let projects = 0, sessions = 0;

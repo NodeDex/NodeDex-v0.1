@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// hermes-statedb-watcher.mjs — capture Hermes/Owl turns into NodeDex by reading Hermes's own
+// hermes-statedb-watcher.mjs — capture Hermes turns into NodeDex by reading Hermes's own
 // state.db. This is the ONLY working capture path for Hermes: the model proxy is ignored
 // (Hermes hardcodes its OpenRouter endpoint) and shell hooks are registered but never invoked.
 // Hermes persists every turn to state.db itself, so we read it — zero Hermes cooperation needed.
@@ -128,15 +128,16 @@ function assembleTurn(db, sid, prevStopId, stop) {
   // drift-prone copy of "what's extracted": the extraction RANGE bounds ARE state.db ids
   // (conversation_turn_ranges.end_turn_number = the last extracted stop-id = a watermark), so
   // "extracted vs not" is just `state.db stop.id <= watermark`. Globally unique + monotonic.
-  // agent_id is PER-SESSION ("owl-<sid>") so each conversation is its own arc (turns don't bleed
-  // across sessions into one range).
+  // agent_id is PER-SESSION ("hermes-<sid>") so each conversation is its own arc (turns don't
+  // bleed across sessions into one range). Named for the HOST (Hermes) — it used to say "owl-",
+  // after a model that happened to run in it, which confused a model for a host.
   const turnNumber = stop.id;
 
   return {
     agentResponse: agentParts.join("\n"),
     userMessage: userParts.join("\n"),
     reasoning: toolTrace.join("\n"),
-    agentId: `owl-${String(sid)}`,                  // per-session → one arc per Hermes conversation
+    agentId: `hermes-${String(sid)}`,               // per-session → one arc per Hermes conversation
     turnNumber,                                      // = state.db stop-row id (the state-anchored watermark unit)
     turnName: `hermes-${String(sid).slice(0, 15)}-${stop.id}`,
     hint: "discovery",

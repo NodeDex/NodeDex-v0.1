@@ -157,7 +157,7 @@ The agent is stateless by default. NodeDex gives it a durable record of the proj
 
 - **The agent** navigates the graph with **read-only** MCP tools (`workspace_get`, `workspace_search`, `workspace_filter`, `workspace_tree`, `workspace_stats`, …). Knowledge-write tools are hidden by default; a read records usage metadata (access counts) on the block it opens — never content, links, or status. The one deliberate write on the default surface: `workspace_task_update` — the agent maintains **its own task status** (only the agent knows when its work is actually finished; everything else stays the pipeline's job).
 - **The pipeline** (a server-side AI) compiles everything — facts, decisions, dead ends, insights, constraints, reasoning chains — **async**, from each captured turn. The agent never has to stop and save.
-- **Capture** wires each finished turn to the server. The path depends on the host: **Hermes / Owl** are captured by reading their own `state.db` (they ignore a model proxy); an **OpenAI-compatible host** that honors a custom base URL can route its model through NodeDex's proxy; an agent whose **loop you control** uses a small out-of-path tee (`workspace_install_capture`). NodeDex is a passive MCP server — it can't see the agent's replies on its own, so **without capture the graph stays empty** (see [Connect your agent](#connect-your-agent)).
+- **Capture** wires each finished turn to the server. The path depends on the host: **Hermes** are captured by reading their own `state.db` (they ignore a model proxy); an **OpenAI-compatible host** that honors a custom base URL can route its model through NodeDex's proxy; an agent whose **loop you control** uses a small out-of-path tee (`workspace_install_capture`). NodeDex is a passive MCP server — it can't see the agent's replies on its own, so **without capture the graph stays empty** (see [Connect your agent](#connect-your-agent)).
 
 **SQLite WAL** — a single local file, bitemporal relations (history preserved, never deleted).
 
@@ -395,7 +395,7 @@ onboarding wizard detects installed hosts and asks which to capture; toggles liv
 - **Claude Code** — tails your session transcripts (`~/.claude/projects/…jsonl`). Every session
   becomes its own arc in the graph; the `projects` row scopes which projects are captured
   (`*` = all).
-- **Hermes / Owl** — reads Hermes's `state.db` (Hermes **ignores a custom model base URL** and
+- **Hermes** — reads Hermes's `state.db` (Hermes **ignores a custom model base URL** and
   never invokes its shell hooks, so this is the only path that works for it). The `sources` row
   is the privacy filter (default `tui`). Full walkthrough:
   **[docs/how-to/connect-hermes.md](docs/how-to/connect-hermes.md)**.
@@ -424,11 +424,11 @@ token only on a Docker/network server). *Capturing* differs by host:
 
 | Capture path | Wire up | Credential |
 |---|---|---|
-| **Watcher** (Claude Code, Hermes/Owl) | nothing — it reads the host's own log locally | none |
+| **Watcher** (Claude Code, Hermes) | nothing — it reads the host's own log locally | none |
 | **Proxy** (base-URL hosts) | model base URL → `…/api` | your **provider key** (forwarded to your provider) |
 | **Tee** (loop you control) | `workspace_install_capture` snippet | `NODEDEX_TOKEN` only if the server is gated |
 
-**Using Hermes / Owl?** Full end-to-end walkthrough (MCP read + the state.db watcher + every
+**Using Hermes?** Full end-to-end walkthrough (MCP read + the state.db watcher + every
 gotcha): [docs/how-to/connect-hermes.md](docs/how-to/connect-hermes.md).
 
 **Full per-host detail** (HTTP transport, Docker / `host.docker.internal`, the capture

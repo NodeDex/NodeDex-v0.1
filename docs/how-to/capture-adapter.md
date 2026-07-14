@@ -5,7 +5,7 @@ responses — never the agent's natural-language output or reasoning. So it **ca
 turns itself**. Something host-side has to *push* each finished turn into the pipeline.
 
 There are three host-side ways to push turns, by host type:
-- **Hermes / Owl → the `state.db` watcher.** Hermes ignores a model proxy (hardcoded endpoint)
+- **Hermes → the `state.db` watcher.** Hermes ignores a model proxy (hardcoded endpoint)
   and never fires shell hooks, so NodeDex reads its `state.db`. This is THE Hermes path — see
   [connect-hermes.md](connect-hermes.md). (Not covered further here.)
 - **Agent whose loop you control (SDK, your own loop) → the tee**, installed once via
@@ -19,7 +19,7 @@ There are four ways to get turns into `POST /api/reflect/trigger`:
 
 | Path | In/out of path | Blast radius | Works for |
 |---|---|---|---|
-| `state.db` watcher | out-of-path | none | Hermes/Owl (reads its DB) |
+| `state.db` watcher | out-of-path | none | Hermes (reads its DB) |
 | `chat-proxy` (swap the LLM `base_url`) | **in-path** | a bug here breaks the agent's call | hosts that honor `base_url` (**not** Hermes) |
 | Claude-Code `Stop` hook | out-of-path | none | CC-only |
 | **capture adapter (tee)** | **out-of-path** | none | any host whose loop you control |
@@ -47,7 +47,7 @@ and uses your own provider key). Works for any host that speaks OpenAI `/chat/co
 actually honors a custom base URL**.
 
 > ⚠ **Not Hermes.** Hermes hardcodes its OpenRouter endpoint and ignores `model.base_url`, so the
-> proxy never sees its traffic. For Hermes/Owl use the **`state.db` watcher** —
+> proxy never sees its traffic. For Hermes use the **`state.db` watcher** —
 > [connect-hermes.md](connect-hermes.md).
 
 ## What gets captured

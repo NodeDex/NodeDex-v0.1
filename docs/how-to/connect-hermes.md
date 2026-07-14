@@ -1,6 +1,6 @@
-# Connect Hermes / Owl to NodeDex
+# Connect Hermes to NodeDex
 
-End-to-end setup for a **Hermes / Owl** agent. Two halves, both needed:
+End-to-end setup for a **Hermes** agent. Two halves, both needed:
 
 - **Read** (MCP) — so the agent can traverse memory.
 - **Capture** (the state.db watcher) — so your conversations *grow* the graph.
@@ -89,7 +89,7 @@ Config (source filter, poll interval, a non-default `state.db` path) lives under
 
 | Key | Lives in | Used for |
 |---|---|---|
-| **Your provider key** (OpenRouter `sk-or-…`) | Hermes config | Hermes uses it for Owl's **answers** — NodeDex is never in the model path |
+| **Your provider key** (OpenRouter `sk-or-…`) | Hermes config | Hermes uses it for the agent's **answers** — NodeDex is never in the model path |
 | **NodeDex pipeline key** | `~/.nodedex/config.json` | the **extraction** pipeline that turns captured turns into graph blocks |
 
 If turns are captured but the graph stays empty, the **pipeline key** is the culprit (a `401` in the
@@ -103,7 +103,7 @@ nodedex setup --provider openrouter --key sk-or-v1-<your-FULL-key> --model googl
 
 ## Verify it's working
 
-1. Send Owl a message whose reply is **≥50 chars** (shorter is skipped).
+1. Send Hermes a message whose reply is **≥50 chars** (shorter is skipped).
 2. Within a few seconds the watcher log (`~/.nodedex/tui-logs/hermes-watcher.log`) shows
    `captured stop_id=… → captured`, and the NodeDex **server log**
    (`~/.nodedex/tui-logs/server-<port>.log`) shows
