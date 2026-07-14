@@ -453,8 +453,8 @@ model (local models are auto-scanned). A model change within the same provider a
 a provider/endpoint switch applies when the server relaunches (switch db, or restart the TUI).
 
 Uninstall does **not** remove the package (`npm rm -g nodedex` for that) or the NodeDex
-entry in your agent host's MCP config (remove that on the host). *(From a clone, the same
-ops are `npm run reconfigure` / `npm run uninstall` in `tui/`.)*
+entry in your agent host's MCP config (remove that on the host). To just change your key or
+model, re-run `nodedex onboard` (or `nodedex setup --key … --model …` headless).
 
 ---
 
@@ -486,15 +486,6 @@ ops are `npm run reconfigure` / `npm run uninstall` in `tui/`.)*
 | `nodedex stop [port \| --all]` | stop running NodeDex servers (confirms a NodeDex answers before killing anything) |
 | `nodedex uninstall` | remove all local data + config (`~/.nodedex`) — asks first; `--yes` for scripts |
 | `nodedex help` | usage |
-
-**Console / setup** (`cd tui`):
-
-| Command | What it does |
-|---|---|
-| `npm run dev` | launch the TUI — first run is the onboarding wizard, then the operator console |
-| `npm run onboard` | re-run the full setup wizard (switch provider/model/port/db) even if already set up |
-| `npm run reconfigure` | change just the API key or model |
-| `npm run uninstall` | remove `~/.nodedex` (data + config) |
 
 The TUI has **three views** — `1 memory` (browse roots, walk stories, `/` search),
 `2 feed` (memory forming live + what the agent read), `3 health` (server/db switch, provider

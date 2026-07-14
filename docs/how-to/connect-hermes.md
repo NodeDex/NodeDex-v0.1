@@ -95,10 +95,8 @@ Config (source filter, poll interval, a non-default `state.db` path) lives under
 If turns are captured but the graph stays empty, the **pipeline key** is the culprit (a `401` in the
 server log). Fix it with the flag (avoids terminal paste-truncation):
 ```
-cd tui
-npm run reconfigure -- --key sk-or-v1-<your-FULL-key>
+nodedex setup --key sk-or-v1-<your-FULL-key>
 ```
-*(separate lines — PowerShell 5.1 has no `&&`)*
 
 ---
 
